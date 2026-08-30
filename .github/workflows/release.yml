@@ -1,0 +1,42 @@
+name: Build and Publish Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x panel-app/gradlew
+
+      - name: Build Release APK with Gradle
+        working-directory: panel-app
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload Release Asset to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: panel-app/app/build/outputs/apk/release/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

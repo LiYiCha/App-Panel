@@ -1,4 +1,8 @@
 # Gradle files
+# Server source code (standalone reference, excluded from App-Panel repo)
+qinglong/
+
+# Gradle and Build Cache
 .gradle/
 build/
 
@@ -12,11 +16,17 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+panel-app/.gradle/
+panel-app/build/
+panel-app/app/build/
+*.apk
 *.aab
 *.apk
 output-metadata.json
 
 # IntelliJ
+# Android Studio & IDE
+.idea/
 *.iml
 .idea/
 misc.xml
@@ -26,9 +36,14 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+local.properties
+.DS_Store
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 
 # Android Profiling
 *.hprof
+# Scratch and build output
+release/
+scratch/
