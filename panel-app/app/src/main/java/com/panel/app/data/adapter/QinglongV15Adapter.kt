@@ -156,7 +156,10 @@ class QinglongV15Adapter(
                         isPinned = isPin,
                         labels = item.labels ?: emptyList(),
                         lastRunningTime = item.last_running_time,
-                        lastExecutionTime = item.last_execution_time
+                        lastExecutionTime = item.last_execution_time,
+                        createdAt = item.createdAt,
+                        updatedAt = item.updatedAt,
+                        pid = item.pid
                     )
                 }
                 Result.success(list)
@@ -707,9 +710,10 @@ class QinglongV15Adapter(
 
     override suspend fun batchDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Any> = depIds.map {
-                it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it
+            val cleanIds: List<Long> = depIds.mapNotNull {
+                it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull()
             }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID无效"))
             val resp = api.deleteDependencies(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) {
                 Result.success(true)
@@ -720,7 +724,8 @@ class QinglongV15Adapter(
             }
         } catch (e: Exception) {
             try {
-                val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
+                val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+                if (cleanIds.isEmpty()) return Result.failure(e)
                 val forceResp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
                 if (forceResp.isSuccessful) Result.success(true) else Result.failure(e)
             } catch (e2: Exception) {
@@ -731,7 +736,8 @@ class QinglongV15Adapter(
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
+            val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID无效"))
             val resp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("强制清除记录失败: HTTP ${resp.code()}"))
         } catch (e: Exception) {

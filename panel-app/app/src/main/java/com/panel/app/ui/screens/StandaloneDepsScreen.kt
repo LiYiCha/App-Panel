@@ -3,6 +3,8 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -129,14 +131,16 @@ fun StandaloneDepsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf("all" to "全部 (${uiState.deps.size})", "nodejs" to "Node.js", "python3" to "Python3", "linux" to "Linux").forEach { (key, label) ->
                         FilterChip(
                             selected = selectedType == key,
                             onClick = { selectedType = key },
-                            label = { Text(label, fontSize = 11.sp) },
+                            label = { Text(label, fontSize = 11.sp, maxLines = 1, softWrap = false) },
                             modifier = Modifier.height(30.dp)
                         )
                     }

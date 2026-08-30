@@ -98,9 +98,11 @@ object NetworkClient {
                         throw e
                     }
                 }
-                .connectTimeout(8, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .connectionPool(okhttp3.ConnectionPool(8, 15, TimeUnit.SECONDS))
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
                 .build()
         } catch (e: Exception) {
             OkHttpClient.Builder().build()

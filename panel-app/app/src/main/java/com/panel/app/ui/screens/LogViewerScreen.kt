@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -86,6 +87,16 @@ fun LogViewerScreen(
         }
     }
 
+    var autoScrollToBottom by remember { mutableStateOf(true) }
+    val listState = rememberLazyListState()
+
+    // 自动滚动到最新日志底部
+    LaunchedEffect(filteredLines.size, autoScrollToBottom) {
+        if (autoScrollToBottom && filteredLines.isNotEmpty()) {
+            listState.animateScrollToItem(filteredLines.size - 1)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -134,6 +145,17 @@ fun LogViewerScreen(
                     }
                 },
                 actions = {
+                    // 自动滚动到底部开关
+                    IconButton(onClick = {
+                        autoScrollToBottom = !autoScrollToBottom
+                        Toast.makeText(context, if (autoScrollToBottom) "已开启自动滚动" else "已关闭自动滚动", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.VerticalAlignBottom,
+                            contentDescription = "自动滚动",
+                            tint = if (autoScrollToBottom) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = {
                         isSearchOpen = !isSearchOpen
                         if (!isSearchOpen) searchQuery = ""
@@ -159,7 +181,7 @@ fun LogViewerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(Color(0xFF141414))
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             if (isLoading) {
                 Column(
@@ -169,61 +191,66 @@ fun LogViewerScreen(
                 ) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(12.dp))
-                    Text("正在拉取终端运行日志...", color = Color.LightGray, fontSize = 13.sp)
+                    Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 }
             } else if (lines.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("暂无日志输出", color = Color.Gray, fontSize = 13.sp)
+                    Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                androidx.compose.foundation.text.selection.SelectionContainer(
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    itemsIndexed(filteredLines) { _, (originalIndex, line) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 1.dp)
-                        ) {
-                            // 行号
-                            Text(
-                                text = "${originalIndex + 1}".padStart(4, ' '),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                color = Color(0xFF6E7681),
-                                modifier = Modifier.width(36.dp)
-                            )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        itemsIndexed(filteredLines) { _, (originalIndex, line) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 1.dp)
+                            ) {
+                                // 行号 (靠左紧凑对齐，主题动态色)
+                                Text(
+                                    text = "${originalIndex + 1}".padStart(4, ' '),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.width(36.dp)
+                                )
 
-                            // 行内容
-                            val annotated = if (searchQuery.isNotEmpty() && line.contains(searchQuery, ignoreCase = true)) {
-                                buildAnnotatedString {
-                                    val startIdx = line.indexOf(searchQuery, ignoreCase = true)
-                                    append(line.substring(0, startIdx))
-                                    pushStyle(SpanStyle(background = Color(0xFFFFEB3B), color = Color.Black, fontWeight = FontWeight.Bold))
-                                    append(line.substring(startIdx, startIdx + searchQuery.length))
-                                    pop()
-                                    append(line.substring(startIdx + searchQuery.length))
+                                // 行内容
+                                val annotated = if (searchQuery.isNotEmpty() && line.contains(searchQuery, ignoreCase = true)) {
+                                    buildAnnotatedString {
+                                        val startIdx = line.indexOf(searchQuery, ignoreCase = true)
+                                        append(line.substring(0, startIdx))
+                                        pushStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold))
+                                        append(line.substring(startIdx, startIdx + searchQuery.length))
+                                        pop()
+                                        append(line.substring(startIdx + searchQuery.length))
+                                    }
+                                } else {
+                                    buildAnnotatedString { append(line) }
                                 }
-                            } else {
-                                buildAnnotatedString { append(line) }
-                            }
 
-                            val textColor = when {
-                                line.contains("error", ignoreCase = true) || line.contains("failed", ignoreCase = true) -> Color(0xFFFF5252)
-                                line.contains("success", ignoreCase = true) || line.contains("done", ignoreCase = true) -> Color(0xFF69F0AE)
-                                line.contains("warn", ignoreCase = true) -> Color(0xFFFFD740)
-                                else -> Color(0xFFE0E0E0)
-                            }
+                                val textColor = when {
+                                    line.contains("error", ignoreCase = true) || line.contains("failed", ignoreCase = true) -> MaterialTheme.colorScheme.error
+                                    line.contains("success", ignoreCase = true) || line.contains("done", ignoreCase = true) -> MaterialTheme.colorScheme.primary
+                                    line.contains("warn", ignoreCase = true) -> MaterialTheme.colorScheme.tertiary
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                }
 
-                            Text(
-                                text = annotated,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                color = textColor,
-                                modifier = Modifier.weight(1f)
-                            )
+                                Text(
+                                    text = annotated,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = textColor,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }

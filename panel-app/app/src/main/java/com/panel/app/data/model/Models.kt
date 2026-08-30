@@ -36,6 +36,9 @@ data class UnifiedTask(
     val lastRunningTime: Long? = null,
     val lastExecutionTime: Long? = null,
     val timeout: Int = 30,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val pid: Int? = null,
     val selected: Boolean = false
 )
 

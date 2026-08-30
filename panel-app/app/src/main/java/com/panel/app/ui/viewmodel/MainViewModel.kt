@@ -39,6 +39,13 @@ data class MainUiState(
     val toastMessage: String? = null
 )
 
+data class CachedPanelData(
+    val tasks: List<UnifiedTask> = emptyList(),
+    val envs: List<UnifiedEnv> = emptyList(),
+    val subscriptions: List<UnifiedSubscription> = emptyList(),
+    val deps: List<UnifiedDep> = emptyList()
+)
+
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -46,6 +53,33 @@ class MainViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val prefs: SharedPreferences = context.getSharedPreferences("panel_hub_prefs", Context.MODE_PRIVATE)
+    private val gson = com.google.gson.Gson()
+
+    private fun loadDiskCache(panelId: String) {
+        try {
+            val file = java.io.File(context.cacheDir, "panel_cache_${panelId.hashCode()}.json")
+            if (file.exists()) {
+                val json = file.readText()
+                val data = gson.fromJson(json, CachedPanelData::class.java)
+                if (data != null && getActivePanel().id == panelId) {
+                    _uiState.value = _uiState.value.copy(
+                        tasks = if (data.tasks.isNotEmpty() && _uiState.value.tasks.isEmpty()) data.tasks else _uiState.value.tasks,
+                        envs = if (data.envs.isNotEmpty() && _uiState.value.envs.isEmpty()) data.envs else _uiState.value.envs,
+                        subscriptions = if (data.subscriptions.isNotEmpty() && _uiState.value.subscriptions.isEmpty()) data.subscriptions else _uiState.value.subscriptions,
+                        deps = if (data.deps.isNotEmpty() && _uiState.value.deps.isEmpty()) data.deps else _uiState.value.deps
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveDiskCache(panelId: String, tasks: List<UnifiedTask>, envs: List<UnifiedEnv>, subs: List<UnifiedSubscription>, deps: List<UnifiedDep>) {
+        try {
+            val file = java.io.File(context.cacheDir, "panel_cache_${panelId.hashCode()}.json")
+            val data = CachedPanelData(tasks, envs, subs, deps)
+            file.writeText(gson.toJson(data))
+        } catch (_: Exception) {}
+    }
 
     private val _uiState = MutableStateFlow(
         MainUiState(
@@ -185,6 +219,7 @@ class MainViewModel @Inject constructor(
                 return@launch
             }
 
+            loadDiskCache(activePanel.id)
             _uiState.value = _uiState.value.copy(isLoading = true)
             val adapter = repository.getAdapter(activePanel)
 
@@ -238,16 +273,26 @@ class MainViewModel @Inject constructor(
                 if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
             }
 
+            val finalTasks = if (tasksRes.isSuccess) remoteTasks else _uiState.value.tasks
+            val finalSubs = if (subsRes.isSuccess) remoteSubs else _uiState.value.subscriptions
+            val finalEnvs = if (envsRes.isSuccess) remoteEnvs else _uiState.value.envs
+            val finalDeps = if (depsRes.isSuccess) remoteDeps else _uiState.value.deps
+            val finalScriptTree = if (scriptTreeRes.isSuccess) remoteScriptTree else _uiState.value.scriptTree
+
+            if (tasksRes.isSuccess || envsRes.isSuccess || subsRes.isSuccess || depsRes.isSuccess) {
+                saveDiskCache(activePanel.id, finalTasks, finalEnvs, finalSubs, finalDeps)
+            }
+
             _uiState.value = _uiState.value.copy(
                 panels = updatedPanels,
-                tasks = remoteTasks,
-                subscriptions = remoteSubs,
-                envs = remoteEnvs,
-                deps = remoteDeps,
-                configFiles = fileList,
+                tasks = finalTasks,
+                subscriptions = finalSubs,
+                envs = finalEnvs,
+                deps = finalDeps,
+                configFiles = if (configFilesRes.isSuccess) fileList else _uiState.value.configFiles,
                 selectedConfigFile = defaultFile,
-                configContent = content,
-                scriptTree = remoteScriptTree,
+                configContent = if (configContentRes.isSuccess) content else _uiState.value.configContent,
+                scriptTree = finalScriptTree,
                 isLoading = false,
                 toastMessage = errorMsg ?: _uiState.value.toastMessage
             )
@@ -433,17 +478,29 @@ class MainViewModel @Inject constructor(
 
     fun batchDeleteTasks(taskIds: List<String>) {
         viewModelScope.launch {
-            repository.getAdapter(getActivePanel()).deleteTask(taskIds)
-            val list = _uiState.value.tasks.filterNot { taskIds.contains(it.id) }
-            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已批量删除 ${taskIds.size} 个任务")
+            _uiState.value = _uiState.value.copy(toastMessage = "正在批量删除 ${taskIds.size} 个任务...")
+            val res = repository.getAdapter(getActivePanel()).deleteTask(taskIds)
+            if (res.isSuccess) {
+                val list = _uiState.value.tasks.filterNot { taskIds.contains(it.id) }
+                _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已批量删除 ${taskIds.size} 个任务")
+            } else {
+                val errMsg = res.exceptionOrNull()?.message ?: "未知错误"
+                _uiState.value = _uiState.value.copy(toastMessage = "批量删除失败: $errMsg")
+            }
         }
     }
 
     fun deleteTask(taskId: String) {
         viewModelScope.launch {
-            repository.getAdapter(getActivePanel()).deleteTask(listOf(taskId))
-            val list = _uiState.value.tasks.filterNot { it.id == taskId }
-            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务已删除")
+            _uiState.value = _uiState.value.copy(toastMessage = "正在删除任务...")
+            val res = repository.getAdapter(getActivePanel()).deleteTask(listOf(taskId))
+            if (res.isSuccess) {
+                val list = _uiState.value.tasks.filterNot { it.id == taskId }
+                _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务已删除")
+            } else {
+                val errMsg = res.exceptionOrNull()?.message ?: "未知错误"
+                _uiState.value = _uiState.value.copy(toastMessage = "删除任务失败: $errMsg")
+            }
         }
     }
 

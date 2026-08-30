@@ -18,7 +18,10 @@ data class QlCronItem(
     val extra_schedules: Any? = null,
     val labels: List<String>? = null,
     val last_running_time: Long? = null,
-    val last_execution_time: Long? = null
+    val last_execution_time: Long? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val pid: Int? = null
 )
 
 data class QlCreateCronReq(

@@ -174,19 +174,22 @@ fun StandaloneLogScreen(
                     .fillMaxSize()
                     .padding(horizontal = 6.dp, vertical = 4.dp),
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant
+                color = MaterialTheme.colorScheme.surface
             ) {
                 if (filteredLines.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("暂无日志输出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(8.dp)
+                    androidx.compose.foundation.text.selection.SelectionContainer(
+                        modifier = Modifier.fillMaxSize()
                     ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                        ) {
                         itemsIndexed(filteredLines) { index, line ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -217,4 +220,5 @@ fun StandaloneLogScreen(
             }
         }
     }
+}
 }

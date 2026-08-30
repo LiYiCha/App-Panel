@@ -76,33 +76,39 @@ fun ScriptsScreen(
             }
         }
 
-        // 2. 脚本与目录树形列表
-        if (uiState.scriptTree.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 40.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("暂无脚本文件", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // 2. 脚本与目录树形列表 (带统一规范的下拉刷新手势)
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+            isRefreshing = uiState.isLoading,
+            onRefresh = { viewModel.refreshCurrentPanel() },
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (uiState.scriptTree.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text("暂无脚本文件 (下拉可刷新)", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(uiState.scriptTree) { rootNode ->
-                    ScriptTreeItem(
-                        node = rootNode,
-                        level = 0,
-                        onOpenEditor = onOpenScriptEditor,
-                        onDelete = { deletingNode = it }
-                    )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(uiState.scriptTree) { rootNode ->
+                        ScriptTreeItem(
+                            node = rootNode,
+                            level = 0,
+                            onOpenEditor = onOpenScriptEditor,
+                            onDelete = { deletingNode = it }
+                        )
+                    }
                 }
             }
         }

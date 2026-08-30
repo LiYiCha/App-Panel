@@ -116,7 +116,17 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onNavigateToCreateScript = {
                                     navController.navigate("create_script")
+                                },
+                                onOpenBaihuPluginScreen = {
+                                    navController.navigate("baihu_plugin")
                                 }
+                            )
+                        }
+
+                        composable("baihu_plugin") {
+                            BaihuPluginScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
                             )
                         }
 

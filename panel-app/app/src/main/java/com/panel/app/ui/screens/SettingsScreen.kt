@@ -48,7 +48,8 @@ fun SettingsScreen(
     onOpenLoginLogs: () -> Unit = {},
     onOpenServerLogs: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
-    onOpenExecutionHistory: () -> Unit = {}
+    onOpenExecutionHistory: () -> Unit = {},
+    onOpenBaihuPlugin: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -203,8 +204,16 @@ fun SettingsScreen(
                 onClick = onOpenExecutionHistory
             )
         }
-
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DashboardGridCard(
+                icon = Icons.Default.Widgets,
+                title = "白虎面板运行中心",
+                subtitle = "内置引擎与外部扩展包",
+                badge = "插件化",
+                badgeColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenBaihuPlugin
+            )
             DashboardGridCard(
                 icon = Icons.Default.Article,
                 title = "服务端日志",
@@ -214,6 +223,9 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f),
                 onClick = onOpenServerLogs
             )
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DashboardGridCard(
                 icon = Icons.Default.Shield,
                 title = "登录审计日志",
@@ -223,9 +235,6 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f),
                 onClick = onOpenLoginLogs
             )
-        }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DashboardGridCard(
                 icon = Icons.Default.Terminal,
                 title = "开发者模式",
@@ -237,6 +246,9 @@ fun SettingsScreen(
                     if (uiState.isDevMode) onOpenDevConsole() else viewModel.toggleDevMode(true)
                 }
             )
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DashboardGridCard(
                 icon = Icons.Default.Speed,
                 title = "网络延时测速",

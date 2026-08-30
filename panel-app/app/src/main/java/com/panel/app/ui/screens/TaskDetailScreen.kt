@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.TaskInstanceRecord
@@ -200,7 +201,24 @@ fun TaskDetailScreen(
                                                 )
                                             }
                                         }
-                                        Text(text = "ID: ${task.id}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.clickable {
+                                                clipboardManager.setText(AnnotatedString(task.id))
+                                                Toast.makeText(context, "任务ID已复制: ${task.id}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "ID: ${task.id} 📋",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        if (task.pid != null && task.pid > 0) {
+                                            Text(text = "PID: ${task.pid}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                        }
                                     }
 
                                     Switch(
@@ -210,15 +228,59 @@ fun TaskDetailScreen(
                                     )
                                 }
 
-                                // 调度规则与属性详情表格
+                                // 目标脚本路径与调度规则
+                                val scriptFile = remember(task.command) {
+                                    val parts = task.command.trim().split("\\s+".toRegex())
+                                    parts.firstOrNull { it.endsWith(".js") || it.endsWith(".py") || it.endsWith(".sh") || it.endsWith(".ts") }
+                                        ?: parts.getOrNull(1) ?: task.command
+                                }
+
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("定时表达式 (Cron)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(task.schedule, fontSize = 13.sp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+                                        Text("目标脚本 (Script)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(scriptFile, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("超时控制", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text("${task.timeout} 秒", fontSize = 12.sp, style = MaterialTheme.typography.bodyMedium)
+                                        Text("定时规则 (Cron)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(task.schedule, fontSize = 12.sp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+
+                                // 时间统计：上次执行与创建更新
+                                val lastExecStr = remember(task.lastExecutionTime) {
+                                    task.lastExecutionTime?.let {
+                                        try {
+                                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                                            sdf.format(java.util.Date(if (it < 10000000000L) it * 1000 else it))
+                                        } catch (_: Exception) { "$it" }
+                                    } ?: "尚未执行"
+                                }
+
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("上次执行时间", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(lastExecStr, fontSize = 11.sp, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("超时限制", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${task.timeout} 秒", fontSize = 11.sp, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+
+                                if (!task.createdAt.isNullOrBlank() || !task.updatedAt.isNullOrBlank()) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        if (!task.createdAt.isNullOrBlank()) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("创建时间", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(task.createdAt.take(19).replace("T", " "), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        if (!task.updatedAt.isNullOrBlank()) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("更新时间", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(task.updatedAt.take(19).replace("T", " "), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
                                     }
                                 }
 

@@ -97,6 +97,8 @@ class BaihuPanelAdapter(
                         isRunning = isRun,
                         isDisabled = item.enabled == false,
                         isPinned = item.pin_type == "top",
+                        labels = if (!item.remark.isNullOrBlank()) listOf(item.remark) else emptyList(),
+                        createdAt = item.last_run,
                         timeout = item.timeout ?: 30
                     )
                 }

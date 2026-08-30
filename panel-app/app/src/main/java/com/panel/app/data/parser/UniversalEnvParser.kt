@@ -70,6 +70,34 @@ object UniversalEnvParser {
             } catch (_: Exception) {}
         }
 
+        // 1.5 支持 URL Query / & 连接的多键值对格式 (如 app=mdwz&dataEncStr=ODhDMTk2Mjk3ODYxNkU5QzA0REE2OTgwNjUz)
+        if (sanitized.contains("&") && !sanitized.startsWith("export ", ignoreCase = true)) {
+            val queryPairs = sanitized.split("&")
+            val isAllKeyValue = queryPairs.all { part ->
+                val p = part.trim()
+                p.contains("=") && Regex("""^[A-Za-z_][A-Za-z0-9_]*=""").containsMatchIn(p)
+            }
+            if (isAllKeyValue && queryPairs.size > 1) {
+                queryPairs.forEach { pair ->
+                    val cleanPair = pair.trim()
+                    val key = cleanPair.substringBefore("=").trim()
+                    val value = cleanPair.substringAfter("=").trim().replace(Regex("^[\"']|[\"']$"), "")
+                    if (key.isNotEmpty()) {
+                        result.add(
+                            UnifiedEnv(
+                                id = UUID.randomUUID().toString(),
+                                name = key,
+                                value = value,
+                                remarks = "URL参数串导入",
+                                enabled = true
+                            )
+                        )
+                    }
+                }
+                if (result.isNotEmpty()) return result
+            }
+        }
+
         // 2. 裸 Cookie 检测 (如用户直接粘贴了 pt_key=xxx; pt_pin=yyy; 但没有写 export JD_COOKIE=)
         val isRawJdCookie = (sanitized.contains("pt_key=") || sanitized.contains("pt_pin=")) &&
                 !sanitized.startsWith("export ", ignoreCase = true) &&
