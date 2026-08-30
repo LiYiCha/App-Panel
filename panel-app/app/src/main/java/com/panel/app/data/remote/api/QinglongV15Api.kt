@@ -428,14 +428,14 @@ interface QinglongV15Api {
         @Header("Authorization") auth: String,
         @Query("file") file: String,
         @Query("path") path: String? = null
-    ): Response<QlScriptContentResp>
+    ): Response<com.google.gson.JsonElement>
 
     @GET("api/scripts/{file}")
     suspend fun getLegacyScriptContent(
         @Header("Authorization") auth: String,
         @Path("file", encoded = true) file: String,
         @Query("path") path: String? = null
-    ): Response<QlScriptContentResp>
+    ): Response<com.google.gson.JsonElement>
 
     @POST("api/scripts")
     suspend fun createScript(

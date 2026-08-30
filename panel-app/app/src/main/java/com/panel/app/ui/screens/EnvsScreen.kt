@@ -43,7 +43,7 @@ fun EnvsScreen(
 
     LaunchedEffect(showCreateDialog) {
         if (showCreateDialog) {
-            editingEnv = UnifiedEnv(System.currentTimeMillis().toString(), "NEW_ENV", "", "备注")
+            editingEnv = UnifiedEnv("new_" + System.currentTimeMillis(), "", "", "")
             onDismissCreateDialog()
         }
     }

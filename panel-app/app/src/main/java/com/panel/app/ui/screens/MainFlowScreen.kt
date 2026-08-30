@@ -90,8 +90,23 @@ fun MainFlowScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                ),
+                navigationIcon = {
+                    IconButton(onClick = onOpenPanelManager) {
+                        Icon(
+                            imageVector = Icons.Default.Dns,
+                            contentDescription = "面板管理",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                },
                 title = {
-                    Column {
+                    Column(modifier = Modifier.padding(start = 4.dp)) {
                         Text(
                             text = selectedTab.title,
                             fontSize = 17.sp,
@@ -99,7 +114,7 @@ fun MainFlowScreen(
                         )
                         if (currentPanel != null) {
                             Text(
-                                text = currentPanel.name,
+                                text = "${currentPanel.name} (${if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙"})",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

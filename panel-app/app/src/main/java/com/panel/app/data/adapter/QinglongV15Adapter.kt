@@ -548,11 +548,13 @@ class QinglongV15Adapter(
 
     override suspend fun saveEnv(env: UnifiedEnv): Result<Boolean> {
         return try {
-            if (env.id.startsWith("tmp_") || env.id.isEmpty() || env.id.toLongOrNull() == null) {
+            val isNew = env.id.isEmpty() || env.id.startsWith("new_") || env.id.startsWith("tmp_") || env.id.toLongOrNull() == null || env.id.length > 8
+            if (isNew) {
                 val resp = api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name, env.value, env.remarks)))
                 if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("创建环境变量失败: HTTP ${resp.code()}"))
             } else {
-                val resp = api.updateEnv(getAuthHeader(), QlUpdateEnvReq(env.id.toIntOrNull() ?: env.id, env.name, env.value, env.remarks))
+                val cleanId = env.id.toDoubleOrNull()?.toLong() ?: env.id.toLongOrNull() ?: env.id
+                val resp = api.updateEnv(getAuthHeader(), QlUpdateEnvReq(cleanId, env.name, env.value, env.remarks))
                 if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("更新环境变量失败: HTTP ${resp.code()}"))
             }
         } catch (e: Exception) {
@@ -810,6 +812,21 @@ class QinglongV15Adapter(
         }
     }
 
+    private fun extractScriptContent(elem: com.google.gson.JsonElement): String {
+        return when {
+            elem.isJsonObject && elem.asJsonObject.has("data") -> {
+                val d = elem.asJsonObject.get("data")
+                when {
+                    d.isJsonPrimitive -> d.asString
+                    d.isJsonObject && d.asJsonObject.has("content") -> d.asJsonObject.get("content").asString
+                    else -> d.toString()
+                }
+            }
+            elem.isJsonPrimitive -> elem.asString
+            else -> elem.toString()
+        }
+    }
+
     override suspend fun readScript(path: String): Result<String> {
         return try {
             val normalized = path.replace('\\', '/')
@@ -820,22 +837,22 @@ class QinglongV15Adapter(
             val version = getPanelVersion()
             if (isVersionAtLeast(version, "2.10.0")) {
                 // === 新版路径 ===
-                // 首选：文件名 + 目录分离传参
-                val resp = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath)
-                if (resp.isSuccessful && resp.body()?.data != null) {
-                    return Result.success(resp.body()!!.data!!)
+                // 首选：文件名 + 目录分离传参（dirPath 为空时传 null，Retrofit 不发 path 参数，完全符合青龙后端）
+                val resp = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath?.ifEmpty { null })
+                if (resp.isSuccessful && resp.body() != null) {
+                    return Result.success(extractScriptContent(resp.body()!!))
                 }
-                // 次选：整体路径作为 file 参数（某些新版青龙的实现）
+                // 次选：整体路径作为 file 参数
                 val resp2 = api.getScriptDetail(getAuthHeader(), file = normalized, path = null)
-                if (resp2.isSuccessful && resp2.body()?.data != null) {
-                    return Result.success(resp2.body()!!.data!!)
+                if (resp2.isSuccessful && resp2.body() != null) {
+                    return Result.success(extractScriptContent(resp2.body()!!))
                 }
                 Result.failure(Exception("读取脚本内容失败 (v$version): HTTP ${resp.code()}"))
             } else {
                 // === 旧版路径 (<2.10.0) ===
-                val legacyResp = api.getLegacyScriptContent(getAuthHeader(), file = fileName, path = dirPath)
-                if (legacyResp.isSuccessful && legacyResp.body()?.data != null) {
-                    return Result.success(legacyResp.body()!!.data!!)
+                val legacyResp = api.getLegacyScriptContent(getAuthHeader(), file = fileName, path = dirPath?.ifEmpty { null })
+                if (legacyResp.isSuccessful && legacyResp.body() != null) {
+                    return Result.success(extractScriptContent(legacyResp.body()!!))
                 }
                 Result.failure(Exception("读取脚本内容失败 (legacy v$version): HTTP ${legacyResp.code()}"))
             }
@@ -870,7 +887,17 @@ class QinglongV15Adapter(
         return try {
             val dirName = path.substringAfterLast("/")
             val parentPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
-            val resp = api.createScript(getAuthHeader(), QlCreateScriptReq(directory = dirName, path = parentPath))
+            // 真实青龙 API POST /api/scripts 的 Joi 校验规则要求 filename: Joi.string().required()
+            // 必须传入 filename（设为 dirName），同时 directory 字段触发青龙服务端 if (directory) fs.mkdir 逻辑
+            val resp = api.createScript(
+                getAuthHeader(),
+                QlCreateScriptReq(
+                    filename = dirName,
+                    directory = dirName,
+                    path = parentPath,
+                    content = ""
+                )
+            )
             if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("新建目录失败: HTTP ${resp.code()}"))
         } catch (e: Exception) {
             Result.failure(e)

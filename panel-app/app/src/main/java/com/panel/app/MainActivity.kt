@@ -214,7 +214,17 @@ class MainActivity : ComponentActivity() {
                             TaskDetailScreen(
                                 taskId = taskId,
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onOpenLogViewer = { title, tId, logPath ->
+                                    val encTitle = Uri.encode(title)
+                                    if (logPath.isNotBlank()) {
+                                        val encPath = Uri.encode(logPath)
+                                        navController.navigate("log_viewer?title=$encTitle&path=$encPath")
+                                    } else {
+                                        val encId = Uri.encode(tId)
+                                        navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
+                                    }
+                                }
                             )
                         }
 

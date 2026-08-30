@@ -15,7 +15,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 data class MainUiState(
-    val isDarkTheme: Boolean = true,
+    val isDarkTheme: Boolean = false,
     val selectedPanelIndex: Int = 0,
     val currentTab: BottomNavScreen = BottomNavScreen.Tasks,
     val panels: List<PanelInstance> = emptyList(),
@@ -49,7 +49,7 @@ class MainViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(
         MainUiState(
-            isDarkTheme = prefs.getBoolean("is_dark_theme", true),
+            isDarkTheme = prefs.getBoolean("is_dark_theme", false),
             isDevMode = prefs.getBoolean("is_dev_mode", false)
         )
     )

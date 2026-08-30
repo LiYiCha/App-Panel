@@ -36,22 +36,19 @@ fun StandaloneScriptEditorScreen(
     var fontSizeSp by remember { mutableStateOf(12) }
     var showSearchBar by remember { mutableStateOf(false) }
 
-    // 动态脚本内容，非写死假数据
-    var codeContent by remember {
-        mutableStateOf(
-            if (initialContent.isNotEmpty()) initialContent else {
-                when {
-                    scriptName.endsWith(".py") -> "#!/usr/bin/env python3\n# Script: $scriptName\n\nimport os\nimport sys\n\nprint('Running $scriptName')\n"
-                    scriptName.endsWith(".js") -> "// Node.js Script: $scriptName\nconsole.log('Running $scriptName');\n"
-                    scriptName.endsWith(".sh") -> "#!/bin/bash\n# Script: $scriptName\necho 'Running $scriptName'\n"
-                    else -> "// Script: $scriptName\n"
-                }
-            }
-        )
+    // 动态脚本真实源码：使用 remember(initialContent) 与 LaunchedEffect 确保真实文件源码加载后立刻呈现
+    var codeContent by remember(initialContent) {
+        mutableStateOf(initialContent)
+    }
+
+    LaunchedEffect(initialContent) {
+        if (initialContent.isNotEmpty() && codeContent != initialContent) {
+            codeContent = initialContent
+        }
     }
 
     val lineCount = remember(codeContent) {
-        codeContent.lines().size
+        if (codeContent.isEmpty()) 1 else codeContent.lines().size
     }
 
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -171,26 +168,35 @@ fun StandaloneScriptEditorScreen(
                     }
                 }
 
-                // 核心代码输入区
-                TextField(
-                    value = codeContent,
-                    onValueChange = { if (isEditable) codeContent = it },
-                    readOnly = !isEditable,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface),
-                    textStyle = LocalTextStyle.current.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = fontSizeSp.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    ),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                // 核心代码输入区（只读模式允许自由选中文本复制）
+                androidx.compose.foundation.text.selection.SelectionContainer(
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                ) {
+                    TextField(
+                        value = codeContent,
+                        onValueChange = { if (isEditable) codeContent = it },
+                        readOnly = !isEditable,
+                        placeholder = {
+                            if (codeContent.isEmpty()) {
+                                Text("正在从服务端读取脚本内容...", fontSize = fontSizeSp.sp, fontFamily = FontFamily.Monospace)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface),
+                        textStyle = LocalTextStyle.current.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = fontSizeSp.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                        )
                     )
-                )
+                }
             }
         }
     }
