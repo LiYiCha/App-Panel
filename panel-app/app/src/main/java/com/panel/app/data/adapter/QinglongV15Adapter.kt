@@ -41,7 +41,7 @@ class QinglongV15Adapter(
     private suspend fun getPanelVersion(): String {
         cachedPanelVersion?.let { return it }
         return try {
-            val resp = api.getSystemConfig(getAuthHeader())
+            val resp = api.getSystemInfo(getAuthHeader())
             if (resp.isSuccessful && resp.body() != null) {
                 val elem = resp.body()!!
                 val dataObj = when {
@@ -52,16 +52,23 @@ class QinglongV15Adapter(
                 }
                 val version = dataObj?.get("version")?.asString
                     ?: dataObj?.get("qlVersion")?.asString
-                    ?: "0.0.0"
-                cachedPanelVersion = version
-                version
-            } else {
-                cachedPanelVersion = "0.0.0"
-                "0.0.0"
+                if (!version.isNullOrEmpty()) {
+                    cachedPanelVersion = version
+                    return version
+                }
             }
+            // 兜底尝试 getSystemConfig
+            val cfgResp = api.getSystemConfig(getAuthHeader())
+            val cfgElem = cfgResp.body()
+            val cfgDataObj = if (cfgElem != null && cfgElem.isJsonObject && cfgElem.asJsonObject.has("data")) {
+                cfgElem.asJsonObject.get("data").let { if (it.isJsonObject) it.asJsonObject else null }
+            } else cfgElem?.asJsonObject
+            val cfgVersion = cfgDataObj?.get("version")?.asString ?: "2.15.0"
+            cachedPanelVersion = cfgVersion
+            cfgVersion
         } catch (_: Exception) {
-            cachedPanelVersion = "0.0.0"
-            "0.0.0"
+            cachedPanelVersion = "2.15.0"
+            "2.15.0"
         }
     }
 
@@ -225,7 +232,17 @@ class QinglongV15Adapter(
         return try {
             val cleanIds = taskIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
             val resp = api.deleteCrons(getAuthHeader(), cleanIds)
-            if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("删除任务失败: HTTP ${resp.code()}"))
+            if (resp.isSuccessful) {
+                return Result.success(true)
+            }
+            val errBody = resp.errorBody()?.string() ?: ""
+            if (errBody.contains("type", ignoreCase = true) || resp.code() == 400) {
+                val retry1 = api.deleteCronsWithPayload(getAuthHeader(), mapOf("ids" to cleanIds, "type" to 0))
+                if (retry1.isSuccessful) return Result.success(true)
+                val retry2 = api.deleteCronsWithPayload(getAuthHeader(), mapOf("ids" to cleanIds, "type" to "cron"))
+                if (retry2.isSuccessful) return Result.success(true)
+            }
+            Result.failure(Exception("删除任务失败: HTTP ${resp.code()} $errBody".trim()))
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -553,11 +570,11 @@ class QinglongV15Adapter(
         return try {
             val isNew = env.id.isEmpty() || env.id.startsWith("new_") || env.id.startsWith("tmp_") || env.id.toLongOrNull() == null || env.id.length > 8
             if (isNew) {
-                val resp = api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name, env.value, env.remarks)))
+                val resp = api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name, env.value, env.remarks ?: "")))
                 if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("创建环境变量失败: HTTP ${resp.code()}"))
             } else {
                 val cleanId = env.id.toDoubleOrNull()?.toLong() ?: env.id.toLongOrNull() ?: env.id
-                val resp = api.updateEnv(getAuthHeader(), QlUpdateEnvReq(cleanId, env.name, env.value, env.remarks))
+                val resp = api.updateEnv(getAuthHeader(), QlUpdateEnvReq(cleanId, env.name, env.value, env.remarks ?: ""))
                 if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("更新环境变量失败: HTTP ${resp.code()}"))
             }
         } catch (e: Exception) {
@@ -710,10 +727,10 @@ class QinglongV15Adapter(
 
     override suspend fun batchDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Long> = depIds.mapNotNull {
-                it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull()
+            val cleanIds: List<Any> = depIds.map {
+                it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it
             }
-            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID无效"))
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空"))
             val resp = api.deleteDependencies(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) {
                 Result.success(true)
@@ -724,7 +741,7 @@ class QinglongV15Adapter(
             }
         } catch (e: Exception) {
             try {
-                val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+                val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
                 if (cleanIds.isEmpty()) return Result.failure(e)
                 val forceResp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
                 if (forceResp.isSuccessful) Result.success(true) else Result.failure(e)
@@ -736,8 +753,8 @@ class QinglongV15Adapter(
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
-            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID无效"))
+            val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空"))
             val resp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("强制清除记录失败: HTTP ${resp.code()}"))
         } catch (e: Exception) {
@@ -839,29 +856,27 @@ class QinglongV15Adapter(
             val fileName = normalized.substringAfterLast("/")
             val dirPath = if (normalized.contains("/")) normalized.substringBeforeLast("/") else null
 
-            // 根据面板版本选择接口：>= 2.10.0 使用新版 /api/scripts/detail，旧版走 /api/scripts/:file
-            val version = getPanelVersion()
-            if (isVersionAtLeast(version, "2.10.0")) {
-                // === 新版路径 ===
-                // 首选：文件名 + 目录分离传参（dirPath 为空时传 null，Retrofit 不发 path 参数，完全符合青龙后端）
-                val resp = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath?.ifEmpty { null })
-                if (resp.isSuccessful && resp.body() != null) {
-                    return Result.success(extractScriptContent(resp.body()!!))
-                }
-                // 次选：整体路径作为 file 参数
-                val resp2 = api.getScriptDetail(getAuthHeader(), file = normalized, path = null)
-                if (resp2.isSuccessful && resp2.body() != null) {
-                    return Result.success(extractScriptContent(resp2.body()!!))
-                }
-                Result.failure(Exception("读取脚本内容失败 (v$version): HTTP ${resp.code()}"))
-            } else {
-                // === 旧版路径 (<2.10.0) ===
+            // 优先直接调用现代青龙标准接口 /api/scripts/detail (官方唯一支持)
+            val resp = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath?.ifEmpty { null })
+            if (resp.isSuccessful && resp.body() != null) {
+                return Result.success(extractScriptContent(resp.body()!!))
+            }
+
+            // 次选：整体路径作为 file 参数再尝试一次
+            val resp2 = api.getScriptDetail(getAuthHeader(), file = normalized, path = null)
+            if (resp2.isSuccessful && resp2.body() != null) {
+                return Result.success(extractScriptContent(resp2.body()!!))
+            }
+
+            // 仅在明确遇到 404 / 405 时才降级为 legacy 接口
+            if (resp.code() == 404 || resp.code() == 405) {
                 val legacyResp = api.getLegacyScriptContent(getAuthHeader(), file = fileName, path = dirPath?.ifEmpty { null })
                 if (legacyResp.isSuccessful && legacyResp.body() != null) {
                     return Result.success(extractScriptContent(legacyResp.body()!!))
                 }
-                Result.failure(Exception("读取脚本内容失败 (legacy v$version): HTTP ${legacyResp.code()}"))
             }
+
+            Result.failure(Exception("读取脚本内容失败: HTTP ${resp.code()}"))
         } catch (e: Exception) {
             Result.failure(e)
         }

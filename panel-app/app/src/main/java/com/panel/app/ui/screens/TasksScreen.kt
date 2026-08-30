@@ -113,15 +113,6 @@ fun TasksScreen(
                     )
                 }
             }
-
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(
-                onClick = { viewModel.setTaskBatchMode(!uiState.isTaskBatchMode) },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text(if (uiState.isTaskBatchMode) "完成" else "批量", fontSize = 11.sp)
-            }
         }
 
         // 顶部批量操作栏 (置于顶部，绝不占用主体列表空间)

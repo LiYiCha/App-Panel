@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,6 +24,7 @@ import com.panel.app.data.model.UnifiedEnv
 import com.panel.app.data.parser.UniversalEnvParser
 import com.panel.app.ui.viewmodel.MainViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnvsScreen(
     viewModel: MainViewModel,
@@ -66,27 +68,15 @@ fun EnvsScreen(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("搜索变量名称或备注...", fontSize = 11.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("搜索变量名称或备注...", fontSize = 11.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                modifier = Modifier.weight(1f),
-                maxLines = 1
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(
-                onClick = { viewModel.setEnvBatchMode(!uiState.isEnvBatchMode) },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Text(if (uiState.isEnvBatchMode) "完成" else "批量", fontSize = 11.sp)
-            }
-        }
+            shape = RoundedCornerShape(10.dp),
+            maxLines = 1
+        )
 
         // 顶部批量操作栏 (置于顶部，绝不占用主体列表空间)
         if (uiState.isEnvBatchMode) {
@@ -132,38 +122,45 @@ fun EnvsScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
-            if (filteredEnvs.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = 40.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.DataObject, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(if (searchQuery.isEmpty()) "暂无环境变量，可点击上方新建或智能导入" else "未匹配到相关环境变量", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            PullToRefreshBox(
+                isRefreshing = uiState.isLoading,
+                onRefresh = { viewModel.refreshCurrentPanel() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                if (filteredEnvs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.DataObject, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(if (searchQuery.isEmpty()) "暂无环境变量，可点击上方新建或智能导入" else "未匹配到相关环境变量", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    items(filteredEnvs, key = { it.id }) { env ->
-                        EnvCard(
-                            env = env,
-                            isBatchMode = uiState.isEnvBatchMode,
-                            onSelect = { viewModel.toggleEnvSelection(env.id) },
-                            onToggleEnable = { newStatus -> viewModel.toggleEnv(env.id, newStatus) },
-                            onCopy = {
-                                clipboardManager.setText(AnnotatedString(env.value))
-                                Toast.makeText(context, "全量明文变量已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                            },
-                            onEdit = { editingEnv = env },
-                            onSubEdit = { subItemEditingEnv = env },
-                            onDelete = { deletingEnv = env }
-                        )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(bottom = 16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(filteredEnvs, key = { it.id }) { env ->
+                            EnvCard(
+                                env = env,
+                                isBatchMode = uiState.isEnvBatchMode,
+                                onSelect = { viewModel.toggleEnvSelection(env.id) },
+                                onToggleEnable = { newStatus -> viewModel.toggleEnv(env.id, newStatus) },
+                                onCopy = {
+                                    clipboardManager.setText(AnnotatedString(env.value))
+                                    Toast.makeText(context, "全量明文变量已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                                },
+                                onEdit = { editingEnv = env },
+                                onSubEdit = { subItemEditingEnv = env },
+                                onDelete = { deletingEnv = env }
+                            )
+                        }
                     }
                 }
             }

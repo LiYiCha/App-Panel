@@ -126,6 +126,16 @@ fun MainFlowScreen(
                     // 统一置于顶部右上角，绝不占用内容主体高度
                     when (selectedTab) {
                         BottomNavScreen.Tasks -> {
+                            TextButton(
+                                onClick = { viewModel.setTaskBatchMode(!uiState.isTaskBatchMode) }
+                            ) {
+                                Text(
+                                    text = if (uiState.isTaskBatchMode) "完成" else "批量",
+                                    fontSize = 13.sp,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                             if (tasksSubTab == 0) {
                                 IconButton(onClick = { showCreateTaskDialog = true }) {
                                     Icon(Icons.Default.Add, contentDescription = "新建任务")
@@ -137,6 +147,16 @@ fun MainFlowScreen(
                             }
                         }
                         BottomNavScreen.Envs -> {
+                            TextButton(
+                                onClick = { viewModel.setEnvBatchMode(!uiState.isEnvBatchMode) }
+                            ) {
+                                Text(
+                                    text = if (uiState.isEnvBatchMode) "完成" else "批量",
+                                    fontSize = 13.sp,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    color = if (uiState.isEnvBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                             IconButton(onClick = { showImportEnvDialog = true }) {
                                 Icon(Icons.Default.PostAdd, contentDescription = "智能导入")
                             }

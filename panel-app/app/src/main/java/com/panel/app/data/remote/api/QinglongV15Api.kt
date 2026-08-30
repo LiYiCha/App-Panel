@@ -260,6 +260,12 @@ interface QinglongV15Api {
         @Body ids: List<Any>
     ): Response<QlCommonResp>
 
+    @HTTP(method = "DELETE", path = "api/crons", hasBody = true)
+    suspend fun deleteCronsWithPayload(
+        @Header("Authorization") auth: String,
+        @Body payload: Map<String, Any?>
+    ): Response<QlCommonResp>
+
     @PUT("api/crons/pin")
     suspend fun pinCrons(
         @Header("Authorization") auth: String,
@@ -486,6 +492,12 @@ interface QinglongV15Api {
         @Header("Authorization") auth: String,
         @Path("file", encoded = true) file: String,
         @Query("path") path: String? = null
+    ): Response<com.google.gson.JsonElement>
+
+    // 7. 系统信息 (System)
+    @GET("api/system")
+    suspend fun getSystemInfo(
+        @Header("Authorization") auth: String
     ): Response<com.google.gson.JsonElement>
 
     @GET("api/system/config")

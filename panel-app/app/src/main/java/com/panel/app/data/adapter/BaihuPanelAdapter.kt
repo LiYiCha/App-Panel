@@ -387,12 +387,13 @@ class BaihuPanelAdapter(
 
     override suspend fun saveEnv(env: UnifiedEnv): Result<Boolean> {
         return try {
-            if (env.id.isEmpty() || env.id.startsWith("tmp_")) {
-                val resp = api.createEnv(getAuthHeader(), getCookieHeader(), BaihuCreateEnvReq(env.name, env.value, env.remarks, enabled = env.enabled))
-                if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("创建环境变量失败: HTTP ${resp.code()}"))
+            val isNew = env.id.isEmpty() || env.id.startsWith("new_") || env.id.startsWith("tmp_")
+            if (isNew) {
+                val resp = api.createEnv(getAuthHeader(), getCookieHeader(), BaihuCreateEnvReq(env.name, env.value, env.remarks ?: "", enabled = env.enabled))
+                if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("创建白虎环境变量失败: HTTP ${resp.code()}"))
             } else {
-                val resp = api.updateEnv(getAuthHeader(), getCookieHeader(), env.id, BaihuCreateEnvReq(env.name, env.value, env.remarks, enabled = env.enabled))
-                if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("更新环境变量失败: HTTP ${resp.code()}"))
+                val resp = api.updateEnv(getAuthHeader(), getCookieHeader(), env.id, BaihuCreateEnvReq(env.name, env.value, env.remarks ?: "", enabled = env.enabled))
+                if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("更新白虎环境变量失败: HTTP ${resp.code()}"))
             }
         } catch (e: Exception) {
             Result.failure(e)

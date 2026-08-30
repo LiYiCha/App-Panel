@@ -1,4 +1,4 @@
-﻿package com.panel.app.ui.screens
+package com.panel.app.ui.screens
 
 import android.content.Context
 import android.widget.Toast
@@ -51,18 +51,12 @@ fun BaihuPluginScreen(
     val coroutineScope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
-    var isEngineRunning by remember { mutableStateOf(false) }
+    val uiState by viewModel.uiState.collectAsState()
+    val isEngineRunning = uiState.isBaihuEngineRunning
+    val enginePid = uiState.baihuEnginePid
+    val enginePort = uiState.baihuEnginePort
+    val engineLogs = uiState.baihuEngineLogs
     var isStarting by remember { mutableStateOf(false) }
-    var enginePort by remember { mutableStateOf("18082") }
-    var enginePid by remember { mutableStateOf<Int?>(null) }
-
-    val engineLogs = remember {
-        mutableStateListOf(
-            "[System] 白虎面板嵌入式运行时准备就绪",
-            "[System] 核心版本: Baihu Engine v2.1.0-embedded",
-            "[System] 本地工作目录: /data/user/0/com.panel.app/files/baihu"
-        )
-    }
 
     val pluginPackages = remember {
         mutableStateListOf(
@@ -99,29 +93,6 @@ fun BaihuPluginScreen(
     var showInstallPluginDialog by remember { mutableStateOf(false) }
     var newPluginPath by remember { mutableStateOf("") }
     var newPluginName by remember { mutableStateOf("") }
-
-    fun toggleEngine() {
-        if (isEngineRunning) {
-            isEngineRunning = false
-            enginePid = null
-            engineLogs.add("[Process] 引擎守护进程已安全终止 (SIGTERM)")
-            Toast.makeText(context, "白虎面板引擎已停止", Toast.LENGTH_SHORT).show()
-        } else {
-            isStarting = true
-            coroutineScope.launch {
-                engineLogs.add("[Daemon] 正在初始化白虎面板内置存储与 SQLite 数据库...")
-                delay(600)
-                engineLogs.add("[Daemon] 加载内置路由组件与任务调度器...")
-                delay(600)
-                val assignedPid = 18000 + (100..999).random()
-                enginePid = assignedPid
-                isEngineRunning = true
-                isStarting = false
-                engineLogs.add("[Server] 白虎面板服务启动成功！正在监听 127.0.0.1:$enginePort (PID: $assignedPid)")
-                Toast.makeText(context, "白虎面板运行成功！监听端口 $enginePort", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     Scaffold(
         topBar = {
@@ -226,12 +197,47 @@ fun BaihuPluginScreen(
                             }
                         }
 
+                        // 默认管理员凭据展示 (首次运行免密初始化)
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("初始管理员凭据 (首次运行免密创建)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("账号: admin    密码: admin123", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString("admin / admin123"))
+                                        Toast.makeText(context, "已复制管理员账号密码 (admin / admin123)", Toast.LENGTH_SHORT).show()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text("复制凭证", fontSize = 11.sp)
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Button(
-                                onClick = { toggleEngine() },
+                                onClick = {
+                                    if (isEngineRunning) {
+                                        viewModel.stopBaihuEngine()
+                                    } else {
+                                        viewModel.startBaihuEngine(enginePort)
+                                    }
+                                },
                                 enabled = !isStarting,
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp),
@@ -239,29 +245,30 @@ fun BaihuPluginScreen(
                                     containerColor = if (isEngineRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                 )
                             ) {
-                                if (isStarting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("启动中...", fontSize = 12.sp)
-                                } else {
-                                    Icon(if (isEngineRunning) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(if (isEngineRunning) "停止运行" else "手动运行面板", fontSize = 12.sp)
-                                }
+                                Icon(if (isEngineRunning) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (isEngineRunning) "停止运行" else "手动运行面板", fontSize = 12.sp)
                             }
 
                             if (isEngineRunning) {
-                                OutlinedButton(
+                                Button(
                                     onClick = {
-                                        clipboard.setText(AnnotatedString("http://127.0.0.1:$enginePort"))
-                                        Toast.makeText(context, "本地面板地址已复制: http://127.0.0.1:$enginePort", Toast.LENGTH_SHORT).show()
+                                        val idx = uiState.panels.indexOfFirst { it.id == "baihu_builtin_local" }
+                                        if (idx >= 0) {
+                                            viewModel.switchPanel(idx)
+                                            Toast.makeText(context, "已切换至内置白虎面板！", Toast.LENGTH_SHORT).show()
+                                            onBack()
+                                        } else {
+                                            clipboard.setText(AnnotatedString("http://127.0.0.1:$enginePort"))
+                                            Toast.makeText(context, "本地地址已复制: http://127.0.0.1:$enginePort", Toast.LENGTH_SHORT).show()
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Dns, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("复制访问地址", fontSize = 12.sp)
+                                    Text("接入该面板", fontSize = 12.sp)
                                 }
                             }
                         }
@@ -276,9 +283,9 @@ fun BaihuPluginScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("引擎输出日志", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("引擎实时输出日志", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TextButton(
-                            onClick = { engineLogs.clear() },
+                            onClick = { viewModel.clearBaihuLogs() },
                             contentPadding = PaddingValues(0.dp)
                         ) {
                             Text("清空", fontSize = 11.sp)

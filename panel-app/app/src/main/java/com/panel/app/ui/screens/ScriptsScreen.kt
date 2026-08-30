@@ -48,35 +48,7 @@ fun ScriptsScreen(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 顶部工具行：标题、树状统计、刷新按键
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Text(
-                    text = "脚本文件目录树 (${uiState.scriptTree.size})",
-                    fontSize = 13.sp,
-                    style = MaterialTheme.typography.titleSmall
-                )
-            }
-
-            IconButton(
-                onClick = {
-                    viewModel.refreshPanelRemoteData(viewModel.getActivePanel())
-                    Toast.makeText(context, "已刷新脚本文件列表", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
-            }
-        }
-
-        // 2. 脚本与目录树形列表 (带统一规范的下拉刷新手势)
+        // 脚本与目录树形列表 (纯下拉手势刷新，已删除原来冗余的顶部刷新行)
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = uiState.isLoading,
             onRefresh = { viewModel.refreshCurrentPanel() },
