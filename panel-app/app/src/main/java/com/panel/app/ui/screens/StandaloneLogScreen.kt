@@ -19,6 +19,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -189,6 +191,14 @@ fun StandaloneLogScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(8.dp)
+                                .pointerInput(Unit) {
+                                    detectTransformGestures { _, _, zoom, _ ->
+                                        if (zoom != 1f) {
+                                            val target = fontSizeSp * zoom
+                                            fontSizeSp = target.coerceIn(8f, 26f).toInt()
+                                        }
+                                    }
+                                }
                         ) {
                         itemsIndexed(filteredLines) { index, line ->
                             Row(

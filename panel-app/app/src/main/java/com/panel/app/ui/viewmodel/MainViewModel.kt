@@ -40,6 +40,7 @@ data class MainUiState(
     val baihuEnginePid: Int? = null,
     val baihuEnginePort: String = "18082",
     val baihuEngineLogs: List<String> = emptyList(),
+    val expandedScriptFolders: Set<String> = emptySet(),
     val toastMessage: String? = null
 )
 
@@ -429,7 +430,8 @@ class MainViewModel @Inject constructor(
             if (res.isSuccess) {
                 _uiState.value = _uiState.value.copy(toastMessage = "任务 [$name] 创建成功！")
             } else {
-                _uiState.value = _uiState.value.copy(toastMessage = "创建任务已同步")
+                val err = res.exceptionOrNull()?.message ?: "未知错误"
+                _uiState.value = _uiState.value.copy(toastMessage = "创建任务失败: $err")
             }
             refreshPanelRemoteData(getActivePanel())
         }
@@ -654,6 +656,16 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(configContent = content, toastMessage = "配置已同步保存")
             }
         }
+    }
+
+    fun toggleScriptFolderExpanded(path: String) {
+        val current = _uiState.value.expandedScriptFolders
+        val next = if (current.contains(path)) current - path else current + path
+        _uiState.value = _uiState.value.copy(expandedScriptFolders = next)
+    }
+
+    fun setScriptFoldersExpanded(paths: Set<String>) {
+        _uiState.value = _uiState.value.copy(expandedScriptFolders = _uiState.value.expandedScriptFolders + paths)
     }
 
     // ==================== 4. 环境变量 ====================
@@ -912,37 +924,31 @@ class MainViewModel @Inject constructor(
     private var baihuJob: kotlinx.coroutines.Job? = null
 
     fun startBaihuEngine(port: String = "18082") {
-        if (_uiState.value.isBaihuEngineRunning) return
-        val pid = (12000..65000).random()
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
-        val initLogs = listOf(
-            "[${sdf.format(java.util.Date())}] [INFO] [CoreEngine] 正在启动白虎面板核心守护进程 (PID: $pid)...",
-            "[${sdf.format(java.util.Date())}] [INFO] [Database] 初始化本地 SQLite 数据库连接: /data/data/${context.packageName}/files/baihu.db",
-            "[${sdf.format(java.util.Date())}] [INFO] [Migrate] 执行数据库结构自动迁移完成 (12 张表已就绪)",
-            "[${sdf.format(java.util.Date())}] [INFO] [Auth] 初始化内置管理员凭证: 用户名 admin, 初始密码 admin123",
-            "[${sdf.format(java.util.Date())}] [INFO] [Scheduler] 初始化分布式 Cron 调度器及工作协程池 (容量: 64)...",
-            "[${sdf.format(java.util.Date())}] [INFO] [Router] 注册 API v1 路由模块: /tasks, /deps, /env, /files, /ws",
-            "[${sdf.format(java.util.Date())}] [INFO] [Server] HTTP 服务成功监听于 127.0.0.1:$port (双向心跳守护已启用)",
-            "[${sdf.format(java.util.Date())}] [INFO] [CoreEngine] 白虎面板守护核心运行就绪，API 服务正常响应！"
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val localUrl = "http://127.0.0.1:$port"
+        val realLogs = mutableListOf(
+            "[${sdf.format(java.util.Date())}] 本地宿主白虎面板配置已加载",
+            "[${sdf.format(java.util.Date())}] 访问地址: $localUrl",
+            "[${sdf.format(java.util.Date())}] 默认管理员账号: admin",
+            "[${sdf.format(java.util.Date())}] 默认管理员密码: admin123",
+            "[${sdf.format(java.util.Date())}] 正在探测本地 127.0.0.1:$port 连通性..."
         )
         _uiState.value = _uiState.value.copy(
             isBaihuEngineRunning = true,
-            baihuEnginePid = pid,
             baihuEnginePort = port,
-            baihuEngineLogs = initLogs,
-            toastMessage = "白虎面板核心引擎已启动 (PID: $pid)"
+            baihuEngineLogs = realLogs,
+            toastMessage = "已启用白虎面板本地管理配置"
         )
 
-        // 自动将本地内置白虎面板实例添加到面板列表中（若尚未添加）
-        val localUrl = "http://127.0.0.1:$port"
+        // 自动将本地白虎面板实例添加到面板列表中（若尚未添加）
         val exists = _uiState.value.panels.any { it.baseUrl.trimEnd('/') == localUrl }
         if (!exists) {
             val localPanel = com.panel.app.data.model.PanelInstance(
                 id = "baihu_builtin_local",
-                name = "内置白虎面板 (本地引擎)",
+                name = "内置白虎面板 (本地)",
                 type = com.panel.app.data.model.PanelType.BAIHU,
                 baseUrl = localUrl,
-                token = "local_builtin_token",
+                token = "",
                 username = "admin"
             )
             viewModelScope.launch {
@@ -950,30 +956,32 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        // 启动后台心跳日志保活
-        baihuJob?.cancel()
-        baihuJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-            while (_uiState.value.isBaihuEngineRunning) {
-                kotlinx.coroutines.delay(10000)
-                if (!_uiState.value.isBaihuEngineRunning) break
-                val logItem = "[${sdf.format(java.util.Date())}] [DEBUG] [Heartbeat] 调度引擎保活正常，内存占用: 42.6MB，活跃协程: 18"
+        // 发起真实本地端口连通性探测，杜绝任何假日志
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress("127.0.0.1", port.toIntOrNull() ?: 18082), 1500)
+                socket.close()
+                val logItem = "[${sdf.format(java.util.Date())}] 端口 $port 探测成功：本地白虎面板服务正在响应！"
                 _uiState.value = _uiState.value.copy(
-                    baihuEngineLogs = (_uiState.value.baihuEngineLogs + logItem).takeLast(200)
+                    baihuEngineLogs = _uiState.value.baihuEngineLogs + logItem
+                )
+            } catch (_: Exception) {
+                val logItem = "[${sdf.format(java.util.Date())}] 端口 $port 探测未连接：当前宿主未监听该端口。可通过Termux/外部包启动真实白虎二进制。"
+                _uiState.value = _uiState.value.copy(
+                    baihuEngineLogs = _uiState.value.baihuEngineLogs + logItem
                 )
             }
         }
     }
 
     fun stopBaihuEngine() {
-        baihuJob?.cancel()
-        baihuJob = null
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
-        val stopLog = "[${sdf.format(java.util.Date())}] [WARN] [CoreEngine] 收到停止指令，白虎守护进程已安全优雅关闭。"
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val stopLog = "[${sdf.format(java.util.Date())}] 已关闭内置白虎面板本地管理。"
         _uiState.value = _uiState.value.copy(
             isBaihuEngineRunning = false,
-            baihuEnginePid = null,
             baihuEngineLogs = _uiState.value.baihuEngineLogs + stopLog,
-            toastMessage = "白虎面板核心引擎已停止运行"
+            toastMessage = "内置白虎面板管理已停止"
         )
     }
 

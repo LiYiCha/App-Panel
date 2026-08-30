@@ -181,7 +181,12 @@ class QinglongV15Adapter(
     override suspend fun createTask(name: String, command: String, schedule: String): Result<Boolean> {
         return try {
             val resp = api.createCron(getAuthHeader(), QlCreateCronReq(name, command, schedule))
-            if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("创建任务失败: HTTP ${resp.code()}"))
+            if (resp.isSuccessful) {
+                Result.success(true)
+            } else {
+                val err = resp.errorBody()?.string() ?: ""
+                Result.failure(Exception("创建任务失败: HTTP ${resp.code()} $err".trim()))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -230,19 +235,15 @@ class QinglongV15Adapter(
 
     override suspend fun deleteTask(taskIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds = taskIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
+            val cleanIds: List<Long> = taskIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("任务ID列表为空或无效"))
             val resp = api.deleteCrons(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) {
-                return Result.success(true)
+                Result.success(true)
+            } else {
+                val errBody = resp.errorBody()?.string() ?: ""
+                Result.failure(Exception("删除任务失败: HTTP ${resp.code()} $errBody".trim()))
             }
-            val errBody = resp.errorBody()?.string() ?: ""
-            if (errBody.contains("type", ignoreCase = true) || resp.code() == 400) {
-                val retry1 = api.deleteCronsWithPayload(getAuthHeader(), mapOf("ids" to cleanIds, "type" to 0))
-                if (retry1.isSuccessful) return Result.success(true)
-                val retry2 = api.deleteCronsWithPayload(getAuthHeader(), mapOf("ids" to cleanIds, "type" to "cron"))
-                if (retry2.isSuccessful) return Result.success(true)
-            }
-            Result.failure(Exception("删除任务失败: HTTP ${resp.code()} $errBody".trim()))
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -727,21 +728,21 @@ class QinglongV15Adapter(
 
     override suspend fun batchDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Any> = depIds.map {
-                it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it
-            }
-            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空"))
+            val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空或无效"))
             val resp = api.deleteDependencies(getAuthHeader(), cleanIds)
             if (resp.isSuccessful) {
                 Result.success(true)
             } else {
-                // 如果常规卸载失败（如依赖文件在容器物理系统不存在导致无法执行uninstall），调用 force 强制清理数据库记录
                 val forceResp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
-                if (forceResp.isSuccessful) Result.success(true) else Result.failure(Exception("删除依赖失败: HTTP ${resp.code()}"))
+                if (forceResp.isSuccessful) Result.success(true) else {
+                    val err = resp.errorBody()?.string() ?: ""
+                    Result.failure(Exception("删除依赖失败: HTTP ${resp.code()} $err".trim()))
+                }
             }
         } catch (e: Exception) {
             try {
-                val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
+                val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
                 if (cleanIds.isEmpty()) return Result.failure(e)
                 val forceResp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
                 if (forceResp.isSuccessful) Result.success(true) else Result.failure(e)
@@ -753,10 +754,13 @@ class QinglongV15Adapter(
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> {
         return try {
-            val cleanIds: List<Any> = depIds.map { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() ?: it }
-            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空"))
+            val cleanIds: List<Long> = depIds.mapNotNull { it.toDoubleOrNull()?.toLong() ?: it.toLongOrNull() }
+            if (cleanIds.isEmpty()) return Result.failure(Exception("依赖ID列表为空或无效"))
             val resp = api.forceDeleteDependencies(getAuthHeader(), cleanIds)
-            if (resp.isSuccessful) Result.success(true) else Result.failure(Exception("强制清除记录失败: HTTP ${resp.code()}"))
+            if (resp.isSuccessful) Result.success(true) else {
+                val err = resp.errorBody()?.string() ?: ""
+                Result.failure(Exception("强制清除记录失败: HTTP ${resp.code()} $err".trim()))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }

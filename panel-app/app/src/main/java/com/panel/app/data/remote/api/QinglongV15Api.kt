@@ -257,13 +257,7 @@ interface QinglongV15Api {
     @HTTP(method = "DELETE", path = "api/crons", hasBody = true)
     suspend fun deleteCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
-    ): Response<QlCommonResp>
-
-    @HTTP(method = "DELETE", path = "api/crons", hasBody = true)
-    suspend fun deleteCronsWithPayload(
-        @Header("Authorization") auth: String,
-        @Body payload: Map<String, Any?>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/crons/pin")
@@ -398,13 +392,13 @@ interface QinglongV15Api {
     @HTTP(method = "DELETE", path = "api/dependencies", hasBody = true)
     suspend fun deleteDependencies(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @HTTP(method = "DELETE", path = "api/dependencies/force", hasBody = true)
     suspend fun forceDeleteDependencies(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     // 5. 配置文件 (Configs)

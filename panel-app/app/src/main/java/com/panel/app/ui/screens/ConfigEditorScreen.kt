@@ -75,10 +75,7 @@ fun ConfigEditorScreen(
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回列表", modifier = Modifier.size(18.dp))
                     }
-                    Column {
-                        Text(text = "config / $editingFile", fontSize = 14.sp, style = MaterialTheme.typography.titleMedium)
-                        Text(text = "共 $lineCount 行代码 • ${if (isEditable) "编辑模式" else "查看模式"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(text = "config / $editingFile", fontSize = 14.sp, style = MaterialTheme.typography.titleMedium)
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

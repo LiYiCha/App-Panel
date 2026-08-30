@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -58,10 +60,7 @@ fun StandaloneScriptEditorScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(text = scriptName, fontSize = 14.sp, style = MaterialTheme.typography.titleMedium)
-                        Text(text = "共 $lineCount 行代码 • ${if (isEditable) "编辑模式" else "查看模式"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(text = scriptName, fontSize = 14.sp, style = MaterialTheme.typography.titleMedium)
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
@@ -142,11 +141,19 @@ fun StandaloneScriptEditorScreen(
                 )
             }
 
-            // 动态行号与代码编辑区域
+            // 动态行号与代码编辑区域 (支持双指手势捏合自由放大缩小字号)
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.surface)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            if (zoom != 1f) {
+                                val target = fontSizeSp * zoom
+                                fontSizeSp = target.coerceIn(9f, 26f).toInt()
+                            }
+                        }
+                    }
             ) {
                 // 行号栏
                 Column(

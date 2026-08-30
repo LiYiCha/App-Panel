@@ -23,6 +23,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -46,6 +48,7 @@ fun LogViewerScreen(
     var isLoading by remember { mutableStateOf(initialContent.isBlank()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchOpen by remember { mutableStateOf(false) }
+    var fontSizeSp by remember { mutableStateOf(11f) }
 
     fun fetchLog() {
         isLoading = true
@@ -101,41 +104,22 @@ fun LogViewerScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    if (isSearchOpen) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("搜索日志内容...", fontSize = 13.sp) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(end = 8.dp),
-                            trailingIcon = {
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "清除", modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                            }
+                    Column {
+                        Text(
+                            text = title,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium
                         )
-                    } else {
-                        Column {
+                        if (logPath.isNotBlank() || taskId.isNotBlank()) {
                             Text(
-                                text = title,
-                                fontSize = 15.sp,
+                                text = if (logPath.isNotBlank()) logPath else "Task ID: $taskId",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleMedium
+                                overflow = TextOverflow.Ellipsis
                             )
-                            if (logPath.isNotBlank() || taskId.isNotBlank()) {
-                                Text(
-                                    text = if (logPath.isNotBlank()) logPath else "Task ID: $taskId",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
                     }
                 },
@@ -183,76 +167,131 @@ fun LogViewerScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            if (isLoading) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(12.dp))
-                    Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                }
-            } else if (lines.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                }
-            } else {
-                androidx.compose.foundation.text.selection.SelectionContainer(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    LazyColumn(
-                        state = listState,
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 搜索栏移到内容区顶部，彻底解决在 TopAppBar 内部被截断、挤压的问题
+                if (isSearchOpen) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("搜索日志内容 (支持双指手势缩放字号)...", fontSize = 11.sp) },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "清除", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        },
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                if (isLoading) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        itemsIndexed(filteredLines) { _, (originalIndex, line) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 1.dp)
-                            ) {
-                                // 行号 (靠左紧凑对齐，主题动态色)
-                                Text(
-                                    text = "${originalIndex + 1}".padStart(4, ' '),
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.width(36.dp)
-                                )
-
-                                // 行内容
-                                val annotated = if (searchQuery.isNotEmpty() && line.contains(searchQuery, ignoreCase = true)) {
-                                    buildAnnotatedString {
-                                        val startIdx = line.indexOf(searchQuery, ignoreCase = true)
-                                        append(line.substring(0, startIdx))
-                                        pushStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold))
-                                        append(line.substring(startIdx, startIdx + searchQuery.length))
-                                        pop()
-                                        append(line.substring(startIdx + searchQuery.length))
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(12.dp))
+                        Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                } else if (lines.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+                        Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                } else {
+                    androidx.compose.foundation.text.selection.SelectionContainer(
+                        modifier = Modifier.fillMaxSize().weight(1f)
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .pointerInput(Unit) {
+                                    detectTransformGestures { _, _, zoom, _ ->
+                                        if (zoom != 1f) {
+                                            val target = fontSizeSp * zoom
+                                            fontSizeSp = target.coerceIn(8f, 26f)
+                                        }
                                     }
-                                } else {
-                                    buildAnnotatedString { append(line) }
                                 }
+                        ) {
+                            itemsIndexed(filteredLines) { _, (originalIndex, line) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 1.dp)
+                                ) {
+                                    // 行号 (靠左紧凑对齐，主题动态色)
+                                    Text(
+                                        text = "${originalIndex + 1}".padStart(4, ' '),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = maxOf(8f, fontSizeSp - 1f).sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.width(36.dp)
+                                    )
 
-                                val textColor = when {
-                                    line.contains("error", ignoreCase = true) || line.contains("failed", ignoreCase = true) -> MaterialTheme.colorScheme.error
-                                    line.contains("success", ignoreCase = true) || line.contains("done", ignoreCase = true) -> MaterialTheme.colorScheme.primary
-                                    line.contains("warn", ignoreCase = true) -> MaterialTheme.colorScheme.tertiary
-                                    else -> MaterialTheme.colorScheme.onSurface
+                                    // 行内容
+                                    val annotated = if (searchQuery.isNotEmpty() && line.contains(searchQuery, ignoreCase = true)) {
+                                        buildAnnotatedString {
+                                            val startIdx = line.indexOf(searchQuery, ignoreCase = true)
+                                            append(line.substring(0, startIdx))
+                                            pushStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold))
+                                            append(line.substring(startIdx, startIdx + searchQuery.length))
+                                            pop()
+                                            append(line.substring(startIdx + searchQuery.length))
+                                        }
+                                    } else {
+                                        buildAnnotatedString { append(line) }
+                                    }
+
+                                    val textColor = when {
+                                        line.contains("error", ignoreCase = true) || line.contains("failed", ignoreCase = true) -> MaterialTheme.colorScheme.error
+                                        line.contains("success", ignoreCase = true) || line.contains("done", ignoreCase = true) -> MaterialTheme.colorScheme.primary
+                                        line.contains("warn", ignoreCase = true) -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.onSurface
+                                    }
+
+                                    Text(
+                                        text = annotated,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        color = textColor,
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
-
-                                Text(
-                                    text = annotated,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    color = textColor,
-                                    modifier = Modifier.weight(1f)
-                                )
                             }
                         }
                     }
+                }
+            }
+
+            // 快速回顶与到底部悬浮小控制器 (快速滑轮滑动辅助)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 16.dp, end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "回到顶部", modifier = Modifier.size(20.dp))
+                }
+                SmallFloatingActionButton(
+                    onClick = { scope.launch { if (filteredLines.isNotEmpty()) listState.animateScrollToItem(filteredLines.size - 1) } },
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "滚到底部", modifier = Modifier.size(20.dp))
                 }
             }
         }

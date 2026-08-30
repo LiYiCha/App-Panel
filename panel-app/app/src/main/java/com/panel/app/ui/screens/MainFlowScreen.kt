@@ -166,9 +166,6 @@ fun MainFlowScreen(
                         }
                         BottomNavScreen.Scripts -> {
                             if (scriptsSubTab == 0) {
-                                IconButton(onClick = { filePickerLauncher.launch("*/*") }) {
-                                    Icon(Icons.Default.UploadFile, contentDescription = "上传脚本")
-                                }
                                 IconButton(onClick = { showCreateScriptDialog = true }) {
                                     Icon(Icons.Default.Add, contentDescription = "新建脚本")
                                 }
@@ -184,6 +181,13 @@ fun MainFlowScreen(
                             }
                         }
                         BottomNavScreen.Settings -> {
+                            IconButton(onClick = { viewModel.toggleTheme() }) {
+                                Icon(
+                                    if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = "切换主题",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                             IconButton(onClick = onOpenPanelManager) {
                                 Icon(Icons.Default.Dns, contentDescription = "面板管理")
                             }
@@ -282,7 +286,8 @@ fun MainFlowScreen(
                             showCreateDialog = showCreateScriptDialog,
                             onDismissCreateDialog = { showCreateScriptDialog = false },
                             onNavigateToCreateScript = onNavigateToCreateScript,
-                            onOpenScriptEditor = onOpenScriptEditorScreen
+                            onOpenScriptEditor = onOpenScriptEditorScreen,
+                            onUploadScript = { filePickerLauncher.launch("*/*") }
                         )
                     } else {
                         ConfigEditorScreen(

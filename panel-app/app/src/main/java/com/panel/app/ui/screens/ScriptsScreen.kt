@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.ScriptNode
@@ -31,16 +32,37 @@ fun ScriptsScreen(
     showCreateDialog: Boolean = false,
     onDismissCreateDialog: () -> Unit = {},
     onNavigateToCreateScript: () -> Unit,
-    onOpenScriptEditor: (String) -> Unit
+    onOpenScriptEditor: (String) -> Unit,
+    onUploadScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
 
+    var searchQuery by remember { mutableStateOf("") }
     var deletingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var showFolderDialog by remember { mutableStateOf(false) }
-    var isRefreshing by remember { mutableStateOf(false) }
 
-    val scope = rememberCoroutineScope()
+    // 搜索过滤后的脚本树
+    val filteredTree = remember(uiState.scriptTree, searchQuery) {
+        filterScriptTree(uiState.scriptTree, searchQuery)
+    }
+
+    // 当输入搜索词时，自动展开全部匹配节点所在的层级
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            val allDirPaths = mutableSetOf<String>()
+            fun collectDirs(nodes: List<ScriptNode>) {
+                for (n in nodes) {
+                    if (n.isDir) {
+                        allDirPaths.add(n.path)
+                        n.children?.let { collectDirs(it) }
+                    }
+                }
+            }
+            collectDirs(filteredTree)
+            viewModel.setScriptFoldersExpanded(allDirPaths)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -48,13 +70,31 @@ fun ScriptsScreen(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 脚本与目录树形列表 (纯下拉手势刷新，已删除原来冗余的顶部刷新行)
+        // 1. 顶部满宽搜索框 (实时检索脚本与文件夹)
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("搜索脚本文件或目录名称...", fontSize = 11.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "清除", modifier = Modifier.size(14.dp))
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            maxLines = 1
+        )
+
+        // 2. 脚本与目录树形列表 (带下拉手势刷新，进入二级页面返回进度不丢失)
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = uiState.isLoading,
             onRefresh = { viewModel.refreshCurrentPanel() },
             modifier = Modifier.fillMaxSize()
         ) {
-            if (uiState.scriptTree.isEmpty()) {
+            if (filteredTree.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -64,7 +104,11 @@ fun ScriptsScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("暂无脚本文件 (下拉可刷新)", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (searchQuery.isEmpty()) "暂无脚本文件 (下拉可刷新)" else "未匹配到相关脚本或目录",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             } else {
@@ -73,10 +117,13 @@ fun ScriptsScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
-                    items(uiState.scriptTree) { rootNode ->
+                    items(filteredTree, key = { it.path }) { rootNode ->
                         ScriptTreeItem(
                             node = rootNode,
                             level = 0,
+                            searchQuery = searchQuery,
+                            expandedFolders = uiState.expandedScriptFolders,
+                            onToggleExpand = { viewModel.toggleScriptFolderExpanded(it) },
                             onOpenEditor = onOpenScriptEditor,
                             onDelete = { deletingNode = it }
                         )
@@ -86,13 +133,13 @@ fun ScriptsScreen(
         }
     }
 
-    // 3. 点击“新建”时的选择操作模态框 (区分【新建文件】与【新建文件夹】)
+    // 3. 整合式新建/上传模态框 (现代极简卡片视觉，整合新建脚本、新建文件夹与从本地上传脚本)
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = onDismissCreateDialog,
-            title = { Text("选择新建类型", fontSize = 16.sp) },
+            title = { Text("脚本管理操作", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -100,18 +147,18 @@ fun ScriptsScreen(
                                 onDismissCreateDialog()
                                 onNavigateToCreateScript()
                             },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Row(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                             Column {
-                                Text("新建脚本文件", style = MaterialTheme.typography.titleSmall)
-                                Text("进入二级编写页面，支持代码编辑与同时添加到任务", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("新建脚本文件", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("在线编写 Python、Node.js 或 Shell 代码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -123,18 +170,41 @@ fun ScriptsScreen(
                                 onDismissCreateDialog()
                                 showFolderDialog = true
                             },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Row(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(24.dp))
                             Column {
-                                Text("新建文件夹", style = MaterialTheme.typography.titleSmall)
-                                Text("弹窗创建子目录，可下拉选择所在目录", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("新建文件夹", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("创建子目录用于对各类脚本文件归类", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onDismissCreateDialog()
+                                onUploadScript()
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
+                            Column {
+                                Text("从本机上传脚本", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("直接选择手机存储中的 .py / .js / .sh 脚本上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -190,10 +260,13 @@ fun ScriptsScreen(
 fun ScriptTreeItem(
     node: ScriptNode,
     level: Int,
+    searchQuery: String = "",
+    expandedFolders: Set<String> = emptySet(),
+    onToggleExpand: (String) -> Unit = {},
     onOpenEditor: (String) -> Unit,
     onDelete: (ScriptNode) -> Unit
 ) {
-    var isExpanded by remember { mutableStateOf(node.isOpen) }
+    val isExpanded = expandedFolders.contains(node.path) || (searchQuery.isNotEmpty() && node.isDir)
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -230,7 +303,7 @@ fun ScriptTreeItem(
                     .fillMaxWidth()
                     .clickable {
                         if (node.isDir) {
-                            isExpanded = !isExpanded
+                            onToggleExpand(node.path)
                         } else {
                             onOpenEditor(node.path)
                         }
@@ -295,12 +368,34 @@ fun ScriptTreeItem(
                 ScriptTreeItem(
                     node = child,
                     level = level + 1,
+                    searchQuery = searchQuery,
+                    expandedFolders = expandedFolders,
+                    onToggleExpand = onToggleExpand,
                     onOpenEditor = onOpenEditor,
                     onDelete = onDelete
                 )
             }
         }
     }
+}
+
+// 递归过滤脚本树
+fun filterScriptTree(nodes: List<ScriptNode>, query: String): List<ScriptNode> {
+    if (query.isBlank()) return nodes
+    val result = mutableListOf<ScriptNode>()
+    for (node in nodes) {
+        if (node.isDir) {
+            val filteredChildren = filterScriptTree(node.children ?: emptyList(), query)
+            if (filteredChildren.isNotEmpty() || node.name.contains(query, ignoreCase = true)) {
+                result.add(node.copy(children = filteredChildren))
+            }
+        } else {
+            if (node.name.contains(query, ignoreCase = true)) {
+                result.add(node)
+            }
+        }
+    }
+    return result
 }
 
 // 提取脚本注释中嵌入的 Cron 与名称

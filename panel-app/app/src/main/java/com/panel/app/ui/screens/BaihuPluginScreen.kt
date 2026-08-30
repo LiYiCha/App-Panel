@@ -148,7 +148,7 @@ fun BaihuPluginScreen(
                                         .background(if (isEngineRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                                 )
                                 Text(
-                                    text = if (isEngineRunning) "内置面板正在运行" else "内置面板未运行",
+                                    text = if (isEngineRunning) "本地面板管理已启用" else "本地面板管理未启用",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isEngineRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
@@ -161,7 +161,7 @@ fun BaihuPluginScreen(
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        text = "PID: ${enginePid ?: "--"}",
+                                        text = "端口: $enginePort",
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
