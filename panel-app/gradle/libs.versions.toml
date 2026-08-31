@@ -1,5 +1,5 @@
 [versions]
-agp = "8.7.3"
+agp = "8.13.0"
 kotlin = "2.1.0"
 coreKtx = "1.15.0"
 junit = "4.13.2"
@@ -15,6 +15,15 @@ hilt = "2.52"
 ksp = "2.1.0-1.0.29"
 coroutines = "1.9.0"
 navigationCompose = "2.8.5"
+
+# ---- 应用构建配置（供 app/build.gradle.kts 读取，实现集中统一管理）----
+appNamespace = "com.panel.app"
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
+versionCode = "10400"
+versionName = "1.4.0"
+jvmTarget = "17"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

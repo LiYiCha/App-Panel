@@ -1,3 +1,6 @@
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,15 +10,16 @@ plugins {
 }
 
 android {
-    namespace = "com.panel.app"
-    compileSdk = 35
+    namespace = libs.versions.appNamespace.get()
+
+    compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "com.panel.app"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.4.0"
+        applicationId = libs.versions.appNamespace.get()
+        minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
+        versionCode = libs.versions.versionCode.get().toInt()
+        versionName = libs.versions.versionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -38,7 +42,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 启用 R8 代码压缩与混淆，并同步剪裁未被引用资源
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -47,13 +53,17 @@ android {
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+    // Java 与 Kotlin 编译目标统一取自版本目录中的 jvmTarget
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(libs.versions.jvmTarget.get())
+        }
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget = JvmTarget.valueOf("JVM_${libs.versions.jvmTarget.get()}")
+        }
     }
 
     buildFeatures {
