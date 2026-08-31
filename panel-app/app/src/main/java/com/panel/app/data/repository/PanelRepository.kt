@@ -41,4 +41,19 @@ class PanelRepository @Inject constructor(
         val adapter = getAdapter(panel)
         return adapter.authenticate()
     }
+
+    private val prefs = context.getSharedPreferences("dashboard_cache_prefs", Context.MODE_PRIVATE)
+    private val gson = com.google.gson.Gson()
+
+    fun getCachedDashboard(panelId: String): com.panel.app.data.model.PanelDashboard? {
+        val json = prefs.getString("dashboard_$panelId", null) ?: return null
+        return runCatching { gson.fromJson(json, com.panel.app.data.model.PanelDashboard::class.java) }.getOrNull()
+    }
+
+    fun saveCachedDashboard(panelId: String, dashboard: com.panel.app.data.model.PanelDashboard) {
+        runCatching {
+            val json = gson.toJson(dashboard)
+            prefs.edit().putString("dashboard_$panelId", json).apply()
+        }
+    }
 }

@@ -62,23 +62,6 @@ fun MainFlowScreen(
     var showDirectoryDrawer by remember { mutableStateOf(false) }
     var showAddPanelDialog by remember { mutableStateOf(false) }
 
-    // 系统文件选择器 (上传外部脚本文件到面板)
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val content = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
-                val fileName = uri.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "uploaded_script.py"
-                viewModel.createScript(fileName, content)
-                Toast.makeText(context, "脚本 [$fileName] 上传成功！", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "读取上传文件失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
     val panelList = uiState.panels
     val currentPanel = panelList.getOrNull(uiState.selectedPanelIndex)
 
@@ -287,8 +270,7 @@ fun MainFlowScreen(
                             showCreateDialog = showCreateScriptDialog,
                             onDismissCreateDialog = { showCreateScriptDialog = false },
                             onNavigateToCreateScript = onNavigateToCreateScript,
-                            onOpenScriptEditor = onOpenScriptEditorScreen,
-                            onUploadScript = { filePickerLauncher.launch("*/*") }
+                            onOpenScriptEditor = onOpenScriptEditorScreen
                         )
                     } else {
                         ConfigEditorScreen(

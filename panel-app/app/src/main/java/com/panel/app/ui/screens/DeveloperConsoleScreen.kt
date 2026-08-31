@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -135,7 +136,7 @@ fun DeveloperConsoleScreen(
                     Switch(
                         checked = uiState.isDevMode,
                         onCheckedChange = { viewModel.toggleDevMode(it) },
-                        modifier = Modifier.height(24.dp)
+                        modifier = Modifier.scale(0.75f)
                     )
                 }
             }

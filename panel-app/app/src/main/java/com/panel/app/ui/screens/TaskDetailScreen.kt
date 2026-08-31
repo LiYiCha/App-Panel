@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -172,18 +173,18 @@ fun TaskDetailScreen(
                                         Surface(
                                             color = when {
                                                 task.isRunning -> MaterialTheme.colorScheme.primaryContainer
-                                                task.isDisabled -> MaterialTheme.colorScheme.errorContainer
-                                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                                task.isDisabled -> Color(0xFFFFEBEE)
+                                                else -> Color(0xFFE8F5E9)
                                             },
                                             shape = RoundedCornerShape(4.dp)
                                         ) {
                                             Text(
-                                                text = if (task.isRunning) "● 正在运行" else if (task.isDisabled) "已禁用" else "已就绪",
+                                                text = if (task.isRunning) "● 正在运行" else if (task.isDisabled) "已禁用" else "已启用",
                                                 fontSize = 11.sp,
                                                 color = when {
                                                     task.isRunning -> MaterialTheme.colorScheme.onPrimaryContainer
-                                                    task.isDisabled -> MaterialTheme.colorScheme.onErrorContainer
-                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                    task.isDisabled -> Color(0xFFC62828)
+                                                    else -> Color(0xFF2E7D32)
                                                 },
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                             )
@@ -224,7 +225,7 @@ fun TaskDetailScreen(
                                     Switch(
                                         checked = !task.isDisabled,
                                         onCheckedChange = { viewModel.toggleTask(task.id, it) },
-                                        modifier = Modifier.height(24.dp)
+                                        modifier = Modifier.scale(0.75f)
                                     )
                                 }
 

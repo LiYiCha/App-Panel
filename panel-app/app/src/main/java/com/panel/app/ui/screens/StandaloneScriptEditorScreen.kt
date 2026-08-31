@@ -179,10 +179,18 @@ fun StandaloneScriptEditorScreen(
                 androidx.compose.foundation.text.selection.SelectionContainer(
                     modifier = Modifier.weight(1f).fillMaxHeight()
                 ) {
+                    val isDark = MaterialTheme.colorScheme.surface.let {
+                        (it.red * 0.299 + it.green * 0.587 + it.blue * 0.114) < 0.5
+                    }
+                    val syntaxTransformation = remember(scriptName, isDark) {
+                        com.panel.app.ui.components.CodeSyntaxVisualTransformation(scriptName, isDark)
+                    }
+
                     TextField(
                         value = codeContent,
                         onValueChange = { if (isEditable) codeContent = it },
                         readOnly = !isEditable,
+                        visualTransformation = syntaxTransformation,
                         placeholder = {
                             if (codeContent.isEmpty()) {
                                 Text("正在从服务端读取脚本内容...", fontSize = fontSizeSp.sp, fontFamily = FontFamily.Monospace)

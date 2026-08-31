@@ -37,7 +37,7 @@ object AppLogger {
     val logs = mutableStateListOf<LogEntry>()
 
     fun log(level: LogLevel, tag: String, message: String, error: String? = null) {
-        if (!isDevModeEnabled) return
+        if (!isDevModeEnabled && level != LogLevel.ERROR) return
         val entry = LogEntry(
             timestamp = timeFormat.format(Date()),
             level = level,

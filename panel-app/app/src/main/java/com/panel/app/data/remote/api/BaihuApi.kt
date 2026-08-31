@@ -66,7 +66,7 @@ data class BaihuRepoConfig(
 
 data class BaihuTaskItem(
     val id: String,
-    val name: String,
+    val name: String? = null,
     val command: String? = null,
     val pre_command: String? = null,
     val post_command: String? = null,
@@ -680,7 +680,11 @@ data class BaihuSendStatsResp(
 /** GET /taskstats 单任务执行次数 */
 data class BaihuTaskStatsItem(
     val task_id: String? = null,
+    val id: String? = null,
     val task_name: String? = null,
+    val name: String? = null,
+    val title: String? = null,
+    val command: String? = null,
     val count: Int? = null
 )
 

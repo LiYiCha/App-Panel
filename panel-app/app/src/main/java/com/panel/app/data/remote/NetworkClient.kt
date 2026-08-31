@@ -3,6 +3,8 @@ package com.panel.app.data.remote
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -98,23 +100,94 @@ object NetworkClient {
                         throw e
                     }
                 }
+                .addInterceptor { chain ->
+                    val originalReq = chain.request()
+                    var response: okhttp3.Response? = null
+                    var lastException: java.io.IOException? = null
+                    for (attempt in 0..2) {
+                        try {
+                            val requestBuilder = originalReq.newBuilder()
+                            if (originalReq.header("Connection") == null) {
+                                requestBuilder.header("Connection", "keep-alive")
+                            }
+                            response = chain.proceed(requestBuilder.build())
+                            break
+                        } catch (e: java.io.IOException) {
+                            lastException = e
+                            val msg = e.message?.lowercase() ?: ""
+                            val isStaleConnection = msg.contains("unexpected end of stream") ||
+                                    msg.contains("connection reset") ||
+                                    msg.contains("broken pipe") ||
+                                    e is java.net.SocketException
+                            if (isStaleConnection && attempt < 2) {
+                                com.panel.app.data.logger.AppLogger.log(
+                                    level = com.panel.app.data.logger.LogLevel.WARN,
+                                    tag = "NET_RETRY",
+                                    message = "检测到连接断开 [${e.message}]，正在自动重试 (${attempt + 1}/2)... [${originalReq.method} ${originalReq.url.encodedPath}]"
+                                )
+                                try { Thread.sleep(150) } catch (_: InterruptedException) {}
+                                continue
+                            }
+                            throw e
+                        }
+                    }
+                    response ?: throw (lastException ?: java.io.IOException("Request failed"))
+                }
+                .addInterceptor { chain ->
+                    val req = chain.request()
+                    val resp = chain.proceed(req)
+                    val body = resp.body
+                    if (body != null) {
+                        val contentType = body.contentType()?.toString()?.lowercase() ?: ""
+                        if (!contentType.contains("application/json")) {
+                            val isHtmlHeader = contentType.contains("text/html")
+                            val peek = try {
+                                resp.peekBody(512).string().trim()
+                            } catch (_: Exception) { "" }
+                            val isHtmlContent = peek.startsWith("<!DOCTYPE", ignoreCase = true) ||
+                                    peek.startsWith("<html", ignoreCase = true) ||
+                                    peek.startsWith("<?xml", ignoreCase = true)
+
+                            if (isHtmlHeader || isHtmlContent) {
+                                val code = if (resp.code in 200..299) 500 else resp.code
+                                val errorMsg = when (resp.code) {
+                                    404 -> "接口不存在 (404)，请检查面板地址或接口路径"
+                                    502, 503, 504 -> "网关/代理异常 (${resp.code})，面板后端未正常响应"
+                                    401, 403 -> "鉴权异常 (${resp.code})，请重新登录"
+                                    else -> "服务端返回了 HTML 页面而非预期 JSON (HTTP ${resp.code})，请检查面板地址与端口"
+                                }
+                                val syntheticJson = """{"code":$code,"message":"$errorMsg","msg":"$errorMsg"}"""
+                                val newBody = syntheticJson.toResponseBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                                return@addInterceptor resp.newBuilder()
+                                    .header("Content-Type", "application/json; charset=utf-8")
+                                    .body(newBody)
+                                    .build()
+                            }
+                        }
+                    }
+                    resp
+                }
                 .retryOnConnectionFailure(true)
-                .connectionPool(okhttp3.ConnectionPool(8, 15, TimeUnit.SECONDS))
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
+                .connectionPool(okhttp3.ConnectionPool(5, 3, TimeUnit.SECONDS))
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .writeTimeout(20, TimeUnit.SECONDS)
                 .build()
         } catch (e: Exception) {
             OkHttpClient.Builder().build()
         }
     }
 
+    val gson: com.google.gson.Gson = com.google.gson.GsonBuilder()
+        .setLenient()
+        .create()
+
     fun buildRetrofit(baseUrl: String): Retrofit {
         val cleanUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         return Retrofit.Builder()
             .baseUrl(cleanUrl)
             .client(unsafeOkHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
     }
 

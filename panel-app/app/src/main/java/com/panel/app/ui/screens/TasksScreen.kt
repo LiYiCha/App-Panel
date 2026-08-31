@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -309,16 +310,12 @@ fun TaskCard(
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            // 状态轴：把状态做成"结构"而非"填充色"，扫一眼即可分辨，无需阅读文字
-            StatusRail(state)
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
                 if (isBatchMode) {
                     Checkbox(
                         checked = task.selected,
@@ -372,7 +369,7 @@ fun TaskCard(
                                 Switch(
                                     checked = !task.isDisabled,
                                     onCheckedChange = onToggle,
-                                    modifier = Modifier.height(24.dp)
+                                    modifier = Modifier.scale(0.75f)
                                 )
                             }
                         }
@@ -449,86 +446,12 @@ fun TaskCard(
                 }
             }
         }
-        }
     }
 }
-
-// ----------------------------------------------------------------
-// 任务卡片状态视觉
-//
-// 设计原则：状态是"结构"而不是"填充色"。
-// - 左侧 3dp 状态轴：运行中 = 实线呼吸动画；禁用 = 断续虚线，暗示调度被"切开"
-// - 禁用 = 中性灰（不是错误红），红色只留给真正的失败
-// - 禁用时次要信息退后（alpha 0.45），标题保持全对比度保证可读
-// ----------------------------------------------------------------
 
 private enum class TaskVisualState { Running, Queued, Disabled, Ready }
 
-/** 左侧状态轴：运行中做呼吸动画，禁用态画成虚线 */
-@Composable
-private fun StatusRail(state: TaskVisualState) {
-    when (state) {
-        TaskVisualState.Running -> {
-            val transition = rememberInfiniteTransition(label = "statusRail")
-            val alpha by transition.animateFloat(
-                initialValue = 0.35f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(900),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "railAlpha"
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(3.dp)
-                    .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha))
-            )
-        }
-        TaskVisualState.Queued -> {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(3.dp)
-                    .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
-                    .background(Color(0xFFF59E0B))
-            )
-        }
-        TaskVisualState.Disabled -> {
-            // 虚线 = 调度被暂停
-            val color = MaterialTheme.colorScheme.outlineVariant
-            Canvas(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(3.dp)
-            ) {
-                val dash = 4.dp.toPx()
-                val gap = 3.dp.toPx()
-                var y = 0f
-                while (y < size.height) {
-                    drawRect(
-                        color = color,
-                        topLeft = Offset(0f, y),
-                        size = Size(size.width, minOf(dash, size.height - y))
-                    )
-                    y += dash + gap
-                }
-            }
-        }
-        TaskVisualState.Ready -> {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(3.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-            )
-        }
-    }
-}
-
-/** 状态徽章：运行中带脉冲点 */
+/** 状态徽章：已启用(绿色)、已禁用(红色)、运行中(主色/脉冲) */
 @Composable
 private fun StateBadge(state: TaskVisualState) {
     val (label, container, content) = when (state) {
@@ -540,13 +463,13 @@ private fun StateBadge(state: TaskVisualState) {
         TaskVisualState.Queued -> Triple("排队中", Color(0xFFFFF3E0), Color(0xFFB45309))
         TaskVisualState.Disabled -> Triple(
             "已禁用",
-            MaterialTheme.colorScheme.surfaceVariant,
-            MaterialTheme.colorScheme.onSurfaceVariant
+            Color(0xFFFFEBEE),
+            Color(0xFFC62828)
         )
         TaskVisualState.Ready -> Triple(
-            "已就绪",
-            MaterialTheme.colorScheme.surfaceVariant,
-            MaterialTheme.colorScheme.onSurfaceVariant
+            "已启用",
+            Color(0xFFE8F5E9),
+            Color(0xFF2E7D32)
         )
     }
     Surface(color = container, shape = RoundedCornerShape(4.dp)) {

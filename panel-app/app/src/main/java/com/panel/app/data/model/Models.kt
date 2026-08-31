@@ -105,6 +105,7 @@ data class ScriptNode(
     val path: String,
     val isDir: Boolean,
     val size: String? = null,
+    val mtime: Long? = null,
     val content: String? = null,
     val isOpen: Boolean = false,
     val children: List<ScriptNode>? = null
@@ -183,9 +184,9 @@ data class TaskRank(
 data class LabelStat(
     val label: String,
     val count: Int,
-    val todayRuns: Int,
-    val successRate: String?,
-    val avgTimeMs: Long?
+    val todayRuns: Int = 0,
+    val successRate: String? = null,
+    val avgTimeMs: Long? = null
 )
 
 fun List<ScriptNode>.extractScriptFiles(): List<String> {

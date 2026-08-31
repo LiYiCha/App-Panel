@@ -31,6 +31,10 @@ class QinglongV10Adapter(
 
     private suspend fun ensureAuth(): Boolean {
         if (!currentToken.isNullOrEmpty()) return true
+        if (!instance.token.isNullOrEmpty()) {
+            currentToken = instance.token
+            return true
+        }
         if (!instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()) {
             return authenticate().isSuccess
         }
@@ -97,7 +101,7 @@ class QinglongV10Adapter(
                 running -> "运行中"
                 queued -> "排队中"
                 disabled -> "已禁用"
-                else -> "就绪"
+                else -> "已启用"
             },
             isRunning = running,
             isDisabled = disabled,
@@ -270,6 +274,7 @@ class QinglongV10Adapter(
             path = nodePath,
             isDir = isDirectory,
             size = if (isDirectory) null else "-",
+            mtime = item.mtime,
             children = item.children?.map { mapScriptNode(it) }
         )
     }
@@ -425,4 +430,19 @@ class QinglongV10Adapter(
 
     override suspend fun getLogDetail(path: String, file: String): Result<String> =
         Result.failure(Exception("青龙 2.10 无日志详情接口"))
+
+    suspend fun fetchSystemSettings(): Result<Map<String, String>> =
+        QinglongV15Adapter(instance).fetchSystemSettings()
+
+    suspend fun saveLogRemoveFrequency(days: Int?): Result<Boolean> =
+        QinglongV15Adapter(instance).saveLogRemoveFrequency(days)
+
+    suspend fun saveCronConcurrency(count: Int?): Result<Boolean> =
+        QinglongV15Adapter(instance).saveCronConcurrency(count)
+
+    suspend fun sendTestNotify(title: String, content: String): Result<Boolean> =
+        QinglongV15Adapter(instance).sendTestNotify(title, content)
+
+    suspend fun reloadSystem(type: String? = null): Result<Boolean> =
+        QinglongV15Adapter(instance).reloadSystem(type)
 }

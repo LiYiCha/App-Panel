@@ -881,21 +881,21 @@ interface QinglongV15Api {
     @PUT("api/system/config/log-remove-frequency")
     suspend fun updateLogRemoveFrequency(
         @Header("Authorization") auth: String,
-        @Body body: Map<String, Any?>
+        @Body body: @JvmSuppressWildcards Map<String, Any?>
     ): Response<QlCommonResp>
 
     /** 任务并发数，null 表示不限制 */
     @PUT("api/system/config/cron-concurrency")
     suspend fun updateCronConcurrency(
         @Header("Authorization") auth: String,
-        @Body body: Map<String, Any?>
+        @Body body: @JvmSuppressWildcards Map<String, Any?>
     ): Response<QlCommonResp>
 
     /** 修改面板配置后需要重载才会生效 */
     @PUT("api/system/reload")
     suspend fun reloadSystem(
         @Header("Authorization") auth: String,
-        @Body body: Map<String, Any?> = emptyMap()
+        @Body body: @JvmSuppressWildcards Map<String, Any?> = emptyMap()
     ): Response<QlCommonResp>
 
     /** 系统运行日志（区别于任务日志） */

@@ -13,6 +13,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -278,13 +279,13 @@ fun EnvCard(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(text = env.name, fontSize = 13.sp, style = MaterialTheme.typography.titleMedium)
                         Surface(
-                            color = if (env.enabled) androidx.compose.ui.graphics.Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (env.enabled) androidx.compose.ui.graphics.Color(0xFFE8F5E9) else androidx.compose.ui.graphics.Color(0xFFFFEBEE),
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
                                 text = if (env.enabled) "已启用" else "已禁用",
                                 fontSize = 9.sp,
-                                color = if (env.enabled) androidx.compose.ui.graphics.Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (env.enabled) androidx.compose.ui.graphics.Color(0xFF2E7D32) else androidx.compose.ui.graphics.Color(0xFFC62828),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
@@ -293,7 +294,7 @@ fun EnvCard(
                         Switch(
                             checked = env.enabled,
                             onCheckedChange = onToggleEnable,
-                            modifier = Modifier.height(20.dp)
+                            modifier = Modifier.scale(0.75f)
                         )
                     }
                 }
@@ -350,21 +351,32 @@ fun EditEnvDialog(
     onSave: (UnifiedEnv) -> Unit,
     onOpenSubItemEditor: () -> Unit
 ) {
+    val isCreate = env.id.isEmpty() || env.id.startsWith("new_")
     var name by remember { mutableStateOf(env.name) }
     var value by remember { mutableStateOf(env.value) }
     var remarks by remember { mutableStateOf(env.remarks ?: "") }
     var enabled by remember { mutableStateOf(env.enabled) }
 
+    val nameError = remember(name) {
+        if (name.isNotBlank() && name.first().isDigit()) {
+            "提示：以数字开头的变量名在部分 Linux Shell 中可能无法被脚本 export，但面板支持存储"
+        } else null
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑环境变量", fontSize = 15.sp) },
+        title = { Text(if (isCreate) "新建环境变量" else "编辑环境变量", fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("变量名称 (Name)", fontSize = 11.sp) },
-                    modifier = Modifier.fillMaxWidth()
+                    supportingText = if (nameError != null) {
+                        { Text(nameError, fontSize = 9.sp, color = MaterialTheme.colorScheme.tertiary) }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -372,13 +384,16 @@ fun EditEnvDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("变量完整值 (全明文)", fontSize = 11.sp)
-                    TextButton(onClick = onOpenSubItemEditor) {
-                        Text("分段拆解修改", fontSize = 11.sp)
+                    if (!isCreate) {
+                        TextButton(onClick = onOpenSubItemEditor) {
+                            Text("分段拆解修改", fontSize = 11.sp)
+                        }
                     }
                 }
                 OutlinedTextField(
                     value = value,
                     onValueChange = { value = it },
+                    label = { Text("变量值 (Value)", fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 4
                 )
@@ -386,13 +401,21 @@ fun EditEnvDialog(
                     value = remarks,
                     onValueChange = { remarks = it },
                     label = { Text("备注 (Remarks)", fontSize = 11.sp) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(env.copy(name = name, value = value, remarks = remarks, enabled = enabled)) }) {
-                Text("保存", fontSize = 12.sp)
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onSave(env.copy(name = name.trim(), value = value, remarks = remarks, enabled = enabled))
+                    }
+                },
+                enabled = name.isNotBlank()
+            ) {
+                Text(if (isCreate) "创建" else "保存", fontSize = 12.sp)
             }
         },
         dismissButton = {
@@ -467,7 +490,11 @@ fun SmartEnvImportDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("包含 @ 符号时拆解为多个账号", fontSize = 11.sp)
-                    Switch(checked = splitAt, onCheckedChange = { splitAt = it })
+                    Switch(
+                        checked = splitAt,
+                        onCheckedChange = { splitAt = it },
+                        modifier = Modifier.scale(0.75f)
+                    )
                 }
             }
         },

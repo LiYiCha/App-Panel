@@ -11,6 +11,18 @@ class PanelApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            val stack = android.util.Log.getStackTraceString(throwable)
+            android.util.Log.e("PanelApp", "Uncaught exception on thread ${thread.name}: $stack", throwable)
+            com.panel.app.data.logger.AppLogger.log(
+                level = com.panel.app.data.logger.LogLevel.ERROR,
+                tag = "CRASH_GUARD",
+                message = "全局捕获未处理异常 [${thread.name}]: ${throwable.message ?: throwable.javaClass.simpleName}",
+                error = stack
+            )
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
         createNotificationChannels()
     }
 

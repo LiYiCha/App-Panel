@@ -1,6 +1,8 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +16,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -40,8 +43,10 @@ fun ExecutionHistoryScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatus by remember { mutableStateOf("all") }
+    var viewMode by remember { mutableStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
     var isLoading by remember { mutableStateOf(false) }
     var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(emptyList()) }
+    val expandedScripts = remember { mutableStateMapOf<String, Boolean>() }
 
     // 运行中任务：只有拿到真实运行实例才能精确停止
     var runningTasks by remember { mutableStateOf<List<RunningTaskInfo>>(emptyList()) }
@@ -77,13 +82,29 @@ fun ExecutionHistoryScreen(
         }
     }
 
+    // 按脚本/任务名称归类分组
+    val groupedByScript = remember(filteredList) {
+        filteredList.groupBy { it.taskName.ifBlank { "未命名脚本任务" } }
+            .toList()
+            .sortedByDescending { it.second.size }
+    }
+
+    // 默认展开前 5 个脚本组
+    LaunchedEffect(groupedByScript) {
+        groupedByScript.take(5).forEach { (scriptName, _) ->
+            if (!expandedScripts.containsKey(scriptName)) {
+                expandedScripts[scriptName] = true
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("执行历史 (${historyList.size})", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
-                        Text("全平台调度流水与各次运行输出归档", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("执行日志与历史 (${historyList.size})", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                        Text("按脚本归类归档 · 点击展开即看各次输出", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 navigationIcon = {
@@ -155,7 +176,6 @@ fun ExecutionHistoryScreen(
                                 OutlinedButton(
                                     onClick = {
                                         viewModel.stopRunningTask(task)
-                                        // 停止后延时刷新，给服务端一点状态落库时间
                                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ loadData() }, 1200)
                                     },
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
@@ -170,11 +190,11 @@ fun ExecutionHistoryScreen(
                 }
             }
 
-            // 1. 搜索框
+            // 1. 搜索框与显示模式切换
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("搜索任务名称、ID 或执行时间...", fontSize = 12.sp) },
+                placeholder = { Text("搜索脚本名称、执行日期或记录 ID...", fontSize = 12.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -188,35 +208,76 @@ fun ExecutionHistoryScreen(
                 singleLine = true
             )
 
-            // 2. 状态过滤 Chip
+            // 2. 状态过滤 Chip 与 视图模式切换栏
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val successCount = historyList.count { it.exitCode == 0 || it.statusText == "成功" }
-                val failCount = historyList.count { it.exitCode != 0 || it.statusText == "失败" }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val successCount = historyList.count { it.exitCode == 0 || it.statusText == "成功" }
+                    val failCount = historyList.count { it.exitCode != 0 || it.statusText == "失败" }
 
-                FilterChip(
-                    selected = selectedStatus == "all",
-                    onClick = { selectedStatus = "all" },
-                    label = { Text("全部 (${historyList.size})", fontSize = 11.sp) },
-                    modifier = Modifier.height(30.dp)
-                )
-                FilterChip(
-                    selected = selectedStatus == "success",
-                    onClick = { selectedStatus = "success" },
-                    label = { Text("成功 ($successCount)", fontSize = 11.sp) },
-                    modifier = Modifier.height(30.dp)
-                )
-                FilterChip(
-                    selected = selectedStatus == "failed",
-                    onClick = { selectedStatus = "failed" },
-                    label = { Text("失败 ($failCount)", fontSize = 11.sp) },
-                    modifier = Modifier.height(30.dp)
-                )
+                    FilterChip(
+                        selected = selectedStatus == "all",
+                        onClick = { selectedStatus = "all" },
+                        label = { Text("全部", fontSize = 10.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = selectedStatus == "success",
+                        onClick = { selectedStatus = "success" },
+                        label = { Text("成功($successCount)", fontSize = 10.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = selectedStatus == "failed",
+                        onClick = { selectedStatus = "failed" },
+                        label = { Text("失败($failCount)", fontSize = 10.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                }
+
+                // 按脚本归类 vs 时间线流水切换
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(modifier = Modifier.padding(2.dp)) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (viewMode == 0) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier.clickable { viewMode = 0 }
+                        ) {
+                            Text(
+                                "按脚本归类",
+                                fontSize = 10.sp,
+                                fontWeight = if (viewMode == 0) FontWeight.Bold else FontWeight.Normal,
+                                color = if (viewMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (viewMode == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier.clickable { viewMode = 1 }
+                        ) {
+                            Text(
+                                "流水明细",
+                                fontSize = 10.sp,
+                                fontWeight = if (viewMode == 1) FontWeight.Bold else FontWeight.Normal,
+                                color = if (viewMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
             }
 
-            // 3. 历史流水列表
+            // 3. 历史记录列表（支持按脚本归类分组）
             Box(modifier = Modifier.fillMaxSize().weight(1f)) {
                 PullToRefreshBox(
                     isRefreshing = isLoading,
@@ -236,7 +297,175 @@ fun ExecutionHistoryScreen(
                                 Text(if (isLoading) "正在同步执行历史记录..." else "暂无匹配的执行历史记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                    } else if (viewMode == 0) {
+                        // 模式 A：按脚本归类分组展示
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            items(groupedByScript, key = { it.first }) { (scriptName, records) ->
+                                val isExpanded = expandedScripts[scriptName] ?: false
+                                val arrowRotation by animateFloatAsState(
+                                    targetValue = if (isExpanded) 180f else 0f,
+                                    label = "arrow"
+                                )
+                                val successCount = records.count { it.exitCode == 0 || it.statusText == "成功" }
+                                val failCount = records.count { it.exitCode != 0 || it.statusText == "失败" }
+
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    ),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        // 脚本归类头部
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { expandedScripts[scriptName] = !isExpanded }
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Folder,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = scriptName,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "已执行 ${records.size} 次 · 成功 $successCount · 失败 $failCount",
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "${records.size}",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                                Icon(
+                                                    Icons.Default.KeyboardArrowDown,
+                                                    contentDescription = null,
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .rotate(arrowRotation),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+
+                                        // 展开后的各次执行日志明细
+                                        AnimatedVisibility(visible = isExpanded) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                HorizontalDivider(
+                                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                    thickness = 0.5.dp
+                                                )
+
+                                                records.forEach { record ->
+                                                    val isSuccess = record.exitCode == 0 || record.statusText == "成功"
+                                                    Surface(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                onOpenLogViewer(scriptName, record.id)
+                                                            },
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.weight(1f),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                            ) {
+                                                                Surface(
+                                                                    color = if (isSuccess) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                                                                    shape = RoundedCornerShape(3.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        text = if (isSuccess) "成功" else "失败(${record.exitCode})",
+                                                                        fontSize = 9.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = if (isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                    )
+                                                                }
+                                                                Text(
+                                                                    text = record.startTime,
+                                                                    fontSize = 11.sp,
+                                                                    fontFamily = FontFamily.Monospace,
+                                                                    color = MaterialTheme.colorScheme.onSurface
+                                                                )
+                                                                if (record.duration.isNotBlank()) {
+                                                                    Text(
+                                                                        text = "· 耗时 ${record.duration}",
+                                                                        fontSize = 10.sp,
+                                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            Text(
+                                                                text = "查看输出 >",
+                                                                fontSize = 10.sp,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Spacer(Modifier.height(4.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else {
+                        // 模式 B：时间线流水展开
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(8.dp),

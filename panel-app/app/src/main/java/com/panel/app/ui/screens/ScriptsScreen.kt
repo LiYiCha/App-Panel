@@ -43,9 +43,9 @@ fun ScriptsScreen(
     var renamingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var showFolderDialog by remember { mutableStateOf(false) }
 
-    // 搜索过滤后的脚本树
+    // 搜索过滤与规范排序后的脚本树 (文件夹在上方，最新修改在最前)
     val filteredTree = remember(uiState.scriptTree, searchQuery) {
-        filterScriptTree(uiState.scriptTree, searchQuery)
+        sortScriptNodes(filterScriptTree(uiState.scriptTree, searchQuery))
     }
 
     // 当输入搜索词时，自动展开全部匹配节点所在的层级
@@ -184,29 +184,6 @@ fun ScriptsScreen(
                             Column {
                                 Text("新建文件夹", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Text("创建子目录用于对各类脚本文件归类", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onDismissCreateDialog()
-                                onUploadScript()
-                            },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
-                            Column {
-                                Text("从本机上传脚本", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text("直接选择手机存储中的 .py / .js / .sh 脚本上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -402,19 +379,11 @@ fun ScriptTreeItem(
                         }
                     }
 
-                    Row {
-                        IconButton(
-                            onClick = { onRename(node) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "重命名", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                        }
-                        IconButton(
-                            onClick = { onDelete(node) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                        }
+                    IconButton(
+                        onClick = { onRename(node) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "重命名", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                     }
                 }
             }
@@ -435,6 +404,21 @@ fun ScriptTreeItem(
             }
         }
     }
+}
+
+// 递归排序：文件夹在上方（isDir=true 优先），同级按添加/修改时间最新的排在最前（mtime 倒序）
+fun sortScriptNodes(nodes: List<ScriptNode>): List<ScriptNode> {
+    return nodes.map { node ->
+        if (node.children != null) {
+            node.copy(children = sortScriptNodes(node.children))
+        } else {
+            node
+        }
+    }.sortedWith(
+        compareByDescending<ScriptNode> { it.isDir }
+            .thenByDescending { it.mtime ?: 0L }
+            .thenBy { it.name.lowercase() }
+    )
 }
 
 // 递归过滤脚本树

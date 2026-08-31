@@ -166,15 +166,27 @@ class BaihuPanelAdapter(
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             .orEmpty()
+
+        val resolvedName = when {
+            !name.isNullOrBlank() && name != "未知任务" && name != "null" -> name
+            !remark.isNullOrBlank() -> remark
+            !command.isNullOrBlank() -> {
+                val parts = command.trim().split("\\s+".toRegex())
+                parts.lastOrNull { it.contains(".") } ?: command.trim()
+            }
+            type == "repo" -> "仓库任务 #${id.take(8)}"
+            else -> "任务 #${id.take(8)}"
+        }
+
         return UnifiedTask(
             id = id,
-            name = name,
+            name = resolvedName,
             command = command.orEmpty(),
             schedule = schedule.orEmpty(),
             statusText = when {
                 isRunning -> "运行中"
                 enabled == false -> "已禁用"
-                else -> "就绪"
+                else -> "已启用"
             },
             isRunning = isRunning,
             isDisabled = enabled == false,
@@ -421,7 +433,7 @@ class BaihuPanelAdapter(
 
         return UnifiedSubscription(
             id = id,
-            name = name,
+            name = name ?: (remark?.takeIf { it.isNotBlank() } ?: "仓库订阅 #${id.take(8)}"),
             type = "public-repo",
             url = repoUrl,
             branch = branch,
@@ -519,12 +531,15 @@ class BaihuPanelAdapter(
 
     override suspend fun saveEnv(env: UnifiedEnv): Result<Boolean> {
         ensureAuth()
+        if (env.name.isBlank()) {
+            return Result.failure(Exception("变量名不能为空"))
+        }
         return try {
             val isNew = env.id.isEmpty() || env.id.startsWith("new_") || env.id.startsWith("tmp_")
             val req = BaihuCreateEnvReq(
-                name = env.name,
+                name = env.name.trim(),
                 value = env.value,
-                remark = env.remarks,
+                remark = env.remarks ?: "",
                 enabled = env.enabled
             )
             val result = if (isNew) {
@@ -629,6 +644,7 @@ class BaihuPanelAdapter(
         path = node.path,
         isDir = node.isDir,
         size = if (node.isDir) null else "-",
+        mtime = node.modTime,
         children = node.children?.map { mapFileNode(it) }
     )
 
@@ -1061,9 +1077,21 @@ class BaihuPanelAdapter(
                         .sortedByDescending { it.count ?: 0 }
                         .take(5)
                         .mapIndexed { idx, item ->
+                            val resolvedName = when {
+                                !item.task_name.isNullOrBlank() && item.task_name != "未知任务" && item.task_name != "null" -> item.task_name
+                                !item.name.isNullOrBlank() && item.name != "未知任务" && item.name != "null" -> item.name
+                                !item.title.isNullOrBlank() -> item.title
+                                !item.command.isNullOrBlank() -> {
+                                    val parts = item.command.trim().split("\\s+".toRegex())
+                                    parts.lastOrNull { it.contains(".") } ?: item.command.trim()
+                                }
+                                !item.task_id.isNullOrBlank() -> "任务 #${item.task_id.take(8)}"
+                                !item.id.isNullOrBlank() -> "任务 #${item.id.take(8)}"
+                                else -> "调度任务 #${idx + 1}"
+                            }
                             TaskRank(
                                 rank = idx + 1,
-                                name = item.task_name ?: "未知任务",
+                                name = resolvedName,
                                 value = "${item.count ?: 0} 次"
                             )
                         },
@@ -1113,14 +1141,27 @@ class BaihuPanelAdapter(
     override suspend fun getLogsTree(): Result<com.google.gson.JsonElement> {
         ensureAuth()
         return try {
-            api.getLogs(pageSize = 50)
+            api.getLogs(pageSize = 100)
                 .unwrapTo("获取日志列表失败") { env ->
+                    val groups = mutableMapOf<String, com.google.gson.JsonArray>()
+                    env.data?.data.orEmpty().forEach { log ->
+                        val groupName = log.task_name?.ifBlank { "通用任务" } ?: "通用任务"
+                        val children = groups.computeIfAbsent(groupName) { com.google.gson.JsonArray() }
+                        val timeStr = log.start_time?.replace(' ', '_')?.replace(':', '-')
+                            ?: log.created_at?.replace(' ', '_')?.replace(':', '-')
+                            ?: log.id
+                        children.add(com.google.gson.JsonObject().apply {
+                            addProperty("title", "$timeStr.log")
+                            addProperty("type", "file")
+                            addProperty("id", log.id)
+                        })
+                    }
                     com.google.gson.JsonArray().apply {
-                        env.data?.data.orEmpty().forEach { log ->
+                        groups.forEach { (groupName, children) ->
                             add(com.google.gson.JsonObject().apply {
-                                addProperty("title", "${log.task_name ?: "任务"} (${log.start_time ?: log.id})")
-                                addProperty("type", "file")
-                                addProperty("id", log.id)
+                                addProperty("title", groupName)
+                                addProperty("type", "directory")
+                                add("children", children)
                             })
                         }
                     }

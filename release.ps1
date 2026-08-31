@@ -9,22 +9,23 @@ param(
 $ErrorActionPreference = "Stop"
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "🚀 开始执行 Panel Hub 一键打包签名与发版流程" -ForegroundColor Cyan
-Write-Host "📦 目标版本: $Version" -ForegroundColor Yellow
-Write-Host "📝 版本说明: $Message" -ForegroundColor Yellow
+Write-Host "开始执行 Panel Hub 一键打包签名与发版流程" -ForegroundColor Cyan
+Write-Host "目标版本: $Version" -ForegroundColor Yellow
+Write-Host "版本说明: $Message" -ForegroundColor Yellow
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # 1. 规范化 Tag 名称
 $tag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
 $rawVersion = $tag.TrimStart("v")
 
-# 2. 更新 app/build.gradle.kts 中的 versionName
-$gradlePath = Join-Path $PSScriptRoot "panel-app\app\build.gradle.kts"
-if (Test-Path $gradlePath) {
-    Write-Host "[1/5] 正在更新 App versionName 为 $rawVersion..." -ForegroundColor Green
-    $content = Get-Content -Path $gradlePath -Raw -Encoding UTF8
-    $newContent = [regex]::Replace($content, 'versionName\s*=\s*"[^"]*"', "versionName = `"$rawVersion`"")
-    Set-Content -Path $gradlePath -Value $newContent -Encoding UTF8
+# 2. 更新版本配置
+$tomlPath = Join-Path $PSScriptRoot "panel-app\gradle\libs.versions.toml"
+if (Test-Path $tomlPath) {
+    Write-Host "[1/5] 正在更新 libs.versions.toml versionName 为 $rawVersion..." -ForegroundColor Green
+    $content = Get-Content -Path $tomlPath -Raw -Encoding UTF8
+    $replacement = 'versionName = "' + $rawVersion + '"'
+    $newContent = [regex]::Replace($content, 'versionName\s*=\s*"[^"]*"', $replacement)
+    Set-Content -Path $tomlPath -Value $newContent -Encoding UTF8
 }
 
 # 3. 编译打包已签名的 Release APK
@@ -69,8 +70,7 @@ git push origin main
 git push origin $tag --force
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "🎉 一键打包与发布完成！" -ForegroundColor Green
-Write-Host "📌 签名 APK 路径: $targetApk" -ForegroundColor Green
-Write-Host "🌐 GitHub 仓库: https://github.com/LiYiCha/App-Panel" -ForegroundColor Green
-Write-Host "⚡ GitHub Actions 已自动触发构建与 Release 发布！" -ForegroundColor Green
+Write-Host "一键打包与发布完成！" -ForegroundColor Green
+Write-Host "签名 APK 路径: $targetApk" -ForegroundColor Green
+Write-Host "GitHub 仓库: https://github.com/LiYiCha/App-Panel" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Cyan

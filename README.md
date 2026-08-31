@@ -1,195 +1,146 @@
-# App-Panel（Panel Hub）
+# Panel Hub (App-Panel)
 
-Android 原生跨面板管理客户端，面向青龙面板与白虎面板，提供任务调度、环境变量、脚本与配置、依赖管理及运行监控的一体化移动管理能力。
-
----
-
-## 一、项目概述
-
-本项目以 Kotlin 与 Jetpack Compose 编写，采用 MVVM 分层结构，并通过适配器模式对异构面板接口进行统一抽象。
-
-- 应用包名：`com.panel.app`
-- 当前版本：`1.4.0`（以 `panel-app/app/build.gradle.kts` 中的 `versionName` 为准）
-- 构建环境：JDK 17，Gradle 8.14.3，Android Gradle Plugin 8.13.0，Kotlin 2.1.0
-- 编译与目标 SDK：`compileSdk 36`、`targetSdk 36`，`minSdk 26`（Android 8.0）
-- 支持架构：仅 `arm64-v8a`
-
-客户端不涉及任何服务端实现，全部能力均通过面板既有 HTTP 接口完成对接。
+Android 原生跨面板统一管理客户端，面向青龙面板（Qinglong）与白虎面板（Baihu），提供定时任务调度、智能环境变量解析、脚本代码高亮编辑、订阅与仓库同步、依赖版本管理、仪表盘监控及系统维护的一体化移动管理中心。
 
 ---
 
-## 二、面板支持范围
+## 🌟 核心特性
 
-| 面板类型 | 适配实现 | 说明 |
-| :--- | :--- | :--- |
-| 白虎面板 | `BaihuPanelAdapter` | 采用 `/api/v1/*` 路由体系，覆盖任务、环境变量、文件、依赖、监控与审计模块 |
-| 青龙面板 v2.15 及以上 | `QinglongV15Adapter` | 运行时读取 `GET /api/system/config` 获取版本号并缓存，据此在不同版本接口间精确选路 |
-| 青龙面板 v2.10（旧版） | `QinglongV10Adapter` | 使用旧版鉴权与接口；青龙 v2.10 无独立订阅模块，相应功能不可用 |
-
-三套适配器统一实现 `IPanelAdapter` 接口，由 `PanelAdapterFactory` 依据面板类型分发，业务层无需区分底层面板差异。
-
----
-
-## 三、功能说明
-
-### 3.1 任务调度
-
-- 任务列表检索，支持运行、停止、启用、禁用、置顶、取消置顶与批量删除。
-- 任务详情维护，含命令、定时规则、标签、超时时间等字段。
-- 任务状态实时区分：就绪、队列中、运行中。
-
-### 3.2 订阅与仓库同步
-
-- 支持公开仓库、私有仓库与单文件三类来源。
-- 可配置分支、白名单、黑名单、依赖文件、脚本后缀与唯一别名。
-- 支持自动添加与自动失效删除定时任务。
-- 在白虎面板下对应「仓库同步」语义，界面按面板类型自适应呈现。
-
-### 3.3 执行历史与日志
-
-- 归档任务历次执行实例，记录起止时间、耗时、退出码与执行状态。
-- 依据服务端返回的日志路径精确读取当次执行日志，避免日志错配。
-- 通过 `Flow` 以 SSE 方式流式输出实时任务日志。
-
-### 3.4 环境变量
-
-- 全量明文展示，不做任何脱敏遮挡，支持一键复制。
-- 通用解析器 `UniversalEnvParser` 支持以下输入格式：
-  - 标准 JSON 数组导出格式；
-  - `export KEY="VALUE"` 与 `export KEY='VALUE'` Shell 写法；
-  - 裸 Cookie 文本；
-  - 换行分隔的多账号文本；
-  - 以 `@`、`&` 拼接的多账号文本，可按需拆分；
-  - HTML 实体转义（`&#38;`、`&amp;`、`&#39;`、`&#34;`、`&#61;`、`&#59;`）与 URL Percent 编码（`%3D`、`%26`）自动还原。
-- 支持单条新增、编辑、启停与批量删除，并可将全部变量导出为 Shell `export` 或 JSON 数组格式。
-
-### 3.5 脚本与配置文件
-
-- 多级目录文件树浏览，支持新建、编辑、保存、删除脚本与目录。
-- 支持从设备文件系统上传本地脚本至面板。
-- 配置文件在线编辑，涵盖青龙 `config.sh`、`extra.sh` 与白虎 `config.json` 等。
-
-### 3.6 依赖管理
-
-- 按 `nodejs`、`python3`、`linux` 三类分别管理。
-- 支持指定版本安装、卸载、批量删除与强制删除。
-- 展示安装状态（安装中、已安装、安装失败、卸载中）并可调取安装日志。
-
-### 3.7 监控、审计与日志中心
-
-- 系统监控：采集服务端 CPU 与内存占用，在设置页以指标卡片呈现。
-- 登录审计：记录鉴权流水，含来源 IP、客户端标识、结果与时间。
-- 服务端日志：以目录树下钻方式浏览服务端日志文件并查看正文。
-- 开发者模式：开启后可进入开发者控制台进行接口排错。
-
-### 3.8 多面板实例与本地设置
-
-- 面板实例通过 Room 持久化存储，支持多实例登记与秒级切换，各实例状态相互隔离。
-- 支持请求超时时间配置、明暗主题切换、面板运行状态指标显示。
-- 全部构建参数（命名空间、SDK 版本、版本号、JVM 目标）集中于 `gradle/libs.versions.toml` 的 `[versions]` 段统一维护。
-
-### 3.9 本地守护引擎
-
-- 由 `LocalBaihuDaemonService` 于独立进程 `:panel_daemon` 中运行本地白虎面板引擎。
-- 以前台服务结合 `PARTIAL_WAKE_LOCK` 维持运行，并监听开机广播实现自启动。
-- 自 `nativeLibraryDir` 执行 `libbaihu.so`，以规避 Android 10 及以上版本的 W^X 二进制执行限制。
-- 引擎默认监听 `127.0.0.1:5700`。
-
-### 3.10 在线更新
-
-- 通过 GitHub Releases 检测最新版本，按语义化版本比较判定是否需要更新。
-- 解析 Release 资源中的 APK 下载地址，供客户端获取安装包。
-- 版本来源固定为仓库 `LiYiCha/App-Panel`。
+- 📱 **跨面板统一体验**：底层深度适配青龙面板（v2.10 ~ v2.18+）与白虎面板（v1.x+），多实例独立存储与秒级无缝切换。
+- ⚡ **极速并发拉取**：全并发异步协程驱动，7 大核心接口并行调度，数据刷新由传统 8~10 秒直降至 1~2 秒，配合本地离线持久化秒开即览。
+- ⏰ **全功能任务调度**：支持任务实时启停、排队/就绪/运行状态区分、置顶、批量操作、标签过滤、实时 SSE 日志流与执行历史溯源。
+- 🔑 **万能环境变量中心**：智能识别标准 JSON、Shell `export`、裸 Cookie、换行多账号、`@`/`&` 拼接并支持一键拆分；内置 HTML 实体反转义与 URL Percent 编解码还原，全量明文展示与一键快捷导出。
+- 📝 **代码高亮脚本工作台**：多级脚本文件树浏览、支持 JavaScript / Python / Shell / JSON 语法高亮预览与在线编辑、文件上传与跨目录管理。
+- 📦 **依赖与订阅自动化**：Node.js、Python3、Linux 系统依赖版本化安装与日志追踪；支持公开/私有 Git 仓库与单文件订阅同步。
+- 📊 **宿主机监控与仪表盘**：CPU / 内存占用、磁盘使用率、Worker 调度状态、每日运行成功率与耗时排行多维统计呈现。
+- 🛡️ **高可用与自动自愈网络**：OkHttp 过期连接智能重试与自动建连、全局未捕获异常防护、内置应用级开发者控制台。
 
 ---
 
-## 四、技术栈
+## 📋 面板支持矩阵
 
-| 领域 | 选型 |
-| :--- | :--- |
-| 界面 | Jetpack Compose（Material3）、Navigation Compose |
-| 架构 | MVVM、适配器模式、Repository 层 |
-| 网络 | Retrofit 2.11.0、OkHttp 4.12.0、Gson 转换器 |
-| 本地存储 | Room 2.6.1 |
-| 依赖注入 | Hilt 2.52（KSP 注解处理） |
-| 异步 | Kotlin Coroutines 1.9.0 |
-| 编译目标 | Java 17 |
-
-网络层允许明文传输（`usesCleartextTraffic="true"`），以适配局域网 HTTP 访问与自签名证书场景。
+| 面板类型 | 兼容版本 | 适配层实现 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **青龙面板 (新版)** | v2.15 ~ v2.18+ | `QinglongV15Adapter` | 完整覆盖任务、订阅、多环境依赖、日志树、系统重载与配置维护 |
+| **青龙面板 (经典版)** | v2.10 ~ v2.14 | `QinglongV10Adapter` | 覆盖经典版任务调度、环境变量、基础依赖管理与高级配置通道 |
+| **白虎面板** | v1.0 及以上 | `BaihuPanelAdapter` | 覆盖 `/api/v1/*` 完整生态：任务、仓库同步、文件管理、宿主机指标监控与审计 |
 
 ---
 
-## 五、目录结构
+## 🚀 功能全景
+
+### 1. 任务调度中心 (Tasks)
+- **多状态感知**：精准感知「已启用」、「已禁用」、「排队中」、「运行中」多重状态，支持彩色状态徽章展示。
+- **快捷控制**：单项快速启停、即时触发运行、置顶排列、批量启用/禁用/删除。
+- **实时日志与历史**：基于 SSE / Flow 的流式任务运行日志实时输出；精确关联执行实例的退出状态、运行时长与历史记录。
+
+### 2. 智能环境变量中心 (Envs)
+- **通用解析器 `UniversalEnvParser`**：
+  - 支持直接粘贴多行 Shell 语法（`export KEY="VALUE"`）；
+  - 支持标准 JSON 数组导入与导出；
+  - 智能拆分由换行、`&` 或 `@` 分隔的多账号 Cookie 文本；
+  - 自动还原 HTML 实体（`&#38;`、`&amp;` 等）与 URL Percent 编码（`%3D`、`%26` 等）。
+- **便捷维护**：全量明文展示无遮挡、快速编辑修改、一键单键复制、导出为标准脚本格式。
+
+### 3. 脚本与配置工作台 (Scripts & Configs)
+- **代码高亮编辑器**：内置基于 Compose Canvas 的高性能语法着色器，支持 JavaScript、Python、Shell、JSON 关键词、字符串、数字、注释及函数名高亮显示。
+- **文件树管理**：支持多级文件夹下钻展开、文件滑动删除、新建脚本、本地文件上传及文件重命名。
+- **配置文件在线修改**：针对青龙 `config.sh`、`extra.sh` 与白虎 `config.json` 等关键配置文件提供免终端直修能力。
+
+### 4. 依赖环境管理 (Dependencies)
+- 分类收纳 `nodejs`、`python3`、`linux` 三大运行环境依赖；
+- 支持在线搜索、指定依赖版本安装、重新安装、卸载与强制清理；
+- 实时追踪依赖安装日志与状态变更。
+
+### 5. 订阅与仓库同步 (Subscriptions)
+- 适配公共 GitHub / Gitee 仓库、私有 Token 鉴权仓库与单脚本订阅来源；
+- 支持分支指定、白名单/黑名单正则过滤、依赖文件识别与脚本后缀筛选；
+- 支持定时自动拉取同步并下发调度任务。
+
+### 6. 系统仪表盘与监控 (Dashboard & Settings)
+- **性能指标看板**：实时读取宿主机 CPU 占用、物理内存水位、系统平台与调度 Worker 状态。
+- **本地缓存加速**：首次进入直接调取本地持久化快照，网络返回后平滑刷新。
+- **高级系统配置**：
+  - 青龙面板：支持任务并发数、日志保留天数在线设定、系统配置热重载与通知连通性测试；
+  - 白虎面板：支持宿主机状态概览与服务环境监测；
+  - 内置开发者控制台：全链路 HTTP 流量审查与未捕获异常监控。
+
+---
+
+## 🛠️ 技术架构
+
+- **开发语言**：Kotlin 2.1.0（100% 纯 Kotlin 编写）
+- **界面体系**：Jetpack Compose + Material Design 3（动态主题支持，适配深色模式）
+- **架构模式**：MVVM + Repository 模式 + Adapter 适配器模式（隔离异构面板差异）
+- **网络通信**：Retrofit 2.11.0 + OkHttp 4.12.0（自签名 SSL 信任、内存 CookieJar 维系会话、过期连接自愈重试）
+- **本地持久化**：Room 2.6.1 + SharedPreferences 本地快照
+- **依赖注入**：Dagger Hilt 2.52 + KSP 2.1.0-1.0.29
+- **并发与响应式**：Kotlin Coroutines 1.9.0（`async` 并发网络加载）+ Flow 响应式数据流
+- **编译指标**：`minSdk 26` (Android 8.0)，`compileSdk 36`，`targetSdk 36`，目标架构 `arm64-v8a`
+
+---
+
+## 📦 项目结构
 
 ```
 App-Panel/
 ├── .github/
 │   └── workflows/
-│       └── release.yml          # Tag 触发的构建与发布工作流
-├── panel-app/                   # Android 工程根目录
-│   │   ├── build.gradle.kts
-│   │   ├── proguard-rules.pro     # R8 混淆与保留规则
-│   │   └── src/main/java/com/panel/app/
-│   │       ├── data/
-│   │       │   ├── adapter/     # 三套面板适配器与统一接口
-│   │       │   ├── local/       # Room 数据库与本地守护服务
-│   │       │   ├── model/       # 统一数据模型
-│   │       │   ├── parser/      # 环境变量通用解析器
-│   │       │   ├── remote/      # Retrofit 接口与网络客户端
-│   │       │   └── repository/
-│   │       ├── ui/
-│   │       │   ├── screens/     # 各功能页面
-│   │       │   ├── theme/
-│   │       │   └── viewmodel/
-│   │       └── util/            # 在线更新管理
-│   └── docs/                    # 设计与接口参考文档
-├── PANEL_FEATURE_MATRIX.md      # 面板 API 全景比对与修复记录
-├── release.ps1                  # 本地一键打包发版脚本
+│       └── release.yml          # GitHub Actions 自动化发布工作流
+├── panel-app/                   # Android 工程主目录
+│   ├── app/
+│   │   ├── src/main/java/com/panel/app/
+│   │   │   ├── data/
+│   │   │   │   ├── adapter/     # 青龙与白虎面板适配器层
+│   │   │   │   ├── local/       # Room 数据库实体与 DAO
+│   │   │   │   ├── logger/      # 内置开发者控制台与异常监控日志
+│   │   │   │   ├── model/       # 跨面板统一数据模型
+│   │   │   │   ├── parser/      # 环境变量万能解析器
+│   │   │   │   ├── remote/      # 网络客户端与 Retrofit 接口
+│   │   │   │   └── repository/  # 面板数据仓库与本地缓存
+│   │   │   └── ui/
+│   │   │       ├── components/  # 代码高亮编辑器与通用组件
+│   │   │       ├── screens/     # 各大业务页面
+│   │   │       ├── theme/       # Material3 主题与配色
+│   │   │       └── viewmodel/   # 核心状态调度 ViewModel
+│   │   └── build.gradle.kts
+│   └── gradle/libs.versions.toml # 依赖版本与构建参数统一管理
+├── release/                     # 签名发布 APK 归档目录
+├── release.ps1                  # 本地一键打包签名与发布脚本
 └── README.md
 ```
 
 ---
 
-## 六、构建与发布
+## 🔨 本地构建与发布
 
-### 6.1 本地构建
+### 1. 调试编译
+```bash
+cd panel-app
+./gradlew assembleDebug
+```
+产物 APK 生成于 `panel-app/app/build/outputs/apk/debug/app-debug.apk`。
 
+### 2. 正式签名打包
+正式版需要使用签名证书：
 ```bash
 cd panel-app
 ./gradlew assembleRelease
 ```
+产物 APK 生成于 `panel-app/app/build/outputs/apk/release/app-release.apk`。
 
-Windows 环境可使用 `gradlew.bat`。产物位于 `panel-app/app/build/outputs/apk/release/`。
-
-### 6.2 一键发版脚本
-
+### 3. 一键自动化发版脚本 (Windows PowerShell)
 ```powershell
-.\release.ps1 -Version 1.4.0 -Message "发布说明"
+.\release.ps1 -Version 2.0.0 -Message "Panel Hub 2.0.0 正式版发布"
 ```
-
-脚本依次执行：更新 `versionName`、签名打包、导出 APK 至 `release/Panel-App-v1.4.0.apk`、提交变更、创建附注标签并推送至远程仓库。
-
-### 6.3 持续集成
-
-`.github/workflows/release.yml` 在推送形如 `v*` 的标签时触发，于 `ubuntu-latest` 环境下使用 JDK 17 执行 `assembleRelease`，并通过 `softprops/action-gh-release` 自动创建 Release 并上传 APK。
-
-### 6.4 签名说明
-
-发布构建类型依赖位于 `panel-app/key/ycKey.jks` 的签名证书。该证书已被 `.gitignore` 排除，未随仓库分发，故：
-
-- 本地执行签名构建前须自备证书，并使其路径与别名同 `build.gradle.kts` 中的配置一致；
-- 上述工作流在缺少签名材料时执行 `assembleRelease` 将构建失败，需在持续集成环境中通过仓库机密注入签名配置，或改用无签名构建变体。
+脚本将自动完成：
+1. 更新版本元数据；
+2. 执行 Release 签名混淆构建；
+3. 导出命名规范的 APK 至 `release/` 目录；
+4. 创建 Git 标签并推送到远程 GitHub 仓库，触发 GitHub Actions 持续集成。
 
 ---
 
-## 七、相关文档
+## 📄 开源许可
 
-- `panel-app/docs/DESIGN.md`：架构设计、接口对齐矩阵与关键算法说明。
-- `panel-app/docs/PANEL_API_REFERENCE.md`：面板接口参考。
-- `PANEL_FEATURE_MATRIX.md`：青龙与白虎面板真实接口比对及客户端修复记录。
-
----
-
-## 八、许可
-
-本项目遵循仓库根目录 `LICENSE` 所列许可条款。
+本项目依据根目录下 [LICENSE](LICENSE) 许可协议开源分发。

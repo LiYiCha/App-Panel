@@ -4,19 +4,15 @@ import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import com.panel.app.data.logger.AppLogger
-import com.panel.app.data.logger.LogEntry
-import com.panel.app.data.logger.LogLevel
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,9 +32,12 @@ import com.panel.app.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
 
+/**
+ * 现代化紧凑型控制台/设置主页。
+ * 遵循“一页即全览，深层下沉二级页”设计准则，核心面板状态与高频二级入口在一屏内完全呈现。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
@@ -62,108 +61,228 @@ fun SettingsScreen(
     var showAboutDialog by remember { mutableStateOf(false) }
     var pingLatency by remember { mutableStateOf<String?>(null) }
     var isTestingPing by remember { mutableStateOf(false) }
+    var isReachable by remember { mutableStateOf<Boolean?>(null) }
+    var remoteDashboard by remember { mutableStateOf<com.panel.app.data.model.PanelDashboard?>(null) }
     var selectedTimeout by remember { mutableStateOf(15) }
     var showTimeoutDialog by remember { mutableStateOf(false) }
+    var showSystemSettingsPage by remember { mutableStateOf(false) }
 
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<com.panel.app.util.AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
 
+    // 实时探测远端连通性与拉取远端真实运行指标
+    LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
+        isTestingPing = true
+        val latency = withContext(Dispatchers.IO) {
+            try {
+                val start = System.currentTimeMillis()
+                val url = java.net.URL(currentPanel.baseUrl)
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.requestMethod = "GET"
+                conn.connect()
+                val end = System.currentTimeMillis()
+                val code = conn.responseCode
+                conn.disconnect()
+                if (code in 200..499) "${end - start} ms" else "异常 ($code)"
+            } catch (_: Exception) {
+                "超时/离线"
+            }
+        }
+        pingLatency = latency
+        isReachable = latency.endsWith("ms")
+        isTestingPing = false
+
+        viewModel.loadDashboard { res ->
+            remoteDashboard = res.getOrNull()
+        }
+    }
+
+    if (showSystemSettingsPage) {
+        androidx.activity.compose.BackHandler { showSystemSettingsPage = false }
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                if (currentPanel.type == PanelType.BAIHU) "白虎系统状态与配置" else "青龙系统高级配置",
+                                fontSize = 15.sp,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "${currentPanel.name} (${currentPanel.baseUrl})",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { showSystemSettingsPage = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                )
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (currentPanel.type == PanelType.QINGLONG_V15 || currentPanel.type == PanelType.QINGLONG_V10) {
+                    QinglongSystemSettingsCard(viewModel = viewModel)
+                } else {
+                    BaihuSystemSettingsCard(dashboard = remoteDashboard)
+                }
+            }
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // ==================== 1. 当前面板与账号管理 ====================
-        Text("当前面板与账号", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        // ==================== 1. 当前面板信息卡片 (精炼紧凑 Header) ====================
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp)
         ) {
-            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.size(42.dp)
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(22.dp))
+                                Icon(
+                                    Icons.Default.Dns,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                         Column {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(text = currentPanel.name, fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = currentPanel.name,
+                                    fontSize = 14.sp,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Surface(
                                     color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFFF9800).copy(alpha = 0.15f) else Color(0xFF2196F3).copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
                                         text = if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙",
-                                        fontSize = 10.sp,
+                                        fontSize = 9.sp,
                                         color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFE65100) else Color(0xFF1565C0),
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                     )
                                 }
                             }
                             Text(
                                 text = currentPanel.baseUrl,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    // 在线状态指示
+                    // 在线连通状态
+                    val isOnline = isReachable == true
                     Surface(
-                        color = Color(0xFFE8F5E9),
-                        shape = RoundedCornerShape(12.dp)
+                        color = if (isReachable == null) MaterialTheme.colorScheme.surfaceVariant
+                        else if (isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Surface(color = Color(0xFF2E7D32), shape = CircleShape, modifier = Modifier.size(6.dp)) {}
-                            Text("已连接", fontSize = 10.sp, color = Color(0xFF2E7D32))
+                            Surface(
+                                color = if (isReachable == null) MaterialTheme.colorScheme.outline
+                                else if (isOnline) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                shape = CircleShape,
+                                modifier = Modifier.size(5.dp)
+                            ) {}
+                            Text(
+                                text = if (isReachable == null) "探测中"
+                                else if (isOnline) "在线 (${pingLatency ?: "正常"})" else "离线",
+                                fontSize = 9.sp,
+                                color = if (isReachable == null) MaterialTheme.colorScheme.onSurfaceVariant
+                                else if (isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
+                            )
                         }
                     }
                 }
 
-                HorizontalDivider()
-
-                // 操作按钮组
+                // 核心指标一览
+                val totalEnvs = uiState.envs.size
+                val enabledTasks = uiState.tasks.count { !it.isDisabled }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CompactMetricChip("CPU", remoteDashboard?.cpuUsage ?: currentPanel.cpuUsage, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                    CompactMetricChip("内存", remoteDashboard?.memUsage ?: currentPanel.ramUsage, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                    CompactMetricChip("任务", "$enabledTasks/${uiState.tasks.size}", Color(0xFF2E7D32), Modifier.weight(1f))
+                    CompactMetricChip("变量", "$totalEnvs 个", Color(0xFF0288D1), Modifier.weight(1f))
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                // 操作按钮条
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
                         onClick = onNavigateToSwitchAccount,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(8.dp)
+                        modifier = Modifier.weight(1f).height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        Icon(Icons.Default.SwitchAccount, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.SwitchAccount, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("切换账号", fontSize = 12.sp)
+                        Text("切换账号", fontSize = 11.sp)
                     }
 
                     OutlinedButton(
                         onClick = onOpenPanelManager,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(8.dp)
+                        modifier = Modifier.weight(1f).height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        Icon(Icons.Default.SettingsSuggest, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.SettingsSuggest, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("面板管理", fontSize = 12.sp)
+                        Text("面板管理", fontSize = 11.sp)
                     }
 
                     OutlinedButton(
@@ -171,25 +290,22 @@ fun SettingsScreen(
                             viewModel.refreshPanelRemoteData(currentPanel)
                             Toast.makeText(context, "正在刷新面板数据...", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(38.dp),
+                        modifier = Modifier.size(32.dp),
                         contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(16.dp))
                     }
 
-                    // 退出登录：吊销面板侧会话并清空本地 token
                     var showLogoutConfirm by remember { mutableStateOf(false) }
                     OutlinedButton(
                         onClick = { showLogoutConfirm = true },
-                        modifier = Modifier.size(38.dp),
+                        modifier = Modifier.size(32.dp),
                         contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Icon(Icons.Default.Logout, contentDescription = "退出登录", modifier = Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "退出", modifier = Modifier.size(16.dp))
                     }
 
                     if (showLogoutConfirm) {
@@ -197,10 +313,7 @@ fun SettingsScreen(
                             onDismissRequest = { showLogoutConfirm = false },
                             title = { Text("退出登录", fontSize = 15.sp) },
                             text = {
-                                Text(
-                                    "将吊销 [${currentPanel.name}] 的当前会话并清除本地登录凭据，需要重新输入账号密码才能再次访问。",
-                                    fontSize = 12.sp
-                                )
+                                Text("将清除 [${currentPanel.name}] 当前会话，下次需重新登录。", fontSize = 12.sp)
                             },
                             confirmButton = {
                                 Button(
@@ -212,11 +325,11 @@ fun SettingsScreen(
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                                 ) {
-                                    Text("确认退出")
+                                    Text("确认退出", fontSize = 12.sp)
                                 }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showLogoutConfirm = false }) { Text("取消") }
+                                TextButton(onClick = { showLogoutConfirm = false }) { Text("取消", fontSize = 12.sp) }
                             }
                         )
                     }
@@ -224,64 +337,70 @@ fun SettingsScreen(
             }
         }
 
-        // ==================== 2. 核心功能与服务 (紧凑网格卡片，告别单调长列表) ====================
-        Text("核心功能与服务", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        // ==================== 2. 功能中心 (8个二级页面/功能紧凑卡片，两列布局) ====================
+        Text("功能与二级服务", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 
+        val failedDeps = uiState.deps.count { it.status == 2 || it.status == 4 }
+
+        // Row 1
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val failedDeps = uiState.deps.count { it.status == 2 || it.status == 4 }
-            DashboardGridCard(
-                icon = Icons.Default.Extension,
-                title = "环境依赖管理",
-                subtitle = "${uiState.deps.size} 个依赖包",
-                badge = if (failedDeps > 0) "失败 $failedDeps" else null,
-                badgeColor = MaterialTheme.colorScheme.error,
+            ModernNavTile(
+                icon = Icons.Default.QueryStats,
+                title = "面板仪表盘",
+                desc = "趋势 · 排行 · 资源",
+                badge = null,
+                badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenDeps
+                onClick = onOpenDashboard
             )
-            DashboardGridCard(
+            ModernNavTile(
                 icon = Icons.Default.History,
                 title = "执行历史中心",
-                subtitle = "调度流水与终端",
+                desc = "流水记录与终端",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenExecutionHistory
             )
         }
+
+        // Row 2
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardGridCard(
-                icon = Icons.Default.QueryStats,
-                title = "面板仪表盘",
-                subtitle = "趋势 / 排行 / 资源",
-                badge = null,
-                badgeColor = null,
+            ModernNavTile(
+                icon = Icons.Default.Extension,
+                title = "环境依赖管理",
+                desc = "${uiState.deps.size} 个依赖包",
+                badge = if (failedDeps > 0) "失败 $failedDeps" else null,
+                badgeColor = MaterialTheme.colorScheme.error,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenDashboard
+                onClick = onOpenDeps
             )
-            DashboardGridCard(
+            ModernNavTile(
                 icon = Icons.Default.Article,
                 title = "服务端日志",
-                subtitle = "目录树下钻浏览",
+                desc = "脚本文件日志",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenServerLogs
             )
         }
+
+        // Row 3
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardGridCard(
+            ModernNavTile(
                 icon = Icons.Default.CloudUpload,
                 title = "备份与恢复",
-                subtitle = "任务/变量/脚本迁移",
+                desc = "任务 / 变量快照",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenBackup
             )
-            DashboardGridCard(
+            ModernNavTile(
                 icon = Icons.Default.Shield,
                 title = "登录审计日志",
-                subtitle = "鉴权流水与 IP",
+                desc = "鉴权历史与 IP",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
@@ -289,11 +408,21 @@ fun SettingsScreen(
             )
         }
 
+        // Row 4
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardGridCard(
+            ModernNavTile(
+                icon = Icons.Default.Tune,
+                title = "系统高级配置",
+                desc = if (currentPanel.type == PanelType.BAIHU) "宿主机硬件与调度" else "并发上限与日志清理",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = { showSystemSettingsPage = true }
+            )
+            ModernNavTile(
                 icon = Icons.Default.Terminal,
-                title = "开发者模式",
-                subtitle = if (uiState.isDevMode) "已开启 (点击查看控制台)" else "点击一键开启排错",
+                title = "开发者控制台",
+                desc = if (uiState.isDevMode) "已开启调试捕获" else "点击开启请求抓包",
                 badge = if (uiState.isDevMode) "ON" else "OFF",
                 badgeColor = if (uiState.isDevMode) Color(0xFF10B981) else Color.Gray,
                 modifier = Modifier.weight(1f),
@@ -303,133 +432,29 @@ fun SettingsScreen(
             )
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardGridCard(
-                icon = Icons.Default.Speed,
-                title = "网络延时测速",
-                subtitle = pingLatency ?: "点击立即测速",
-                badge = if (isTestingPing) "测试中" else null,
-                badgeColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    isTestingPing = true
-                    coroutineScope.launch {
-                        val latency = withContext(Dispatchers.IO) {
-                            try {
-                                val start = System.currentTimeMillis()
-                                val url = URL(currentPanel.baseUrl)
-                                val conn = url.openConnection() as HttpURLConnection
-                                conn.connectTimeout = 3000
-                                conn.readTimeout = 3000
-                                conn.requestMethod = "HEAD"
-                                conn.connect()
-                                val end = System.currentTimeMillis()
-                                conn.disconnect()
-                                "${end - start} ms"
-                            } catch (_: Exception) {
-                                "超时/不可达"
-                            }
-                        }
-                        pingLatency = latency
-                        isTestingPing = false
-                    }
-                }
-            )
-        }
-
-        // ==================== 2.5 面板系统设置（仅青龙 2.15+） ====================
-        if (currentPanel.type == com.panel.app.data.model.PanelType.QINGLONG_V15) {
-            QinglongSystemSettingsCard(viewModel = viewModel)
-        }
-
-        // ==================== 3. 监控与配置快捷工具 ====================
-        Text("状态与工具", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val totalEnvs = uiState.envs.size
-                val enabledTasks = uiState.tasks.count { !it.isDisabled }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    MetricChip("CPU", currentPanel.cpuUsage, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-                    MetricChip("内存", currentPanel.ramUsage, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
-                    MetricChip("任务", "$enabledTasks/${uiState.tasks.size}", Color(0xFFFF9800), Modifier.weight(1f))
-                    MetricChip("变量", "$totalEnvs 个", Color(0xFF10B981), Modifier.weight(1f))
-                }
-
-                HorizontalDivider()
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            val exportStr = uiState.envs.joinToString("\n") { "export ${it.name}=\"${it.value}\"" }
-                            clipboardManager.setText(AnnotatedString(exportStr))
-                            Toast.makeText(context, "已复制 $totalEnvs 条变量为 Shell export 格式！", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("导出 Shell", fontSize = 11.sp)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            val jsonArray = com.google.gson.JsonArray()
-                            uiState.envs.forEach { env ->
-                                val obj = com.google.gson.JsonObject()
-                                obj.addProperty("name", env.name)
-                                obj.addProperty("value", env.value)
-                                obj.addProperty("remarks", env.remarks ?: "")
-                                jsonArray.add(obj)
-                            }
-                            clipboardManager.setText(AnnotatedString(jsonArray.toString()))
-                            Toast.makeText(context, "已复制 $totalEnvs 条变量为 JSON 数组！", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(Icons.Default.DataObject, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("导出 JSON", fontSize = 11.sp)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            Toast.makeText(context, "本地网络响应缓存已清理！", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("清理缓存", fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-
-        // ==================== 6. 关于与更新 ====================
-        Text("版本更新与关于", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        // ==================== 3. 底部轻量通用设置卡片 ====================
+        Text("常规设置", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
-            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                // 超时
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showTimeoutDialog = true }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("网络超时设置", fontSize = 12.sp)
+                    Text("${selectedTimeout}s >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
                 // 检查更新
                 Row(
                     modifier = Modifier
@@ -444,78 +469,55 @@ fun SettingsScreen(
                                         updateInfo = info
                                         showUpdateDialog = true
                                     }.onFailure { err ->
-                                        Toast.makeText(context, err.message ?: "检查更新失败", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, err.message ?: "检查更新失败", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
-                        },
+                        }
+                        .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text("检查应用更新", fontSize = 13.sp, style = MaterialTheme.typography.bodyMedium)
-                        Text("通过 GitHub Releases 检查并在线获取最新 APK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text("检查应用更新", fontSize = 12.sp)
                     if (isCheckingUpdate) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("检测 >", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("v1.0.0 (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-                HorizontalDivider()
-
-                // GitHub 仓库
+                // 关于
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            clipboardManager.setText(AnnotatedString("https://github.com/LiYiCha/App-Panel"))
-                            Toast.makeText(context, "已复制 GitHub 仓库地址到剪贴板", Toast.LENGTH_SHORT).show()
-                        },
+                        .clickable { showAboutDialog = true }
+                        .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text("开源仓库", fontSize = 13.sp, style = MaterialTheme.typography.bodyMedium)
-                        Text("github.com/LiYiCha/App-Panel", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(Icons.Default.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                }
-
-                HorizontalDivider()
-
-                // 关于应用
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAboutDialog = true },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("关于 Panel Hub", fontSize = 13.sp, style = MaterialTheme.typography.titleSmall)
-                        Text("现代化跨面板移动管理客户端", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text("v1.0.0", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("关于 Panel Hub", fontSize = 12.sp)
+                    Text("详情 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
     }
 
+
+
     // 关于弹窗
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
-            title = { Text("关于 Panel Hub", fontSize = 16.sp) },
+            title = { Text("关于 Panel Hub", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("版本: v2.2.0 (全功能对齐版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
-                    Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板，支持定时任务多状态过滤与实时日志追踪、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
+                    Text("版本: v2.3.0 (高聚合无感流转版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
+                    Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板。支持定时任务多状态联动、代码语法高亮与行号、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
                 }
             },
             confirmButton = {
-                Button(onClick = { showAboutDialog = false }) { Text("确认") }
+                Button(onClick = { showAboutDialog = false }) { Text("确认", fontSize = 12.sp) }
             }
         )
     }
@@ -524,9 +526,9 @@ fun SettingsScreen(
     if (showTimeoutDialog) {
         AlertDialog(
             onDismissRequest = { showTimeoutDialog = false },
-            title = { Text("设置请求超时", fontSize = 16.sp) },
+            title = { Text("设置请求超时", fontSize = 15.sp) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(10, 15, 30, 60).forEach { seconds ->
                         Row(
                             modifier = Modifier
@@ -534,20 +536,20 @@ fun SettingsScreen(
                                 .clickable {
                                     selectedTimeout = seconds
                                     showTimeoutDialog = false
-                                    Toast.makeText(context, "请求超时已更新为 ${seconds}s", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "超时已设置为 ${seconds}s", Toast.LENGTH_SHORT).show()
                                 }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             RadioButton(selected = selectedTimeout == seconds, onClick = null)
-                            Text("${seconds} 秒" + if (seconds == 15) " (推荐默认)" else "")
+                            Text("${seconds} 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showTimeoutDialog = false }) { Text("关闭") }
+                TextButton(onClick = { showTimeoutDialog = false }) { Text("关闭", fontSize = 12.sp) }
             }
         )
     }
@@ -558,27 +560,25 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showUpdateDialog = false },
             title = {
-                Text(if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本", fontSize = 16.sp)
+                Text(if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本", fontSize = 15.sp)
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("当前版本: ${info.currentVersion}  |  最新版本: ${info.latestVersion}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("当前: ${info.currentVersion}  |  最新: ${info.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (info.publishedAt.isNotBlank() && info.publishedAt != "--") {
-                        Text("发布时间: ${info.publishedAt}", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                        Text("发布: ${info.publishedAt}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                     }
-                    Text("更新说明:", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
+                    Text("更新说明:", fontSize = 11.sp, style = MaterialTheme.typography.titleSmall)
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 180.dp),
-                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                        shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
                             text = info.releaseNotes,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(10.dp)
+                            modifier = Modifier.padding(8.dp)
                         )
                     }
                 }
@@ -597,10 +597,10 @@ fun SettingsScreen(
                             showUpdateDialog = false
                         }
                     ) {
-                        Text("立即下载 APK")
+                        Text("立即下载 APK", fontSize = 12.sp)
                     }
                 } else {
-                    Button(onClick = { showUpdateDialog = false }) { Text("我知道了") }
+                    Button(onClick = { showUpdateDialog = false }) { Text("我知道了", fontSize = 12.sp) }
                 }
             },
             dismissButton = {
@@ -611,11 +611,11 @@ fun SettingsScreen(
                             context.startActivity(intent)
                         } catch (_: Exception) {
                             clipboardManager.setText(AnnotatedString(info.releasePageUrl))
-                            Toast.makeText(context, "已复制 Release 页面地址", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已复制 Release 地址", Toast.LENGTH_SHORT).show()
                         }
                     }
                 ) {
-                    Text("在 GitHub 查看")
+                    Text("在 GitHub 查看", fontSize = 12.sp)
                 }
             }
         )
@@ -623,9 +623,94 @@ fun SettingsScreen(
 }
 
 /**
- * 青龙面板系统设置。
- * 只对接了最常用的三项（日志保留天数、任务并发数、通知测试），
- * 其余如镜像源、时区、面板标题等后端虽提供接口，但 App 端使用频率很低。
+ * 现代化紧凑导航卡片 (高频二级入口)
+ */
+@Composable
+private fun ModernNavTile(
+    icon: ImageVector,
+    title: String,
+    desc: String,
+    badge: String?,
+    badgeColor: Color?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        modifier = modifier.clickable { onClick() },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.size(32.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = title,
+                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (badge != null) {
+                        Surface(
+                            color = (badgeColor ?: MaterialTheme.colorScheme.primary).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = badge,
+                                fontSize = 8.sp,
+                                color = badgeColor ?: MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = desc,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactMetricChip(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = color.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 4.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(label, fontSize = 8.sp, color = color, fontWeight = FontWeight.Medium)
+            Text(value, fontSize = 10.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+/**
+ * 青龙面板系统设置二级内容。
  */
 @Composable
 private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
@@ -640,187 +725,187 @@ private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
             isLoaded = true
             settings = map
             if (map != null) {
-                logDays = map["logRemoveFrequency"] ?: ""
-                concurrency = map["cronConcurrency"] ?: ""
+                logDays = map["logRemoveFrequency"]
+                    ?: map["info.logRemoveFrequency"]
+                    ?: map["config.logRemoveFrequency"]
+                    ?: ""
+                concurrency = map["cronConcurrency"]
+                    ?: map["info.cronConcurrency"]
+                    ?: map["config.cronConcurrency"]
+                    ?: ""
             }
         }
     }
 
-    // 后端用空字符串表示"不限制"，所以允许留空
-    val isUnlimitedLog = logDays.isBlank()
-    val isUnlimitedConcurrency = concurrency.isBlank()
-
-    Text("面板系统设置", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (!isLoaded) {
-                Text("正在读取面板配置...", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else if (settings == null) {
-                Text("当前面板未提供系统配置接口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = logDays,
-                        onValueChange = { logDays = it.filter { c -> c.isDigit() } },
-                        label = { Text("日志保留天数", fontSize = 11.sp) },
-                        placeholder = { Text("留空=不清理", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Button(
-                        onClick = {
-                            viewModel.saveLogRemoveFrequency(if (isUnlimitedLog) null else logDays.toIntOrNull())
-                            Toast.makeText(context, "已提交保存", Toast.LENGTH_SHORT).show()
-                        },
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text("保存", fontSize = 11.sp)
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = concurrency,
-                        onValueChange = { concurrency = it.filter { c -> c.isDigit() } },
-                        label = { Text("任务并发数", fontSize = 11.sp) },
-                        placeholder = { Text("留空=不限制", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Button(
-                        onClick = {
-                            viewModel.saveCronConcurrency(if (isUnlimitedConcurrency) null else concurrency.toIntOrNull())
-                            Toast.makeText(context, "已提交保存", Toast.LENGTH_SHORT).show()
-                        },
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text("保存", fontSize = 11.sp)
-                    }
-                }
-
-                HorizontalDivider()
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.sendTestNotify("青龙面板测试", "这是一条来自手机 App 的测试通知")
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("测试通知", fontSize = 11.sp)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.reloadQinglongSystem()
-                            Toast.makeText(context, "正在重载配置...", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("重载配置", fontSize = 11.sp)
-                    }
-                }
-
-                val timezone = settings?.get("info.timezone")
-                if (!timezone.isNullOrBlank()) {
-                    Text(
-                        "面板时区：$timezone",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+    Column(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (!isLoaded) {
+            Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
-        }
-    }
-}
-
-@Composable
-fun MetricChip(title: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-            Text(text = title, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(text = value, fontSize = 11.sp, style = MaterialTheme.typography.titleSmall, color = color)
-        }
-    }
-}
-
-@Composable
-fun DashboardGridCard(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    badge: String? = null,
-    badgeColor: Color? = null,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    ElevatedCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Row(
+        } else if (settings == null) {
+            Text("当前青龙面板未提供系统配置接口或当前账号无配置权限", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("调度与清理设置", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = logDays,
+                            onValueChange = { logDays = it.filter { c -> c.isDigit() } },
+                            label = { Text("日志保留天数", fontSize = 11.sp) },
+                            placeholder = { Text("例如: 7", fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Button(
+                            onClick = {
+                                val v = logDays.toIntOrNull()
+                                viewModel.saveLogRemoveFrequency(v)
+                                Toast.makeText(context, if (v == null) "已清除日志自动清理限制" else "日志保留天数已设置为 ${v} 天", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.height(52.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("保存", fontSize = 12.sp)
+                        }
                     }
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = concurrency,
+                            onValueChange = { concurrency = it.filter { c -> c.isDigit() } },
+                            label = { Text("任务最大并发数", fontSize = 11.sp) },
+                            placeholder = { Text("例如: 5", fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Button(
+                            onClick = {
+                                val v = concurrency.toIntOrNull()
+                                viewModel.saveCronConcurrency(v)
+                                Toast.makeText(context, if (v == null) "已解除任务最大并发限制" else "任务并发数已设置为 $v", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.height(52.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("保存", fontSize = 12.sp)
+                        }
+                    }
+
+                    Text("提示：留空并点击保存表示不限制并发或不自动清理旧日志", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (badge != null && badgeColor != null) {
-                    Surface(
-                        color = badgeColor.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
+            }
+
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("系统维护与通知测试", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.sendTestNotify("系统测试通知", "来自 Panel Hub 移动端的通知连通性测试")
+                                Toast.makeText(context, "已向青龙服务提交通知测试请求", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("测试系统通知", fontSize = 11.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.reloadQinglongSystem()
+                                Toast.makeText(context, "已向青龙服务提交系统配置重载请求", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("重载配置", fontSize = 11.sp)
+                        }
+                    }
+
+                    val timezone = settings?.get("info.timezone")
+                    if (!timezone.isNullOrBlank()) {
                         Text(
-                            text = badge,
-                            fontSize = 9.sp,
-                            color = badgeColor,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            "服务时区：$timezone",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-            Text(title, fontSize = 13.sp, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
+/**
+ * 白虎面板系统概览二级内容。
+ */
+@Composable
+private fun BaihuSystemSettingsCard(dashboard: com.panel.app.data.model.PanelDashboard?) {
+    Column(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (dashboard == null) {
+            Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        } else {
+            val platform = dashboard.resourceDetail["系统"] ?: dashboard.resourceDetail["platform"] ?: "Linux / Docker"
+            val uptime = dashboard.resourceDetail["运行时长"] ?: dashboard.resourceDetail["uptime"] ?: "正常运行"
+            val disk = dashboard.resourceDetail["磁盘占用"] ?: "--"
+            val workers = dashboard.resourceDetail["Worker 数"] ?: "--"
+
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("白虎宿主机监控", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("系统平台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(platform, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("运行时长", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(uptime, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("CPU 使用率", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(dashboard.cpuUsage ?: "--", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("物理内存使用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(dashboard.memUsage ?: "--", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("磁盘占用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(disk, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("调度 Worker 数", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(workers, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+    }
+}

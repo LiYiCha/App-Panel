@@ -39,7 +39,7 @@ fun DashboardScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
-    var dashboard by remember { mutableStateOf<PanelDashboard?>(null) }
+    var dashboard by remember { mutableStateOf(viewModel.getCachedDashboard()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 

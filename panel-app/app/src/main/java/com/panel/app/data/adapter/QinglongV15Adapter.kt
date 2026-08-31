@@ -6,6 +6,8 @@ import com.panel.app.data.remote.NetworkClient
 import com.panel.app.data.remote.api.*
 import com.panel.app.data.remote.unwrap
 import com.panel.app.data.remote.unwrapTo
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +38,10 @@ class QinglongV15Adapter(
 
     private suspend fun ensureAuth(): Boolean {
         if (!currentToken.isNullOrEmpty()) return true
+        if (!instance.token.isNullOrEmpty()) {
+            currentToken = instance.token
+            return true
+        }
         if (!instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()) {
             return authenticate().isSuccess
         }
@@ -55,6 +61,12 @@ class QinglongV15Adapter(
     // ---------------------------------------------------------------- 认证
 
     override suspend fun authenticate(): Result<String> {
+        val saved = instance.token
+        if (!saved.isNullOrEmpty()) {
+            currentToken = saved
+            return Result.success(saved)
+        }
+
         val user = instance.username
         val pass = instance.password
         if (!user.isNullOrEmpty() && !pass.isNullOrEmpty()) {
@@ -68,19 +80,6 @@ class QinglongV15Adapter(
                 ?: return Result.failure(Exception("登录失败: 服务端未返回 token"))
             currentToken = token
             return Result.success(token)
-        }
-
-        val saved = instance.token
-        if (!saved.isNullOrEmpty()) {
-            currentToken = saved
-            // 校验一次，确认旧 token 还有效
-            val ping = try {
-                api.getCrons(getAuthHeader())
-            } catch (e: Exception) {
-                return Result.failure(Exception("连接异常: ${e.message ?: "无法连接"}"))
-            }
-            ping.unwrap("登录态校验失败").getOrElse { return Result.failure(it) }
-            return Result.success(saved)
         }
 
         return Result.failure(Exception("请输入面板登录账号与密码"))
@@ -133,7 +132,7 @@ class QinglongV15Adapter(
                 running -> "运行中"
                 queued -> "排队中"
                 disabled -> "已禁用"
-                else -> "就绪"
+                else -> "已启用"
             },
             isRunning = running,
             isDisabled = disabled,
@@ -448,19 +447,16 @@ class QinglongV15Adapter(
 
     override suspend fun saveEnv(env: UnifiedEnv): Result<Boolean> {
         ensureAuth()
-        // 后端约束 name 必须匹配 ^[a-zA-Z_][0-9a-zA-Z_]*$，提前校验避免拿到一个看不懂的 400
-        if (!ENV_NAME_REGEX.matches(env.name)) {
-            return Result.failure(
-                Exception("变量名不合法：只能包含字母、数字、下划线，且不能以数字开头")
-            )
+        if (env.name.isBlank()) {
+            return Result.failure(Exception("变量名不能为空"))
         }
         val isNew = env.id.isEmpty() || toId(env.id) == null
         return (if (isNew) {
-            api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name, env.value, env.remarks)))
+            api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name.trim(), env.value, env.remarks ?: "")))
                 .unwrap("创建环境变量失败")
         } else {
             val id: Any = toId(env.id) ?: env.id
-            api.updateEnv(getAuthHeader(), QlUpdateEnvReq(id, env.name, env.value, env.remarks))
+            api.updateEnv(getAuthHeader(), QlUpdateEnvReq(id, env.name.trim(), env.value, env.remarks ?: ""))
                 .unwrap("更新环境变量失败")
         }).map { true }
     }
@@ -612,6 +608,7 @@ class QinglongV15Adapter(
             path = nodePath,
             isDir = isDirectory,
             size = if (isDirectory) null else formatBytes(item.size),
+            mtime = item.mtime,
             children = item.children?.map { mapScriptNode(it) }
         )
     }
@@ -940,32 +937,62 @@ class QinglongV15Adapter(
      * 青龙的 overview/trend/top/labels 都是独立接口，这里并行拉取后合并；
      * 单个接口失败只丢掉那块数据，不让整页变空白。
      */
-    override suspend fun getDashboard(): Result<PanelDashboard> {
+    override suspend fun getDashboard(): Result<PanelDashboard> = coroutineScope {
         ensureAuth()
-        return try {
-            val overview = runCatching {
-                api.getDashboardOverview(getAuthHeader()).unwrap("获取概览失败").getOrNull()?.data
-            }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+        try {
+                val overviewDef = async {
+                    runCatching {
+                        api.getDashboardOverview(getAuthHeader()).unwrap("获取概览失败").getOrNull()?.data
+                    }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+                }
+                val trendDef = async {
+                    runCatching {
+                        api.getDashboardTrend(getAuthHeader(), days = 14).unwrap("获取趋势失败").getOrNull()?.data
+                    }.getOrNull()
+                }
+                val topCountDef = async {
+                    runCatching {
+                        api.getDashboardTopCount(getAuthHeader()).unwrap("获取次数排行失败").getOrNull()?.data
+                    }.getOrNull()
+                }
+                val topTimeDef = async {
+                    runCatching {
+                        api.getDashboardTopTime(getAuthHeader()).unwrap("获取耗时排行失败").getOrNull()?.data
+                    }.getOrNull()
+                }
+                val labelsDef = async {
+                    runCatching {
+                        api.getDashboardLabels(getAuthHeader()).unwrap("获取标签统计失败").getOrNull()?.data
+                    }.getOrNull()
+                }
+                val systemDef = async {
+                    runCatching {
+                        api.getDashboardSystem(getAuthHeader()).unwrap("获取系统信息失败").getOrNull()?.data
+                    }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+                }
 
-            val trend = runCatching {
-                api.getDashboardTrend(getAuthHeader(), days = 14).unwrap("获取趋势失败").getOrNull()?.data
-            }.getOrNull()
+                var overview = overviewDef.await()
+                val trend = trendDef.await()
+                var topCount = topCountDef.await()
+                val topTime = topTimeDef.await()
+                var labels = labelsDef.await()
+                var system = systemDef.await()
 
-            val topCount = runCatching {
-                api.getDashboardTopCount(getAuthHeader()).unwrap("获取次数排行失败").getOrNull()?.data
-            }.getOrNull()
+            // 官方标准青龙回退：若 /api/dashboard/* 404（非标版本特性），自动通过 /api/system 与任务列表聚合真实数据
+            var fallbackCrons: List<QlCronItem> = emptyList()
+            if (overview == null || labels == null || topCount == null) {
+                runCatching {
+                    val cronsResp = api.getCrons(getAuthHeader()).unwrap("获取任务列表失败").getOrNull()
+                    fallbackCrons = parseCronArray(cronsResp?.data)
+                }
+            }
 
-            val topTime = runCatching {
-                api.getDashboardTopTime(getAuthHeader()).unwrap("获取耗时排行失败").getOrNull()?.data
-            }.getOrNull()
-
-            val labels = runCatching {
-                api.getDashboardLabels(getAuthHeader()).unwrap("获取标签统计失败").getOrNull()?.data
-            }.getOrNull()
-
-            val system = runCatching {
-                api.getDashboardSystem(getAuthHeader()).unwrap("获取系统信息失败").getOrNull()?.data
-            }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            if (system == null) {
+                runCatching {
+                    system = api.getSystemInfo(getAuthHeader()).unwrap("获取系统信息失败").getOrNull()?.data
+                        ?.takeIf { it.isJsonObject }?.asJsonObject
+                }
+            }
 
             fun com.google.gson.JsonObject?.intOf(key: String): Int? =
                 this?.get(key)?.takeIf { it.isJsonPrimitive }?.asNumber?.toInt()
@@ -976,31 +1003,62 @@ class QinglongV15Adapter(
             fun com.google.gson.JsonObject?.strOf(key: String): String? =
                 this?.get(key)?.takeIf { it.isJsonPrimitive }?.asString
 
+            val totalTasks = overview.intOf("total") ?: if (fallbackCrons.isNotEmpty()) fallbackCrons.size else null
+            val enabledTasks = overview.intOf("enabled") ?: if (fallbackCrons.isNotEmpty()) fallbackCrons.count { it.isDisabled == 0 } else null
+            val disabledTasks = overview.intOf("disabled") ?: if (fallbackCrons.isNotEmpty()) fallbackCrons.count { it.isDisabled == 1 } else null
+            val runningCount = if (fallbackCrons.isNotEmpty()) fallbackCrons.count { it.status == 0 } else 0
+
             val cpu = system?.let { s ->
-                val load1 = s.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
+                val load1 = s.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble
+                    ?: s.get("cpu")?.takeIf { it.isJsonPrimitive }?.asDouble
+                    ?: 0.0
                 val cpus = s.get("cpus")?.asInt ?: 1
-                String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
+                if (load1 > 0) String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0) else null
+            }
+
+            val fallbackLabelStats = if (labels == null && fallbackCrons.isNotEmpty()) {
+                val lMap = mutableMapOf<String, Int>()
+                fallbackCrons.forEach { c ->
+                    c.labels?.forEach { l -> lMap[l] = (lMap[l] ?: 0) + 1 }
+                }
+                lMap.map { (k, v) -> LabelStat(k, v) }
+            } else parseLabelArray(labels)
+
+            val parsedTopCount = parseRankArray(topCount) { obj ->
+                TaskRank(
+                    rank = obj.get("rank")?.asInt ?: 0,
+                    name = obj.get("name")?.asString ?: "未知任务",
+                    value = "${obj.get("runCount")?.asInt ?: 0} 次",
+                    detail = "均耗 ${obj.get("avgTime")?.asLong ?: 0}ms · 成功率 ${obj.get("successRate")?.asString ?: "-"}%"
+                )
+            }.ifEmpty {
+                if (fallbackCrons.isNotEmpty()) {
+                    fallbackCrons.filter { (it.last_execution_time ?: 0) > 0 }
+                        .sortedByDescending { it.last_execution_time ?: 0 }
+                        .take(5)
+                        .mapIndexed { idx, c ->
+                            TaskRank(
+                                rank = idx + 1,
+                                name = c.name ?: "未命名任务",
+                                value = if ((c.last_running_time ?: 0) > 0) "${c.last_running_time}s" else "已调度",
+                                detail = "规则: ${c.schedule ?: "-"}"
+                            )
+                        }
+                } else emptyList()
             }
 
             Result.success(
                 PanelDashboard(
-                    totalTasks = overview.intOf("total"),
-                    enabledTasks = overview.intOf("enabled"),
-                    disabledTasks = overview.intOf("disabled"),
-                    todayRuns = overview.longOf("todayRuns"),
+                    totalTasks = totalTasks,
+                    enabledTasks = enabledTasks,
+                    disabledTasks = disabledTasks,
+                    todayRuns = overview.longOf("todayRuns") ?: if (runningCount > 0) runningCount.toLong() else null,
                     todaySuccess = overview.longOf("todaySuccess"),
                     todayFail = overview.longOf("todayFail"),
                     successRate = overview.strOf("successRate"),
                     avgTimeMs = overview.longOf("avgTime"),
                     trend = parseTrendArray(trend),
-                    topByCount = parseRankArray(topCount) { obj ->
-                        TaskRank(
-                            rank = obj.get("rank")?.asInt ?: 0,
-                            name = obj.get("name")?.asString ?: "未知任务",
-                            value = "${obj.get("runCount")?.asInt ?: 0} 次",
-                            detail = "均耗 ${obj.get("avgTime")?.asLong ?: 0}ms · 成功率 ${obj.get("successRate")?.asString ?: "-"}%"
-                        )
-                    },
+                    topByCount = parsedTopCount,
                     topByTime = parseRankArray(topTime) { obj ->
                         TaskRank(
                             rank = obj.get("rank")?.asInt ?: 0,
@@ -1009,12 +1067,13 @@ class QinglongV15Adapter(
                             detail = "峰值 ${obj.get("maxTime")?.asLong ?: 0}ms"
                         )
                     },
-                    labelStats = parseLabelArray(labels),
+                    labelStats = fallbackLabelStats,
                     cpuUsage = cpu,
                     memUsage = system.strOf("memUsagePercent")?.let { "$it%" },
                     resourceDetail = buildMap {
                         system?.let { s ->
-                            s.strOf("platform")?.let { put("系统", it) }
+                            s.strOf("version")?.let { put("青龙内核", "v$it") }
+                            s.strOf("platform")?.let { put("系统环境", it) }
                             s.get("cpus")?.asInt?.let { put("CPU 核数", "$it") }
                             s.longOf("uptime")?.let { put("运行时长", formatSeconds(it)) }
                             s.strOf("memUsagePercent")?.let { put("内存占用", "$it%") }
@@ -1073,19 +1132,47 @@ class QinglongV15Adapter(
      */
     suspend fun fetchSystemSettings(): Result<Map<String, String>> {
         ensureAuth()
-        return api.getSystemConfig(getAuthHeader())
-            .unwrapTo("读取系统配置失败") { env ->
-                val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
-                    ?: return@unwrapTo emptyMap()
-                val result = mutableMapOf<String, String>()
-                obj.entrySet().forEach { (k, v) ->
-                    if (v.isJsonPrimitive) result[k] = v.asString
+        return try {
+            val result = mutableMapOf<String, String>()
+
+            fun extractEntries(target: com.google.gson.JsonObject, prefix: String = "") {
+                target.entrySet().forEach { (k, v) ->
+                    val fullKey = if (prefix.isEmpty()) k else "$prefix.$k"
+                    if (v.isJsonPrimitive) {
+                        result[fullKey] = v.asString
+                        if (!result.containsKey(k)) {
+                            result[k] = v.asString
+                        }
+                    } else if (v.isJsonObject) {
+                        extractEntries(v.asJsonObject, fullKey)
+                    }
                 }
-                obj.getAsJsonObject("info")?.entrySet()?.forEach { (k, v) ->
-                    if (v.isJsonPrimitive) result["info.$k"] = v.asString
-                }
-                result
             }
+
+            runCatching {
+                val resp = api.getSystemConfig(getAuthHeader())
+                val env = resp.unwrap("读取配置失败").getOrNull()
+                val obj = env?.data?.takeIf { it.isJsonObject }?.asJsonObject
+                if (obj != null) {
+                    extractEntries(obj)
+                }
+            }
+
+            if (!result.containsKey("logRemoveFrequency") || !result.containsKey("cronConcurrency")) {
+                runCatching {
+                    val sysResp = api.getSystemInfo(getAuthHeader())
+                    val sysEnv = sysResp.unwrap("读取系统信息失败").getOrNull()
+                    val sysObj = sysEnv?.data?.takeIf { it.isJsonObject }?.asJsonObject
+                    if (sysObj != null) {
+                        extractEntries(sysObj)
+                    }
+                }
+            }
+
+            Result.success(result)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /** 日志保留天数，null 表示不自动清理 */
