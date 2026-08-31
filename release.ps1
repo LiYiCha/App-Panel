@@ -28,8 +28,8 @@ if (Test-Path $tomlPath) {
     Set-Content -Path $tomlPath -Value $newContent -Encoding UTF8
 }
 
-# 3. 编译打包已签名的 Release APK
-Write-Host "[2/5] 正在使用 ycKey 证书执行 Gradle 签名打包 (assembleRelease)..." -ForegroundColor Green
+# 3. 编译打包已签名的 Release APK (使用本地私有密钥)
+Write-Host "[2/5] 正在使用本地签名密钥执行 Gradle 打包 (assembleRelease)..." -ForegroundColor Green
 $panelAppDir = Join-Path $PSScriptRoot "panel-app"
 Push-Location $panelAppDir
 try {
@@ -69,8 +69,40 @@ Write-Host "[5/5] 正在推送到远程 GitHub 仓库..." -ForegroundColor Green
 git push origin main
 git push origin $tag --force
 
+# 6. 如果环境变量中有 GITHUB_TOKEN，自动上传 APK 到 GitHub Release
+if ($env:GITHUB_TOKEN) {
+    Write-Host "检测到 GITHUB_TOKEN，正在自动上传已签名 APK 到 GitHub Release..." -ForegroundColor Green
+    try {
+        $headers = @{
+            "Authorization" = "token $env:GITHUB_TOKEN"
+            "Accept" = "application/vnd.github.v3+json"
+        }
+        $releaseBody = @{
+            tag_name = $tag
+            name = "Panel Hub $tag 正式版"
+            body = $Message
+            draft = $false
+            prerelease = $false
+        } | ConvertTo-Json
+        $createReleaseUrl = "https://api.github.com/repos/LiYiCha/App-Panel/releases"
+        $relResp = Invoke-RestMethod -Uri $createReleaseUrl -Method Post -Headers $headers -Body $releaseBody -ContentType "application/json"
+        
+        $uploadUrl = $relResp.upload_url.Replace("{?name,label}", "?name=Panel-App-$tag.apk")
+        $apkBytes = [System.IO.File]::ReadAllBytes($targetApk)
+        $uploadHeaders = @{
+            "Authorization" = "token $env:GITHUB_TOKEN"
+            "Content-Type" = "application/vnd.android.package-archive"
+        }
+        Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $uploadHeaders -Body $apkBytes | Out-Null
+        Write-Host "Release 与 APK 资产已自动发布上线！" -ForegroundColor Green
+    } catch {
+        Write-Warning "自动上传 Release 失败: $($_.Exception.Message)"
+    }
+}
+
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "一键打包与发布完成！" -ForegroundColor Green
 Write-Host "签名 APK 路径: $targetApk" -ForegroundColor Green
 Write-Host "GitHub 仓库: https://github.com/LiYiCha/App-Panel" -ForegroundColor Green
+Write-Host "网页发布 Release 链接: https://github.com/LiYiCha/App-Panel/releases/new?tag=$tag" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan

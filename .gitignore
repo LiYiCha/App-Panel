@@ -34,9 +34,11 @@ deploymentTargetDropDown.xml
 render.experimental.xml
 temp
 
-# Keystore files
+# Keystore files & local secrets
 *.jks
 *.keystore
+panel-app/key/
+keystore.properties
 local.properties
 .DS_Store
 

@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -30,14 +32,29 @@ android {
         }
     }
 
-    val releaseKeystore = file("../key/ycKey.jks")
+    // 签名配置：优先从环境变量或本地 local.properties 读取，避免在公开代码库硬编码密码与密钥路径
+    val localProps = Properties()
+    val localPropsFile = rootProject.file("local.properties")
+    if (localPropsFile.exists()) {
+        FileInputStream(localPropsFile).use { localProps.load(it) }
+    }
+
+    val storeFilePath = System.getenv("RELEASE_STORE_FILE") ?: localProps.getProperty("RELEASE_STORE_FILE")
+    val storePasswordVal = System.getenv("RELEASE_STORE_PASSWORD") ?: localProps.getProperty("RELEASE_STORE_PASSWORD")
+    val keyAliasVal = System.getenv("RELEASE_KEY_ALIAS") ?: localProps.getProperty("RELEASE_KEY_ALIAS")
+    val keyPasswordVal = System.getenv("RELEASE_KEY_PASSWORD") ?: localProps.getProperty("RELEASE_KEY_PASSWORD")
+
+    val hasReleaseSigning = !storeFilePath.isNullOrBlank() &&
+            file(storeFilePath).exists() &&
+            !storePasswordVal.isNullOrBlank()
+
     signingConfigs {
-        create("release") {
-            if (releaseKeystore.exists()) {
-                storeFile = releaseKeystore
-                storePassword = "2232164480yc"
-                keyAlias = "ycKey"
-                keyPassword = "2232164480yc"
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(storeFilePath)
+                storePassword = storePasswordVal
+                keyAlias = keyAliasVal
+                keyPassword = keyPasswordVal
             }
         }
     }
@@ -47,7 +64,7 @@ android {
             // 启用 R8 代码压缩与混淆，并同步剪裁未被引用资源
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = if (releaseKeystore.exists()) {
+            signingConfig = if (hasReleaseSigning) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")
