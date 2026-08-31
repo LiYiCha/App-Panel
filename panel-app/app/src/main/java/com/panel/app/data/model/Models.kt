@@ -116,6 +116,78 @@ data class UnifiedConfigFile(
     val content: String
 )
 
+/**
+ * 正在运行的任务实例。
+ * 青龙从 `GET /api/dashboard/runtime` 获取（带 instanceId，可精确停止单个实例）；
+ * 白虎从 `GET /api/v1/monitor` 的 scheduler.workers 获取（只有 task_id，需再解析出 logID 才能停止）。
+ */
+data class RunningTaskInfo(
+    val taskId: String,
+    val name: String,
+    /** 青龙的运行实例 ID；白虎没有这个概念，为 null */
+    val instanceId: String? = null,
+    val pid: Int? = null,
+    val elapsedSeconds: Long? = null,
+    val logPath: String? = null
+)
+
+/**
+ * 面板仪表盘数据（两个面板字段对齐后的统一视图）。
+ * 各面板支持的字段不同：缺的留 null，UI 据此隐藏对应区块，不要伪造 0。
+ */
+data class PanelDashboard(
+    // 概览
+    val totalTasks: Int? = null,
+    val enabledTasks: Int? = null,
+    val disabledTasks: Int? = null,
+    val todayRuns: Long? = null,
+    val todaySuccess: Long? = null,
+    val todayFail: Long? = null,
+    val successRate: String? = null,
+    val avgTimeMs: Long? = null,
+    // 白虎补充的总量类指标
+    val totalEnvs: Long? = null,
+    val totalLogs: Long? = null,
+    val scheduledCount: Int? = null,
+    val runningCount: Int? = null,
+    // 趋势
+    val trend: List<TrendPoint> = emptyList(),
+    // 排行
+    val topByCount: List<TaskRank> = emptyList(),
+    val topByTime: List<TaskRank> = emptyList(),
+    // 标签统计（青龙）
+    val labelStats: List<LabelStat> = emptyList(),
+    // 资源
+    val cpuUsage: String? = null,
+    val memUsage: String? = null,
+    val resourceDetail: Map<String, String> = emptyMap()
+)
+
+/** 单日执行趋势 */
+data class TrendPoint(
+    val date: String,
+    val total: Int,
+    val success: Int,
+    val fail: Int
+)
+
+/** 排行榜条目，value 为展示用主指标文本 */
+data class TaskRank(
+    val rank: Int,
+    val name: String,
+    val value: String,
+    val detail: String? = null
+)
+
+/** 按标签聚合的任务统计（青龙） */
+data class LabelStat(
+    val label: String,
+    val count: Int,
+    val todayRuns: Int,
+    val successRate: String?,
+    val avgTimeMs: Long?
+)
+
 fun List<ScriptNode>.extractScriptFiles(): List<String> {
     val result = mutableListOf<String>()
     fun traverse(list: List<ScriptNode>) {
@@ -129,36 +201,5 @@ fun List<ScriptNode>.extractScriptFiles(): List<String> {
     }
     traverse(this)
     return result
-}
-
-fun getStandardConfigTemplate(panelType: PanelType): String {
-    return when (panelType) {
-        PanelType.BAIHU -> """
-            {
-              "server": {
-                "port": 5700,
-                "host": "0.0.0.0"
-              },
-              "cron": {
-                "max_concurrent": 10,
-                "timeout": 3600
-              },
-              "log": {
-                "level": "info",
-                "compression": "zstd"
-              }
-            }
-        """.trimIndent()
-        else -> """
-            ## 青龙面板全局配置文件 config.sh
-            ## 系统环境变量与拉库规则配置
-            
-            export RepoUrl="https://github.com/sample/repo.git"
-            export RandomDelay="300"
-            export AutoDelCron="true"
-            export CommandTimeoutTime="1h"
-            export NotifyTitle="青龙资产变动通知"
-        """.trimIndent()
-    }
 }
 

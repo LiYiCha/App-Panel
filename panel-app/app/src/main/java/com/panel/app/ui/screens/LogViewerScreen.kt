@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,6 +75,20 @@ fun LogViewerScreen(
         if (initialContent.isBlank() && (taskId.isNotBlank() || logPath.isNotBlank())) {
             fetchLog()
         }
+    }
+
+    // 跟随模式：订阅真实日志流，任务结束前持续刷新内容
+    var isFollowing by remember { mutableStateOf(false) }
+    LaunchedEffect(isFollowing, taskId) {
+        if (!isFollowing || taskId.isBlank()) return@LaunchedEffect
+        viewModel.streamTaskLog(taskId)
+            .catch { e -> logContent = "日志流中断: ${e.message}" }
+            .collect { latest ->
+                logContent = latest
+                isLoading = false
+            }
+        // 流结束 = 任务已结束，退出跟随
+        isFollowing = false
     }
 
     val lines = remember(logContent) {
@@ -145,6 +160,23 @@ fun LogViewerScreen(
                         if (!isSearchOpen) searchQuery = ""
                     }) {
                         Icon(if (isSearchOpen) Icons.Default.Close else Icons.Default.Search, contentDescription = "搜索")
+                    }
+                    // 跟随模式：任务运行中持续刷新，结束后自动停止
+                    if (taskId.isNotBlank()) {
+                        IconButton(onClick = {
+                            isFollowing = !isFollowing
+                            Toast.makeText(
+                                context,
+                                if (isFollowing) "已开启实时跟随" else "已停止跟随",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "实时跟随",
+                                tint = if (isFollowing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     IconButton(onClick = { fetchLog() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新日志")

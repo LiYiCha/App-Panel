@@ -98,12 +98,3 @@
 
 # Application 类由 @HiltAndroidApp 标记，作为注入根需保留
 -keep class com.panel.app.PanelApp { *; }
-
-# ----------------------------------------------------------------------------
-# 六、本地守护服务
-# ----------------------------------------------------------------------------
-
-# LocalBaihuDaemonService 与 BootReceiver 由清单文件引用，R8 默认保留；
-# 此处显式保留以规避自定义 ROM 上的反射/实例化差异
--keep class com.panel.app.data.local.LocalBaihuDaemonService { *; }
--keep class com.panel.app.data.local.BootReceiver { *; }

@@ -40,6 +40,7 @@ fun ScriptsScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var deletingNode by remember { mutableStateOf<ScriptNode?>(null) }
+    var renamingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var showFolderDialog by remember { mutableStateOf(false) }
 
     // 搜索过滤后的脚本树
@@ -125,7 +126,8 @@ fun ScriptsScreen(
                             expandedFolders = uiState.expandedScriptFolders,
                             onToggleExpand = { viewModel.toggleScriptFolderExpanded(it) },
                             onOpenEditor = onOpenScriptEditor,
-                            onDelete = { deletingNode = it }
+                            onDelete = { deletingNode = it },
+                            onRename = { renamingNode = it }
                         )
                     }
                 }
@@ -231,6 +233,52 @@ fun ScriptsScreen(
         )
     }
 
+    // 4.5 重命名弹窗
+    if (renamingNode != null) {
+        val node = renamingNode!!
+        var newName by remember(node.path) { mutableStateOf(node.name) }
+        AlertDialog(
+            onDismissRequest = { renamingNode = null },
+            title = { Text(if (node.isDir) "重命名文件夹" else "重命名脚本", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("所在目录：${node.path.substringBeforeLast('/').ifEmpty { "根目录 (/)" }}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("新名称", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // 青龙的 rename 接口不允许跨目录，这里只允许改文件名
+                    Text(
+                        "仅支持同目录内重命名；如需移动到其他目录请先复制后在目标目录重建。",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = newName.trim()
+                        if (trimmed.isNotEmpty() && trimmed != node.name) {
+                            val newPath = node.path.substringBeforeLast('/') + "/" + trimmed
+                            viewModel.renameScript(node.path, newPath.removePrefix("/"))
+                        }
+                        renamingNode = null
+                    },
+                    enabled = newName.trim().isNotEmpty() && newName.trim() != node.name
+                ) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingNode = null }) { Text("取消") }
+            }
+        )
+    }
+
     // 5. 删除文件/文件夹确认弹窗
     if (deletingNode != null) {
         AlertDialog(
@@ -264,7 +312,8 @@ fun ScriptTreeItem(
     expandedFolders: Set<String> = emptySet(),
     onToggleExpand: (String) -> Unit = {},
     onOpenEditor: (String) -> Unit,
-    onDelete: (ScriptNode) -> Unit
+    onDelete: (ScriptNode) -> Unit,
+    onRename: (ScriptNode) -> Unit = {}
 ) {
     val isExpanded = expandedFolders.contains(node.path) || (searchQuery.isNotEmpty() && node.isDir)
 
@@ -353,11 +402,19 @@ fun ScriptTreeItem(
                         }
                     }
 
-                    IconButton(
-                        onClick = { onDelete(node) },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    Row {
+                        IconButton(
+                            onClick = { onRename(node) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "重命名", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        }
+                        IconButton(
+                            onClick = { onDelete(node) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        }
                     }
                 }
             }
@@ -372,7 +429,8 @@ fun ScriptTreeItem(
                     expandedFolders = expandedFolders,
                     onToggleExpand = onToggleExpand,
                     onOpenEditor = onOpenEditor,
-                    onDelete = onDelete
+                    onDelete = onDelete,
+                    onRename = onRename
                 )
             }
         }

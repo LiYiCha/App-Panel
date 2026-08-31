@@ -45,7 +45,7 @@ fun LoginScreen(
 
     var panelType by remember(editPanel) { mutableStateOf(editPanel?.type ?: PanelType.BAIHU) }
     var panelName by remember(editPanel) { mutableStateOf(editPanel?.name ?: "白虎面板") }
-    var baseUrl by remember(editPanel) { mutableStateOf(editPanel?.baseUrl ?: "http://118.190.150.79:18082") }
+    var baseUrl by remember(editPanel) { mutableStateOf(editPanel?.baseUrl ?: "") }
     var username by remember(editPanel) { mutableStateOf(editPanel?.username ?: "") }
     var password by remember(editPanel) { mutableStateOf(editPanel?.password ?: "") }
     var isPasswordVisible by remember { mutableStateOf(false) }
@@ -76,10 +76,32 @@ fun LoginScreen(
             if (success) {
                 Toast.makeText(context, if (isSwitchAccount) "账号切换成功" else "登录成功", Toast.LENGTH_SHORT).show()
                 onLoginSuccess()
+            } else if (uiState.otpPendingPanel != null) {
+                // 两步验证：由下面的对话框接管，不再当成普通错误提示
+                errorMessage = null
             } else {
                 errorMessage = msg
             }
         }
+    }
+
+    // 两步验证输入框：开启 OTP 的账号必须再验一次动态码才能拿到登录凭据
+    if (uiState.otpPendingPanel != null) {
+        OtpVerifyDialog(
+            panelName = uiState.otpPendingPanel!!.name,
+            isVerifying = uiState.isAuthenticating,
+            onDismiss = { viewModel.cancelOtp() },
+            onConfirm = { code ->
+                viewModel.submitOtp(code) { success, msg ->
+                    if (success) {
+                        Toast.makeText(context, "登录成功", Toast.LENGTH_SHORT).show()
+                        onLoginSuccess()
+                    } else {
+                        errorMessage = msg
+                    }
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -279,4 +301,60 @@ fun LoginScreen(
         }
     }
 }
+}
+
+/**
+ * 两步验证输入框。
+ * 白虎开启 OTP 后，首次登录只返回临时凭证而不下发 Cookie，
+ * 必须再用 authenticator 里的 6 位动态码调一次 /auth/login/otp 才算真正登录。
+ */
+@Composable
+private fun OtpVerifyDialog(
+    panelName: String,
+    isVerifying: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var code by remember { mutableStateOf("") }
+    val isValid = code.trim().length >= 6
+
+    AlertDialog(
+        onDismissRequest = { if (!isVerifying) onDismiss() },
+        title = { Text("两步验证", fontSize = 16.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "面板 [$panelName] 已开启两步验证，请输入验证器 App 中的 6 位动态验证码。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { if (it.length <= 8) code = it.filter { c -> c.isDigit() } },
+                    label = { Text("动态验证码", fontSize = 12.sp) },
+                    singleLine = true,
+                    enabled = !isVerifying,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { if (isValid && !isVerifying) onConfirm(code) }),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(code) },
+                enabled = isValid && !isVerifying
+            ) {
+                Text(if (isVerifying) "验证中..." else "验证并登录")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isVerifying) {
+                Text("取消")
+            }
+        }
+    )
 }

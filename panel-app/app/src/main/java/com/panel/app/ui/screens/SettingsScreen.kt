@@ -47,9 +47,10 @@ fun SettingsScreen(
     onNavigateToSwitchAccount: () -> Unit = {},
     onOpenLoginLogs: () -> Unit = {},
     onOpenServerLogs: () -> Unit = {},
+    onOpenDashboard: () -> Unit = {},
+    onOpenBackup: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
     onOpenExecutionHistory: () -> Unit = {},
-    onOpenBaihuPlugin: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -176,6 +177,49 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
                     }
+
+                    // 退出登录：吊销面板侧会话并清空本地 token
+                    var showLogoutConfirm by remember { mutableStateOf(false) }
+                    OutlinedButton(
+                        onClick = { showLogoutConfirm = true },
+                        modifier = Modifier.size(38.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Default.Logout, contentDescription = "退出登录", modifier = Modifier.size(18.dp))
+                    }
+
+                    if (showLogoutConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showLogoutConfirm = false },
+                            title = { Text("退出登录", fontSize = 15.sp) },
+                            text = {
+                                Text(
+                                    "将吊销 [${currentPanel.name}] 的当前会话并清除本地登录凭据，需要重新输入账号密码才能再次访问。",
+                                    fontSize = 12.sp
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showLogoutConfirm = false
+                                        viewModel.logoutCurrentPanel { _, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("确认退出")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showLogoutConfirm = false }) { Text("取消") }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -206,13 +250,13 @@ fun SettingsScreen(
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DashboardGridCard(
-                icon = Icons.Default.Widgets,
-                title = "白虎面板运行中心",
-                subtitle = "内置引擎与外部扩展包",
-                badge = "插件化",
-                badgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.QueryStats,
+                title = "面板仪表盘",
+                subtitle = "趋势 / 排行 / 资源",
+                badge = null,
+                badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenBaihuPlugin
+                onClick = onOpenDashboard
             )
             DashboardGridCard(
                 icon = Icons.Default.Article,
@@ -224,8 +268,16 @@ fun SettingsScreen(
                 onClick = onOpenServerLogs
             )
         }
-
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DashboardGridCard(
+                icon = Icons.Default.CloudUpload,
+                title = "备份与恢复",
+                subtitle = "任务/变量/脚本迁移",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenBackup
+            )
             DashboardGridCard(
                 icon = Icons.Default.Shield,
                 title = "登录审计日志",
@@ -235,6 +287,9 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f),
                 onClick = onOpenLoginLogs
             )
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DashboardGridCard(
                 icon = Icons.Default.Terminal,
                 title = "开发者模式",
@@ -280,6 +335,11 @@ fun SettingsScreen(
                     }
                 }
             )
+        }
+
+        // ==================== 2.5 面板系统设置（仅青龙 2.15+） ====================
+        if (currentPanel.type == com.panel.app.data.model.PanelType.QINGLONG_V15) {
+            QinglongSystemSettingsCard(viewModel = viewModel)
         }
 
         // ==================== 3. 监控与配置快捷工具 ====================
@@ -559,6 +619,136 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * 青龙面板系统设置。
+ * 只对接了最常用的三项（日志保留天数、任务并发数、通知测试），
+ * 其余如镜像源、时区、面板标题等后端虽提供接口，但 App 端使用频率很低。
+ */
+@Composable
+private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    var settings by remember { mutableStateOf<Map<String, String>?>(null) }
+    var isLoaded by remember { mutableStateOf(false) }
+    var logDays by remember { mutableStateOf("") }
+    var concurrency by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadQinglongSystemSettings { map ->
+            isLoaded = true
+            settings = map
+            if (map != null) {
+                logDays = map["logRemoveFrequency"] ?: ""
+                concurrency = map["cronConcurrency"] ?: ""
+            }
+        }
+    }
+
+    // 后端用空字符串表示"不限制"，所以允许留空
+    val isUnlimitedLog = logDays.isBlank()
+    val isUnlimitedConcurrency = concurrency.isBlank()
+
+    Text("面板系统设置", fontSize = 12.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (!isLoaded) {
+                Text("正在读取面板配置...", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (settings == null) {
+                Text("当前面板未提供系统配置接口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = logDays,
+                        onValueChange = { logDays = it.filter { c -> c.isDigit() } },
+                        label = { Text("日志保留天数", fontSize = 11.sp) },
+                        placeholder = { Text("留空=不清理", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.saveLogRemoveFrequency(if (isUnlimitedLog) null else logDays.toIntOrNull())
+                            Toast.makeText(context, "已提交保存", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("保存", fontSize = 11.sp)
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = concurrency,
+                        onValueChange = { concurrency = it.filter { c -> c.isDigit() } },
+                        label = { Text("任务并发数", fontSize = 11.sp) },
+                        placeholder = { Text("留空=不限制", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.saveCronConcurrency(if (isUnlimitedConcurrency) null else concurrency.toIntOrNull())
+                            Toast.makeText(context, "已提交保存", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("保存", fontSize = 11.sp)
+                    }
+                }
+
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.sendTestNotify("青龙面板测试", "这是一条来自手机 App 的测试通知")
+                        },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("测试通知", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.reloadQinglongSystem()
+                            Toast.makeText(context, "正在重载配置...", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("重载配置", fontSize = 11.sp)
+                    }
+                }
+
+                val timezone = settings?.get("info.timezone")
+                if (!timezone.isNullOrBlank()) {
+                    Text(
+                        "面板时区：$timezone",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 

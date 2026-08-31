@@ -19,8 +19,11 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.data.model.RunningTaskInfo
 import com.panel.app.data.model.TaskInstanceRecord
 import com.panel.app.ui.viewmodel.MainViewModel
 
@@ -40,11 +43,17 @@ fun ExecutionHistoryScreen(
     var isLoading by remember { mutableStateOf(false) }
     var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(emptyList()) }
 
+    // 运行中任务：只有拿到真实运行实例才能精确停止
+    var runningTasks by remember { mutableStateOf<List<RunningTaskInfo>>(emptyList()) }
+
     fun loadData() {
         isLoading = true
         viewModel.loadAllExecutionHistory { list ->
             historyList = list
             isLoading = false
+        }
+        viewModel.loadRunningTasks { list, _ ->
+            runningTasks = list
         }
     }
 
@@ -97,6 +106,70 @@ fun ExecutionHistoryScreen(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // 0. 运行中任务（可精确停止实例）
+            if (runningTasks.isNotEmpty()) {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "运行中 (${runningTasks.size})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                        runningTasks.forEach { task ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(task.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        buildString {
+                                            append("任务 #${task.taskId}")
+                                            task.elapsedSeconds?.let { append(" · 已运行 ${it}s") }
+                                            task.pid?.let { append(" · PID $it") }
+                                        },
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f)
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.stopRunningTask(task)
+                                        // 停止后延时刷新，给服务端一点状态落库时间
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ loadData() }, 1200)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("停止", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 1. 搜索框
             OutlinedTextField(
                 value = searchQuery,

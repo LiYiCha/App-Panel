@@ -38,10 +38,11 @@ fun MainFlowScreen(
     onOpenDepsScreen: () -> Unit,
     onOpenLoginLogsScreen: () -> Unit = {},
     onOpenServerLogsScreen: () -> Unit = {},
+    onOpenDashboardScreen: () -> Unit = {},
+    onOpenBackupScreen: () -> Unit = {},
     onOpenDevConsoleScreen: () -> Unit = {},
     onOpenExecutionHistoryScreen: () -> Unit = {},
-    onNavigateToCreateScript: () -> Unit = {},
-    onOpenBaihuPluginScreen: () -> Unit = {}
+    onNavigateToCreateScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -306,9 +307,10 @@ fun MainFlowScreen(
                         onNavigateToSwitchAccount = onNavigateToLogin,
                         onOpenLoginLogs = onOpenLoginLogsScreen,
                         onOpenServerLogs = onOpenServerLogsScreen,
+                        onOpenDashboard = onOpenDashboardScreen,
+                        onOpenBackup = onOpenBackupScreen,
                         onOpenDevConsole = onOpenDevConsoleScreen,
-                        onOpenExecutionHistory = onOpenExecutionHistoryScreen,
-                        onOpenBaihuPlugin = onOpenBaihuPluginScreen
+                        onOpenExecutionHistory = onOpenExecutionHistoryScreen
                     )
                 }
             }

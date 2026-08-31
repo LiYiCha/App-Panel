@@ -108,6 +108,12 @@ class MainActivity : ComponentActivity() {
                                 onOpenServerLogsScreen = {
                                     navController.navigate("server_logs")
                                 },
+                                onOpenDashboardScreen = {
+                                    navController.navigate("dashboard")
+                                },
+                                onOpenBackupScreen = {
+                                    navController.navigate("backup_restore")
+                                },
                                 onOpenDevConsoleScreen = {
                                     navController.navigate("developer_console")
                                 },
@@ -116,17 +122,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onNavigateToCreateScript = {
                                     navController.navigate("create_script")
-                                },
-                                onOpenBaihuPluginScreen = {
-                                    navController.navigate("baihu_plugin")
                                 }
-                            )
-                        }
-
-                        composable("baihu_plugin") {
-                            BaihuPluginScreen(
-                                viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
                             )
                         }
 
@@ -174,6 +170,20 @@ class MainActivity : ComponentActivity() {
 
                         composable("login_logs") {
                             LoginLogsScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("dashboard") {
+                            DashboardScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("backup_restore") {
+                            BackupRestoreScreen(
                                 viewModel = viewModel,
                                 onBack = { navController.popBackStack() }
                             )

@@ -4,7 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.panel.app.data.adapter.BaihuPanelAdapter
+import com.panel.app.data.adapter.QinglongV15Adapter
+import com.panel.app.data.backup.*
 import com.panel.app.data.model.*
+import com.panel.app.data.model.RunningTaskInfo
+import com.panel.app.data.remote.OtpRequiredException
 import com.panel.app.data.repository.PanelRepository
 import com.panel.app.ui.screens.BottomNavScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,12 +41,10 @@ data class MainUiState(
     val isEnvBatchMode: Boolean = false,
     val isDepBatchMode: Boolean = false,
     val isDatabaseReady: Boolean = false,
-    val isBaihuEngineRunning: Boolean = false,
-    val baihuEnginePid: Int? = null,
-    val baihuEnginePort: String = "18082",
-    val baihuEngineLogs: List<String> = emptyList(),
     val expandedScriptFolders: Set<String> = emptySet(),
-    val toastMessage: String? = null
+    val toastMessage: String? = null,
+    /** 非空表示该面板开启了两步验证，等待用户输入动态验证码 */
+    val otpPendingPanel: PanelInstance? = null
 )
 
 data class CachedPanelData(
@@ -381,11 +384,61 @@ class MainViewModel @Inject constructor(
                 refreshPanelRemoteData(savedInstance)
                 onResult(true, "登录成功")
             } else {
-                val err = authResult.exceptionOrNull()?.message ?: "登录失败，请检查账号密码"
-                _uiState.value = _uiState.value.copy(toastMessage = err)
-                onResult(false, err)
+                val err = authResult.exceptionOrNull()
+                // 两步验证：把待验证的面板挂到状态上，由登录页弹出验证码输入框
+                if (err is OtpRequiredException) {
+                    _uiState.value = _uiState.value.copy(otpPendingPanel = candidate)
+                    onResult(false, err.message ?: "请输入动态验证码")
+                    return@launch
+                }
+                val msg = err?.message ?: "登录失败，请检查账号密码"
+                _uiState.value = _uiState.value.copy(toastMessage = msg)
+                onResult(false, msg)
             }
         }
+    }
+
+    /** 两步验证第二步：提交动态验证码 */
+    fun submitOtp(code: String, onResult: (Boolean, String) -> Unit) {
+        val panel = _uiState.value.otpPendingPanel ?: run {
+            onResult(false, "验证会话已失效，请重新登录")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAuthenticating = true)
+            val adapter = repository.getAdapter(panel)
+            if (adapter !is BaihuPanelAdapter) {
+                _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                onResult(false, "当前面板不支持两步验证")
+                return@launch
+            }
+            val res = adapter.submitOtp(code.trim())
+            _uiState.value = _uiState.value.copy(isAuthenticating = false)
+            if (res.isSuccess) {
+                val saved = panel.copy(token = res.getOrNull())
+                _uiState.value = _uiState.value.copy(otpPendingPanel = null)
+                prefs.edit().putString("active_panel_id", saved.id).apply()
+                repository.savePanel(saved)
+                val currentPanels = repository.panelsFlow.first()
+                val targetIndex = currentPanels.indexOfFirst { it.id == saved.id }.let { if (it >= 0) it else 0 }
+                _uiState.value = _uiState.value.copy(
+                    panels = currentPanels,
+                    selectedPanelIndex = targetIndex,
+                    isLoading = true,
+                    toastMessage = "[${saved.name}] 登录成功！"
+                )
+                refreshPanelRemoteData(saved)
+                onResult(true, "登录成功")
+            } else {
+                val msg = res.exceptionOrNull()?.message ?: "验证码校验失败"
+                _uiState.value = _uiState.value.copy(toastMessage = msg)
+                onResult(false, msg)
+            }
+        }
+    }
+
+    fun cancelOtp() {
+        _uiState.value = _uiState.value.copy(otpPendingPanel = null)
     }
 
     fun authenticateAndAddPanel(
@@ -410,9 +463,19 @@ class MainViewModel @Inject constructor(
 
     fun stopTask(taskId: String) {
         viewModelScope.launch {
-            val list = _uiState.value.tasks.map { if (it.id == taskId) it.copy(isRunning = false, statusText = "已停止") else it }
-            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务已停止")
-            repository.getAdapter(getActivePanel()).stopTask(listOf(taskId))
+            _uiState.value = _uiState.value.copy(toastMessage = "正在停止任务...")
+            // 先拿真实结果再更新 UI：之前是先乐观置为"已停止"再发请求，失败也会被显示成成功
+            val res = repository.getAdapter(getActivePanel()).stopTask(listOf(taskId))
+            if (res.isSuccess) {
+                val list = _uiState.value.tasks.map {
+                    if (it.id == taskId) it.copy(isRunning = false, statusText = "已停止") else it
+                }
+                _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务已停止")
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "停止失败: ${res.exceptionOrNull()?.message ?: "未知错误"}"
+                )
+            }
         }
     }
 
@@ -689,10 +752,16 @@ class MainViewModel @Inject constructor(
 
     fun addEnvs(newEnvs: List<UnifiedEnv>) {
         viewModelScope.launch {
-            for (env in newEnvs) {
-                repository.getAdapter(getActivePanel()).saveEnv(env)
-            }
-            _uiState.value = _uiState.value.copy(toastMessage = "成功导入 ${newEnvs.size} 条环境变量！")
+            // 批量导入必须检查真实结果：之前逐条 saveEnv 且忽略返回值，
+            // 变量名不合法被面板拒绝时也会提示"成功导入"
+            val res = repository.getAdapter(getActivePanel()).importEnvs(newEnvs)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) {
+                    "成功导入 ${res.getOrNull()} 条环境变量"
+                } else {
+                    "导入失败: ${res.exceptionOrNull()?.message}"
+                }
+            )
             refreshPanelRemoteData(getActivePanel())
         }
     }
@@ -821,6 +890,264 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    // ==================== 备份 / 恢复 ====================
+
+    /**
+     * 收集勾选的分类，序列化为统一 JSON 备份文件内容。
+     * 单个分类拉取失败只让该分类为空，不中断整个备份。
+     */
+    fun buildBackup(
+        includeTasks: Boolean,
+        includeEnvs: Boolean,
+        includeScripts: Boolean,
+        includeConfigs: Boolean,
+        onResult: (String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            val panel = getActivePanel()
+            val adapter = repository.getAdapter(panel)
+
+            val tasks = if (includeTasks) {
+                adapter.getTasks().getOrNull().orEmpty().map {
+                    BackupTask(
+                        name = it.name,
+                        command = it.command,
+                        schedule = it.schedule,
+                        labels = it.labels,
+                        isDisabled = it.isDisabled,
+                        isPinned = it.isPinned
+                    )
+                }
+            } else emptyList()
+
+            val envs = if (includeEnvs) {
+                adapter.getEnvs().getOrNull().orEmpty().map {
+                    BackupEnv(it.name, it.value, it.remarks, it.enabled)
+                }
+            } else emptyList()
+
+            val scripts = if (includeScripts) {
+                val tree = adapter.getScriptTree().getOrNull() ?: emptyList()
+                tree.extractScriptFiles().mapNotNull { path ->
+                    adapter.readScript(path).getOrNull()?.let { BackupScript(path, it) }
+                }
+            } else emptyList()
+
+            val configs = if (includeConfigs) {
+                adapter.getConfigFiles().getOrNull().orEmpty().mapNotNull { path ->
+                    adapter.readConfig(path).getOrNull()?.let { BackupConfigFile(path, it) }
+                }
+            } else emptyList()
+
+            onResult(
+                buildBackupJson(
+                    sourcePanelType = panel.type.name,
+                    sourcePanelName = panel.name,
+                    tasks = tasks,
+                    envs = envs,
+                    scripts = scripts,
+                    configFiles = configs
+                )
+            )
+        }
+    }
+
+    /** 从备份 JSON 恢复勾选内容，返回逐类报告 */
+    fun restoreBackup(json: String, onResult: (List<RestoreReport>, String?) -> Unit) {
+        viewModelScope.launch {
+            val backup = parseBackupJson(json)
+            if (backup == null) {
+                onResult(emptyList(), "备份文件格式无法解析，请确认选择的是本 App 导出的备份文件")
+                return@launch
+            }
+
+            val adapter = repository.getAdapter(getActivePanel())
+            val sourceType = backup.sourcePanelType?.let { raw ->
+                runCatching {
+                    when (raw.uppercase()) {
+                        "QINGLONG" -> PanelType.QINGLONG_V15 // 兼容旧备份
+                        "BAIHU" -> PanelType.BAIHU
+                        else -> PanelType.valueOf(raw)
+                    }
+                }.getOrNull()
+            } ?: getActivePanel().type
+
+            val reports = mutableListOf<RestoreReport>()
+            if (backup.tasks.isNotEmpty()) {
+                adapter.restoreTasks(backup.tasks).getOrNull()?.let { reports.add(it) }
+            }
+            if (backup.envs.isNotEmpty()) {
+                adapter.restoreEnvs(backup.envs).getOrNull()?.let { reports.add(it) }
+            }
+            if (backup.scripts.isNotEmpty()) {
+                adapter.restoreScripts(backup.scripts).getOrNull()?.let { reports.add(it) }
+            }
+            if (backup.configFiles.isNotEmpty()) {
+                adapter.restoreConfigFiles(backup.configFiles, sourceType).getOrNull()?.let { reports.add(it) }
+            }
+            if (reports.isEmpty()) {
+                onResult(emptyList(), "备份文件里没有可恢复的内容")
+                return@launch
+            }
+            refreshPanelRemoteData(getActivePanel())
+            onResult(reports, null)
+        }
+    }
+
+    // ==================== 运行中任务 ====================
+
+    /**
+     * 拉取真实运行中的任务。
+     * 与"停止任务"配套：先拿到实例再停止，避免拿任务 ID 直接停止在白虎侧失败。
+     */
+    fun loadRunningTasks(onResult: (List<RunningTaskInfo>, String?) -> Unit) {
+        viewModelScope.launch {
+            val res = repository.getAdapter(getActivePanel()).getRunningTasks()
+            onResult(res.getOrNull() ?: emptyList(), res.exceptionOrNull()?.message)
+        }
+    }
+
+    /** 仪表盘聚合数据，面板不支持时返回失败，由 UI 显示空态 */
+    fun loadDashboard(onResult: (Result<PanelDashboard>) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.getAdapter(getActivePanel()).getDashboard())
+        }
+    }
+
+    /** 退出当前面板登录：吊销面板侧会话并清空本地 token */
+    fun logoutCurrentPanel(onResult: (Boolean, String) -> Unit) {
+        val panel = getActivePanel()
+        viewModelScope.launch {
+            val res = repository.getAdapter(panel).logout()
+            // 无论面板侧是否成功，本地 token 都要清掉，否则会残留一个已失效的凭据
+            repository.savePanel(panel.copy(token = ""))
+            _uiState.value = _uiState.value.copy(panels = repository.panelsFlow.first())
+            if (res.isSuccess) {
+                onResult(true, "已退出 [${panel.name}] 登录")
+            } else {
+                onResult(false, res.exceptionOrNull()?.message ?: "退出失败")
+            }
+        }
+    }
+
+    fun stopRunningTask(task: RunningTaskInfo) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(toastMessage = "正在停止 [${task.name}]...")
+            val res = repository.getAdapter(getActivePanel())
+                .stopRunningTask(task.taskId, task.instanceId)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) {
+                    "[${task.name}] 已停止"
+                } else {
+                    "停止失败: ${res.exceptionOrNull()?.message}"
+                }
+            )
+        }
+    }
+
+    // ==================== 面板系统设置（目前仅青龙提供） ====================
+
+    /** 非青龙面板返回 null，UI 据此隐藏设置卡片 */
+    fun loadQinglongSystemSettings(onResult: (Map<String, String>?) -> Unit) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            if (adapter !is QinglongV15Adapter) {
+                onResult(null)
+                return@launch
+            }
+            onResult(adapter.fetchSystemSettings().getOrNull())
+        }
+    }
+
+    fun saveLogRemoveFrequency(days: Int?) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel()) as? QinglongV15Adapter
+                ?: return@launch
+            val res = adapter.saveLogRemoveFrequency(days)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) "日志保留天数已保存" else "保存失败: ${res.exceptionOrNull()?.message}"
+            )
+        }
+    }
+
+    fun saveCronConcurrency(count: Int?) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel()) as? QinglongV15Adapter
+                ?: return@launch
+            val res = adapter.saveCronConcurrency(count)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) "任务并发数已保存" else "保存失败: ${res.exceptionOrNull()?.message}"
+            )
+        }
+    }
+
+    fun sendTestNotify(title: String, content: String) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel()) as? QinglongV15Adapter
+                ?: return@launch
+            val res = adapter.sendTestNotify(title, content)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) "测试通知已发送" else "发送失败: ${res.exceptionOrNull()?.message}"
+            )
+        }
+    }
+
+    fun reloadQinglongSystem() {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel()) as? QinglongV15Adapter
+                ?: return@launch
+            _uiState.value = _uiState.value.copy(toastMessage = "正在重载面板配置...")
+            val res = adapter.reloadSystem()
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) "面板配置已重载" else "重载失败: ${res.exceptionOrNull()?.message}"
+            )
+        }
+    }
+
+    /** 重命名/移动脚本或文件夹。青龙的 rename 不允许跨目录，跨目录请用白虎的 move 或青龙另建 */
+    fun renameScript(path: String, newPath: String) {
+        viewModelScope.launch {
+            val res = repository.getAdapter(getActivePanel()).renameScript(path, newPath)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) {
+                    "已重命名为 [${newPath.substringAfterLast('/')}]"
+                } else {
+                    "重命名失败: ${res.exceptionOrNull()?.message}"
+                }
+            )
+            if (res.isSuccess) refreshPanelRemoteData(getActivePanel())
+        }
+    }
+
+    fun reinstallDeps(depIds: List<String>) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(toastMessage = "正在重新安装依赖...")
+            val res = repository.getAdapter(getActivePanel()).reinstallDeps(depIds)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) {
+                    "已触发重新安装（${depIds.size} 个）"
+                } else {
+                    "重新安装失败: ${res.exceptionOrNull()?.message}"
+                }
+            )
+            refreshPanelRemoteData(getActivePanel())
+        }
+    }
+
+    fun cancelDeps(depIds: List<String>) {
+        viewModelScope.launch {
+            val res = repository.getAdapter(getActivePanel()).cancelDeps(depIds)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (res.isSuccess) {
+                    "已取消安装（${depIds.size} 个）"
+                } else {
+                    "取消失败: ${res.exceptionOrNull()?.message}"
+                }
+            )
+            refreshPanelRemoteData(getActivePanel())
+        }
+    }
+
     fun getDepLog(depId: String, onResult: (String) -> Unit) {
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).getDepLog(depId)
@@ -921,71 +1248,10 @@ class MainViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
 
-    private var baihuJob: kotlinx.coroutines.Job? = null
-
-    fun startBaihuEngine(port: String = "18082") {
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-        val localUrl = "http://127.0.0.1:$port"
-        val realLogs = mutableListOf(
-            "[${sdf.format(java.util.Date())}] 本地宿主白虎面板配置已加载",
-            "[${sdf.format(java.util.Date())}] 访问地址: $localUrl",
-            "[${sdf.format(java.util.Date())}] 默认管理员账号: admin",
-            "[${sdf.format(java.util.Date())}] 默认管理员密码: admin123",
-            "[${sdf.format(java.util.Date())}] 正在探测本地 127.0.0.1:$port 连通性..."
-        )
-        _uiState.value = _uiState.value.copy(
-            isBaihuEngineRunning = true,
-            baihuEnginePort = port,
-            baihuEngineLogs = realLogs,
-            toastMessage = "已启用白虎面板本地管理配置"
-        )
-
-        // 自动将本地白虎面板实例添加到面板列表中（若尚未添加）
-        val exists = _uiState.value.panels.any { it.baseUrl.trimEnd('/') == localUrl }
-        if (!exists) {
-            val localPanel = com.panel.app.data.model.PanelInstance(
-                id = "baihu_builtin_local",
-                name = "内置白虎面板 (本地)",
-                type = com.panel.app.data.model.PanelType.BAIHU,
-                baseUrl = localUrl,
-                token = "",
-                username = "admin"
-            )
-            viewModelScope.launch {
-                repository.savePanel(localPanel)
-            }
-        }
-
-        // 发起真实本地端口连通性探测，杜绝任何假日志
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val socket = java.net.Socket()
-                socket.connect(java.net.InetSocketAddress("127.0.0.1", port.toIntOrNull() ?: 18082), 1500)
-                socket.close()
-                val logItem = "[${sdf.format(java.util.Date())}] 端口 $port 探测成功：本地白虎面板服务正在响应！"
-                _uiState.value = _uiState.value.copy(
-                    baihuEngineLogs = _uiState.value.baihuEngineLogs + logItem
-                )
-            } catch (_: Exception) {
-                val logItem = "[${sdf.format(java.util.Date())}] 端口 $port 探测未连接：当前宿主未监听该端口。可通过Termux/外部包启动真实白虎二进制。"
-                _uiState.value = _uiState.value.copy(
-                    baihuEngineLogs = _uiState.value.baihuEngineLogs + logItem
-                )
-            }
-        }
-    }
-
-    fun stopBaihuEngine() {
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-        val stopLog = "[${sdf.format(java.util.Date())}] 已关闭内置白虎面板本地管理。"
-        _uiState.value = _uiState.value.copy(
-            isBaihuEngineRunning = false,
-            baihuEngineLogs = _uiState.value.baihuEngineLogs + stopLog,
-            toastMessage = "内置白虎面板管理已停止"
-        )
-    }
-
-    fun clearBaihuLogs() {
-        _uiState.value = _uiState.value.copy(baihuEngineLogs = emptyList())
-    }
+    /**
+     * 实时日志流：轮询面板直到任务结束，内容有变化才推送新值。
+     * 供日志页"跟随"模式使用。
+     */
+    fun streamTaskLog(logId: String): Flow<String> =
+        repository.getAdapter(getActivePanel()).streamLog(logId)
 }

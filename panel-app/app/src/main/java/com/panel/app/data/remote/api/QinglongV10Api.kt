@@ -1,17 +1,36 @@
 package com.panel.app.data.remote.api
 
+import com.panel.app.data.remote.ApiEnvelope
 import retrofit2.Response
 import retrofit2.http.*
 
+/**
+ * 青龙面板 2.10 ~ 2.14（旧版）API。
+ *
+ * 与 2.15+ 的差异：
+ * - 配置文件走 `/api/configs/{file}` 而非 `/api/configs/detail`
+ * - 脚本内容走 `/api/scripts/{file}` 而非 `/api/scripts/detail`
+ * - 无订阅模块、无运行实例接口
+ *
+ * 这些旧路径在新版青龙里**已返回 410 下线**，所以只能用于真正的旧版面板。
+ */
 data class QlV10LoginReq(val username: String, val password: String)
-data class QlV10LoginResp(val code: Int?, val data: QlV10AuthData?)
-data class QlV10AuthData(val token: String?)
+
+data class QlV10LoginResp(
+    override val code: Int?,
+    override val message: String? = null,
+    val data: QlV10AuthData?
+) : ApiEnvelope {
+    override val msg: String? get() = null
+}
+
+data class QlV10AuthData(val token: String?, val token_type: String? = null, val expiration: Long? = null)
 
 interface QinglongV10Api {
     @POST("api/user/login")
     suspend fun login(@Body req: QlV10LoginReq): Response<QlV10LoginResp>
 
-    // 1. 定时任务 (Crons)
+    // 1. 定时任务
     @GET("api/crons")
     suspend fun getCrons(
         @Header("Authorization") auth: String,
@@ -33,40 +52,40 @@ interface QinglongV10Api {
     @PUT("api/crons/run")
     suspend fun runCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/crons/stop")
     suspend fun stopCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/crons/enable")
     suspend fun enableCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/crons/disable")
     suspend fun disableCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
-    @DELETE("api/crons")
+    @HTTP(method = "DELETE", path = "api/crons", hasBody = true)
     suspend fun deleteCrons(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @GET("api/crons/{id}/log")
     suspend fun getCronLog(
         @Header("Authorization") auth: String,
         @Path("id") id: String
-    ): Response<QlCronLogResp>
+    ): Response<QlLogChunkResp>
 
-    // 2. 环境变量 (Envs)
+    // 2. 环境变量
     @GET("api/envs")
     suspend fun getEnvs(
         @Header("Authorization") auth: String,
@@ -85,25 +104,25 @@ interface QinglongV10Api {
         @Body env: QlUpdateEnvReq
     ): Response<QlCommonResp>
 
-    @DELETE("api/envs")
+    @HTTP(method = "DELETE", path = "api/envs", hasBody = true)
     suspend fun deleteEnvs(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/envs/enable")
     suspend fun enableEnvs(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
     @PUT("api/envs/disable")
     suspend fun disableEnvs(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 
-    // 3. 配置文件 (Configs)
+    // 3. 配置文件（旧版路径，新版已 410 下线）
     @GET("api/configs/{file}")
     suspend fun getConfig(
         @Header("Authorization") auth: String,
@@ -116,16 +135,14 @@ interface QinglongV10Api {
         @Body req: QlSaveConfigReq
     ): Response<QlCommonResp>
 
-    // 4. 脚本文件 (Scripts)
+    // 4. 脚本文件（旧版路径，新版已 410 下线）
     @GET("api/scripts")
-    suspend fun getScripts(
-        @Header("Authorization") auth: String
-    ): Response<QlScriptsResp>
+    suspend fun getScripts(@Header("Authorization") auth: String): Response<QlScriptsResp>
 
     @GET("api/scripts/{file}")
     suspend fun getScriptContent(
         @Header("Authorization") auth: String,
-        @Path("file") file: String
+        @Path("file", encoded = true) file: String
     ): Response<QlScriptContentResp>
 
     @POST("api/scripts")
@@ -140,13 +157,13 @@ interface QinglongV10Api {
         @Body req: QlSaveScriptReq
     ): Response<QlCommonResp>
 
-    @DELETE("api/scripts")
+    @HTTP(method = "DELETE", path = "api/scripts", hasBody = true)
     suspend fun deleteScript(
         @Header("Authorization") auth: String,
         @Body req: QlDeleteScriptReq
     ): Response<QlCommonResp>
 
-    // 5. 依赖包管理 (Dependencies)
+    // 5. 依赖包管理
     @GET("api/dependencies")
     suspend fun getDependencies(
         @Header("Authorization") auth: String,
@@ -159,9 +176,9 @@ interface QinglongV10Api {
         @Body req: List<QlCreateDepReq>
     ): Response<QlCommonResp>
 
-    @DELETE("api/dependencies")
+    @HTTP(method = "DELETE", path = "api/dependencies", hasBody = true)
     suspend fun deleteDependencies(
         @Header("Authorization") auth: String,
-        @Body ids: List<Any>
+        @Body ids: List<Long>
     ): Response<QlCommonResp>
 }

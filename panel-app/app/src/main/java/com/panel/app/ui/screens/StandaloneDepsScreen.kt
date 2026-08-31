@@ -335,17 +335,35 @@ fun StandaloneDepsScreen(
                                         }
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            // 若为安装失败，提供快速重新安装/重试按键
-                                            if (dep.status == 2 || dep.status == 4) {
+                                            // 安装中：提供取消
+                                            if (dep.status == 0) {
                                                 IconButton(
                                                     onClick = {
-                                                        viewModel.installDep(dep.name, dep.version, dep.type, dep.remarks ?: "")
-                                                        Toast.makeText(context, "正在重新安装 [${dep.name}]...", Toast.LENGTH_SHORT).show()
+                                                        viewModel.cancelDeps(listOf(dep.id))
+                                                        Toast.makeText(context, "正在取消 [${dep.name}] 的安装...", Toast.LENGTH_SHORT).show()
                                                     },
                                                     modifier = Modifier.size(32.dp)
                                                 ) {
-                                                    Icon(Icons.Default.Refresh, contentDescription = "重试安装", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                                    Icon(Icons.Default.Close, contentDescription = "取消安装", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                                 }
+                                            }
+
+                                            // 重新安装：对所有面板都可用。
+                                            // 白虎的依赖记录不带状态字段，之前只能在 status==2/4（安装失败）时重试，
+                                            // 导致白虎侧永远看不到重试入口。
+                                            IconButton(
+                                                onClick = {
+                                                    viewModel.reinstallDeps(listOf(dep.id))
+                                                    Toast.makeText(context, "正在重新安装 [${dep.name}]...", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = "重新安装",
+                                                    tint = if (dep.status == 2 || dep.status == 4) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
                                             }
 
                                             // 查看安装/构建日志按键

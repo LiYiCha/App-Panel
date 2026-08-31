@@ -17,11 +17,11 @@ class PanelApp : Application() {
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID_DAEMON,
-                "白虎面板本地守护进程",
+                CHANNEL_ID_PANEL,
+                "面板通知",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "保证手机本地面板服务后台稳定运行与定时任务精确调度"
+                description = "任务执行结果与面板状态提醒"
             }
 
             val notificationManager = getSystemService(NotificationManager::class.java)
@@ -30,6 +30,6 @@ class PanelApp : Application() {
     }
 
     companion object {
-        const val CHANNEL_ID_DAEMON = "channel_panel_daemon"
+        const val CHANNEL_ID_PANEL = "channel_panel"
     }
 }
