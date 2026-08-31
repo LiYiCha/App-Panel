@@ -53,11 +53,9 @@ android {
         }
     }
 
-    // Java 与 Kotlin 编译目标统一取自版本目录中的 jvmTarget
-    java {
-        toolchain {
-            languageVersion = JavaLanguageVersion.of(libs.versions.jvmTarget.get())
-        }
+    compileOptions {
+        sourceCompatibility = JavaVersion.toVersion(libs.versions.jvmTarget.get())
+        targetCompatibility = JavaVersion.toVersion(libs.versions.jvmTarget.get())
     }
 
     kotlin {
