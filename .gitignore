@@ -37,7 +37,6 @@ temp
 # Keystore files
 *.jks
 *.keystore
-!panel-app/key/ycKey.jks
 local.properties
 .DS_Store
 

@@ -29,6 +29,14 @@ jobs:
           sed -i 's/\r$//' panel-app/gradlew
           chmod +x panel-app/gradlew
 
+      - name: Decode Signing Key from Secret (Optional)
+        if: env.SIGNING_KEY != ''
+        run: |
+          mkdir -p panel-app/key
+          echo "$SIGNING_KEY" | base64 -d > panel-app/key/ycKey.jks
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+
       - name: Build Release APK with Gradle
         working-directory: panel-app
         run: ./gradlew assembleRelease --no-daemon
