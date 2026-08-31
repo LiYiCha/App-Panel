@@ -30,12 +30,15 @@ android {
         }
     }
 
+    val releaseKeystore = file("../key/ycKey.jks")
     signingConfigs {
         create("release") {
-            storeFile = file("../key/ycKey.jks")
-            storePassword = "2232164480yc"
-            keyAlias = "ycKey"
-            keyPassword = "2232164480yc"
+            if (releaseKeystore.exists()) {
+                storeFile = releaseKeystore
+                storePassword = "2232164480yc"
+                keyAlias = "ycKey"
+                keyPassword = "2232164480yc"
+            }
         }
     }
 
@@ -44,7 +47,11 @@ android {
             // 启用 R8 代码压缩与混淆，并同步剪裁未被引用资源
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (releaseKeystore.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

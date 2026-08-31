@@ -25,16 +25,26 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Grant execute permission for gradlew
-        run: chmod +x panel-app/gradlew
+        run: |
+          sed -i 's/\r$//' panel-app/gradlew
+          chmod +x panel-app/gradlew
 
       - name: Build Release APK with Gradle
         working-directory: panel-app
         run: ./gradlew assembleRelease --no-daemon
 
+      - name: Prepare Release APK Asset
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          cd panel-app/app/build/outputs/apk/release
+          if [ -f "app-release.apk" ]; then
+            cp app-release.apk "Panel-App-${TAG_NAME}.apk"
+          fi
+
       - name: Upload Release Asset to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: panel-app/app/build/outputs/apk/release/*.apk
+          files: panel-app/app/build/outputs/apk/release/Panel-App-*.apk
           generate_release_notes: true
           draft: false
           prerelease: false
