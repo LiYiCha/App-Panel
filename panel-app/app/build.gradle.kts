@@ -76,6 +76,15 @@ android {
         }
     }
 
+    applicationVariants.all {
+        if (name == "release") {
+            outputs.map { output ->
+                (output as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
+                    "Panel-App-v${versionName}.apk"
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.toVersion(libs.versions.jvmTarget.get())
         targetCompatibility = JavaVersion.toVersion(libs.versions.jvmTarget.get())
