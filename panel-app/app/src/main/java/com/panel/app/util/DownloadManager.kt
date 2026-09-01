@@ -12,8 +12,8 @@ import java.nio.channels.Channels
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.TimeUnit
-import kotlin.math.maxOf
-import kotlin.math.minOf
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * 应用内 APK 下载管理器。
@@ -160,12 +160,12 @@ object DownloadManager {
                     streamChunks(response.body!!, file, 0L) { chunk, bytesRead ->
                         downloaded += bytesRead
                         val now = System.currentTimeMillis()
-                        val dt = maxOf((now - lastTs) / 1000.0, 0.001)
+                        val dt = max((now - lastTs) / 1000.0, 0.001)
                         val speed = ((downloaded - lastBytes) / dt).toLong()
                         lastTs = now
                         lastBytes = downloaded
                         val pct = if (totalBytes > 0) ((downloaded * 100) / totalBytes).toInt() else 0
-                        onProgress(downloaded, totalBytes, maxOf(0, minOf(pct, 100)).toDouble(), speed)
+                        onProgress(downloaded, totalBytes, max(0, min(pct, 100)), speed)
                     }
                 }
                 206 -> {
@@ -174,12 +174,12 @@ object DownloadManager {
                     streamChunks(response.body!!, file, resumeFrom) { _, bytesRead ->
                         downloaded += bytesRead
                         val now = System.currentTimeMillis()
-                        val dt = maxOf((now - lastTs) / 1000.0, 0.001)
+                        val dt = max((now - lastTs) / 1000.0, 0.001)
                         val speed = ((downloaded - lastBytes) / dt).toLong()
                         lastTs = now
                         lastBytes = downloaded
                         val pct = if (totalBytes > 0) ((downloaded * 100) / totalBytes).toInt() else 0
-                        onProgress(downloaded, totalBytes, maxOf(0, minOf(pct, 100)).toDouble(), speed)
+                        onProgress(downloaded, totalBytes, max(0, min(pct, 100)), speed)
                     }
                 }
                 403 -> throw IOException("下载被拒绝 (403)，GitHub 可能已限流，请稍后重试")

@@ -1,7 +1,6 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -20,21 +19,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.BuildConfig
 import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.AppUpdateInfo
+import com.panel.app.util.AppUpdateManager
 import com.panel.app.util.DownloadManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import android.net.Uri
 
 // 下载状态持有类（顶层定义，避免前向引用问题）
 data class DownloadStateHolder(
@@ -84,7 +84,7 @@ fun SettingsScreen(
     var showSystemSettingsPage by remember { mutableStateOf(false) }
 
     var isCheckingUpdate by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<com.panel.app.util.AppUpdateInfo?>(null) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
 
     // 下载状态（统一持有，避免多变量作用域混乱）
@@ -482,7 +482,7 @@ fun SettingsScreen(
                             if (!isCheckingUpdate) {
                                 coroutineScope.launch {
                                     isCheckingUpdate = true
-                                    val res = com.panel.app.util.AppUpdateManager.checkForUpdate()
+                                    val res = AppUpdateManager.checkForUpdate()
                                     isCheckingUpdate = false
                                     res.onSuccess { info ->
                                         updateInfo = info
@@ -501,7 +501,7 @@ fun SettingsScreen(
                     if (isCheckingUpdate) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("v1.0.0 (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("v${BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
