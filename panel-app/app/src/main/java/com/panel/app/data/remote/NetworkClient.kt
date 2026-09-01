@@ -187,6 +187,8 @@ object NetworkClient {
         return Retrofit.Builder()
             .baseUrl(cleanUrl)
             .client(unsafeOkHttpClient)
+            // 必须放在转换器之前：把所有网络/解析异常收敛成失败响应，避免异常冒到主线程闪退
+            .addCallAdapterFactory(SafeCallAdapterFactory())
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
     }

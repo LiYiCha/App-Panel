@@ -13,6 +13,8 @@ import com.panel.app.data.model.RunningTaskInfo
 import com.panel.app.data.remote.OtpRequiredException
 import com.panel.app.data.repository.PanelRepository
 import com.panel.app.ui.screens.BottomNavScreen
+import com.panel.app.util.PanelUrl
+import com.panel.app.util.runSafely
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.async
@@ -221,7 +223,9 @@ class MainViewModel @Inject constructor(
             var activePanel = panel
             if (activePanel.token.isNullOrEmpty()) {
                 if (!activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()) {
-                    val authRes = repository.testAuthenticate(activePanel)
+                    // 静默重登：这里的异常同样要就地收敛，否则冒到主线程就是闪退
+                    val authRes = runSafely { repository.testAuthenticate(activePanel) }
+                        .getOrElse { Result.failure(it) }
                     if (authRes.isSuccess && authRes.getOrNull() != null) {
                         activePanel = activePanel.copy(token = authRes.getOrNull())
                         repository.savePanel(activePanel)
@@ -348,7 +352,15 @@ class MainViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true)
-            val cleanUrl = baseUrl.trimEnd('/')
+
+            // 地址先校验再发请求：非法地址会让 Retrofit 在构造适配器时抛 IllegalArgumentException，
+            // 那一步在适配器的构造器里，业务层 catch 不到，会直接闪退
+            val cleanUrl = PanelUrl.normalize(baseUrl).getOrElse { e ->
+                val urlMsg = e.message ?: "面板地址格式不正确"
+                _uiState.value = _uiState.value.copy(isAuthenticating = false, toastMessage = urlMsg)
+                onResult(false, urlMsg)
+                return@launch
+            }
 
             // 规则：如果改变了 URL，则这是一个全新的面板实例（生成新 ID），保留原有旧实例；如果 URL 未变，则就地更新该实例
             val existingPanel = existingId?.let { id -> _uiState.value.panels.firstOrNull { it.id == id } }
@@ -364,7 +376,9 @@ class MainViewModel @Inject constructor(
                 password = password
             )
 
-            val authResult = repository.testAuthenticate(candidate)
+            // 就地收敛异常：适配器构造、地址解析等阶段的异常不冒到主线程，统一变成登录失败提示
+            val authResult = runSafely { repository.testAuthenticate(candidate) }
+                .getOrElse { Result.failure(it) }
             _uiState.value = _uiState.value.copy(isAuthenticating = false)
 
             if (authResult.isSuccess) {
@@ -416,7 +430,8 @@ class MainViewModel @Inject constructor(
                 onResult(false, "当前面板不支持两步验证")
                 return@launch
             }
-            val res = adapter.submitOtp(code.trim())
+            val res = runSafely { adapter.submitOtp(code.trim()) }
+                .getOrElse { Result.failure(it) }
             _uiState.value = _uiState.value.copy(isAuthenticating = false)
             if (res.isSuccess) {
                 val saved = panel.copy(token = res.getOrNull())
