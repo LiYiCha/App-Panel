@@ -251,7 +251,6 @@ class MainViewModel @Inject constructor(
                 return@launch
             }
 
-            loadDiskCache(activePanel.id)
             _uiState.value = _uiState.value.copy(isLoading = true)
             val adapter = repository.getAdapter(activePanel)
 
