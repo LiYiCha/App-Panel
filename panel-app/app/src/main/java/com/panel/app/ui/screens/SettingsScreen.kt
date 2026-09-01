@@ -689,13 +689,13 @@ fun SettingsScreen(
     }
 }
 
-    // ── 下载辅助函数（顶层，接受 context 参数以避免作用域问题）────────────────
-    fun startDownload(
-        context: android.content.Context,
-        info: com.panel.app.util.AppUpdateInfo,
-        url: String,
-        stateHolder: DownloadStateHolder,
-    ) {
+// ── 下载辅助函数（顶层，接受 context 参数以避免作用域问题）────────────────
+fun startDownload(
+    context: android.content.Context,
+    info: com.panel.app.util.AppUpdateInfo,
+    url: String,
+    stateHolder: DownloadStateHolder,
+) {
         val apkFile = File(context.cacheDir, "Panel-App-download.apk")
         stateHolder.downloadUrl = url
         stateHolder.dlDone = false
@@ -738,30 +738,30 @@ fun SettingsScreen(
         )
     }
 
-    fun resetDownloadState(stateHolder: DownloadStateHolder) {
-        com.panel.app.util.DownloadManager.cancel(stateHolder.downloadUrl ?: "")
-        stateHolder.downloadUrl = null
-        stateHolder.dlState = null
-        stateHolder.dlDownloaded = 0L
-        stateHolder.dlTotal = 0L
-        stateHolder.dlPercent = 0
-        stateHolder.dlSpeed = 0L
-        stateHolder.dlRetries = 0
-        stateHolder.dlError = null
-        stateHolder.dlDone = false
-    }
+fun resetDownloadState(stateHolder: DownloadStateHolder) {
+    com.panel.app.util.DownloadManager.cancel(stateHolder.downloadUrl ?: "")
+    stateHolder.downloadUrl = null
+    stateHolder.dlState = null
+    stateHolder.dlDownloaded = 0L
+    stateHolder.dlTotal = 0L
+    stateHolder.dlPercent = 0
+    stateHolder.dlSpeed = 0L
+    stateHolder.dlRetries = 0
+    stateHolder.dlError = null
+    stateHolder.dlDone = false
+}
 
-    @Composable
-    private fun DownloadProgressCard(
-        state: com.panel.app.util.DownloadManager.State,
-        downloaded: Long,
-        total: Long,
-        percent: Int,
-        speed: Long,
-        retries: Int,
-        isError: Boolean,
-        isDone: Boolean,
-    ) {
+@Composable
+private fun DownloadProgressCard(
+    state: com.panel.app.util.DownloadManager.State,
+    downloaded: Long,
+    total: Long,
+    percent: Int,
+    speed: Long,
+    retries: Int,
+    isError: Boolean,
+    isDone: Boolean,
+) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(8.dp),
@@ -835,17 +835,17 @@ fun SettingsScreen(
         }
     }
 
-    private fun formatBytes(bytes: Long): String = when {
-        bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
-        else -> "${"%.2f".format(bytes / (1024.0 * 1024.0))} MB"
-    }
+fun formatBytes(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
+    else -> "${"%.2f".format(bytes / (1024.0 * 1024.0))} MB"
+}
 
-    private fun formatSpeed(bytesPerSec: Long): String = when {
-        bytesPerSec < 1024 -> "$bytesPerSec B/s"
-        bytesPerSec < 1024 * 1024 -> "${"%.1f".format(bytesPerSec / 1024.0)} KB/s"
-        else -> "${"%.2f".format(bytesPerSec / (1024.0 * 1024.0))} MB/s"
-    }
+fun formatSpeed(bytesPerSec: Long): String = when {
+    bytesPerSec < 1024 -> "$bytesPerSec B/s"
+    bytesPerSec < 1024 * 1024 -> "${"%.1f".format(bytesPerSec / 1024.0)} KB/s"
+    else -> "${"%.2f".format(bytesPerSec / (1024.0 * 1024.0))} MB/s"
+}
 
 /**
  * 现代化紧凑导航卡片 (高频二级入口)
