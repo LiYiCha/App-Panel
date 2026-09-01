@@ -6,6 +6,7 @@ import com.panel.app.data.adapter.PanelAdapterFactory
 import com.panel.app.data.local.db.AppDatabase
 import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
+import com.panel.app.util.PanelUrl
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -33,8 +34,19 @@ class PanelRepository @Inject constructor(
         dao.deleteById(id)
     }
 
+    /**
+     * 获取面板适配器。
+     *
+     * 三个适配器都在**构造阶段**用 `baseUrl` 去建 Retrofit，
+     * 而 Retrofit 的 `baseUrl()` 遇到不可解析地址会抛 `IllegalArgumentException`
+     * （典型：用户填了 `192.168.1.100:5700` 却漏了 `http://`）。
+     * 该异常发生在构造器中，业务代码的 try/catch 包不到，会直接把 App 打崩，
+     * 所以必须在进工厂前把地址清洗成合法绝对地址。
+     */
     fun getAdapter(panel: PanelInstance): IPanelAdapter {
-        return PanelAdapterFactory.create(panel)
+        val safeUrl = PanelUrl.sanitize(panel.baseUrl)
+        val safePanel = if (safeUrl == panel.baseUrl) panel else panel.copy(baseUrl = safeUrl)
+        return PanelAdapterFactory.create(safePanel)
     }
 
     suspend fun testAuthenticate(panel: PanelInstance): Result<String> {

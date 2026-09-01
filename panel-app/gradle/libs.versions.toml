@@ -21,8 +21,8 @@ appNamespace = "com.panel.app"
 compileSdk = "36"
 minSdk = "26"
 targetSdk = "36"
-versionCode = "20"
-versionName = "2.0.0"
+versionCode = "21"
+versionName = "2.0.2"
 jvmTarget = "17"
 
 [libraries]
@@ -61,3 +61,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 hilt-android = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+

@@ -29,9 +29,25 @@ import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.DownloadManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import android.net.Uri
+
+// 下载状态持有类（顶层定义，避免前向引用问题）
+data class DownloadStateHolder(
+    var downloadUrl: String? = null,
+    var dlState: DownloadManager.State? = null,
+    var dlDownloaded: Long = 0L,
+    var dlTotal: Long = 0L,
+    var dlPercent: Int = 0,
+    var dlSpeed: Long = 0L,
+    var dlRetries: Int = 0,
+    var dlError: String? = null,
+    var dlDone: Boolean = false,
+)
 
 /**
  * 现代化紧凑型控制台/设置主页。
@@ -70,6 +86,9 @@ fun SettingsScreen(
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<com.panel.app.util.AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+
+    // 下载状态（统一持有，避免多变量作用域混乱）
+    val dlHolder = remember { DownloadStateHolder() }
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
@@ -554,23 +573,36 @@ fun SettingsScreen(
         )
     }
 
-    // 版本更新弹窗
+    // 版本更新弹窗（含下载进度 / 失败 / 完成安装）
     if (showUpdateDialog && updateInfo != null) {
         val info = updateInfo!!
         AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
+            onDismissRequest = {
+                if (dlHolder.dlState?.status == com.panel.app.util.DownloadManager.State.Status.DOWNLOADING) {
+                    com.panel.app.util.DownloadManager.cancel(dlHolder.downloadUrl ?: "")
+                }
+                showUpdateDialog = false
+            },
             title = {
-                Text(if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本", fontSize = 15.sp)
+                Text(
+                    when {
+                        dlHolder.dlState != null && dlHolder.dlState!!.status == com.panel.app.util.DownloadManager.State.Status.DONE -> "下载完成"
+                        dlHolder.dlError != null -> "下载失败"
+                        else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
+                    },
+                    fontSize = 15.sp
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // 版本信息（始终显示）
                     Text("当前: ${info.currentVersion}  |  最新: ${info.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (info.publishedAt.isNotBlank() && info.publishedAt != "--") {
                         Text("发布: ${info.publishedAt}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                     }
                     Text("更新说明:", fontSize = 11.sp, style = MaterialTheme.typography.titleSmall)
                     Surface(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp),
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
@@ -581,46 +613,239 @@ fun SettingsScreen(
                             modifier = Modifier.padding(8.dp)
                         )
                     }
+
+                    // 下载进度卡
+                    if (dlHolder.dlState != null) {
+                        DownloadProgressCard(
+                            state = dlHolder.dlState!!,
+                            downloaded = dlHolder.dlDownloaded,
+                            total = dlHolder.dlTotal,
+                            percent = dlHolder.dlPercent,
+                            speed = dlHolder.dlSpeed,
+                            retries = dlHolder.dlRetries,
+                            isError = dlHolder.dlError != null,
+                            isDone = dlHolder.dlDone
+                        )
+                    }
                 }
             },
             confirmButton = {
-                if (info.hasUpdate && !info.downloadUrl.isNullOrEmpty()) {
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(info.downloadUrl))
-                                context.startActivity(intent)
-                            } catch (_: Exception) {
-                                clipboardManager.setText(AnnotatedString(info.downloadUrl))
-                                Toast.makeText(context, "已复制下载链接到剪贴板", Toast.LENGTH_SHORT).show()
+                when {
+                    dlHolder.dlError != null -> {
+                        Button(
+                            onClick = {
+                                dlHolder.dlError = null
+                                dlHolder.downloadUrl?.let { url ->
+                                    startDownload(context, info, url, dlHolder)
+                                }
                             }
-                            showUpdateDialog = false
-                        }
-                    ) {
-                        Text("立即下载 APK", fontSize = 12.sp)
+                        ) { Text("重新下载", fontSize = 12.sp) }
                     }
-                } else {
-                    Button(onClick = { showUpdateDialog = false }) { Text("我知道了", fontSize = 12.sp) }
+                    dlHolder.dlDone -> {
+                        Button(
+                            onClick = {
+                                val apkFile = dlHolder.dlState?.file ?: return@Button
+                                com.panel.app.util.DownloadManager.installAndCleanup(context, apkFile)
+                                dlHolder.dlDone = false
+                                dlHolder.dlState = null
+                                showUpdateDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即安装", fontSize = 12.sp)
+                        }
+                    }
+                    info.hasUpdate && !info.downloadUrl.isNullOrEmpty() -> {
+                        Button(
+                            onClick = {
+                                dlHolder.downloadUrl = info.downloadUrl
+                                startDownload(context, info, info.downloadUrl!!, dlHolder)
+                            }
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即下载 APK", fontSize = 12.sp)
+                        }
+                    }
+                    else -> {
+                        Button(onClick = { showUpdateDialog = false }) { Text("我知道了", fontSize = 12.sp) }
+                    }
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        try {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(info.releasePageUrl))
-                            context.startActivity(intent)
-                        } catch (_: Exception) {
-                            clipboardManager.setText(AnnotatedString(info.releasePageUrl))
-                            Toast.makeText(context, "已复制 Release 地址", Toast.LENGTH_SHORT).show()
+                        if (dlHolder.dlState?.status == com.panel.app.util.DownloadManager.State.Status.DOWNLOADING) {
+                            com.panel.app.util.DownloadManager.cancel(dlHolder.downloadUrl ?: "")
                         }
+                        resetDownloadState(dlHolder)
+                        showUpdateDialog = false
                     }
-                ) {
-                    Text("在 GitHub 查看", fontSize = 12.sp)
-                }
+                ) { Text("取消", fontSize = 12.sp) }
             }
         )
     }
 }
+
+    // ── 下载辅助函数（顶层，接受 context 参数以避免作用域问题）────────────────
+    fun startDownload(
+        context: android.content.Context,
+        info: com.panel.app.util.AppUpdateInfo,
+        url: String,
+        stateHolder: DownloadStateHolder,
+    ) {
+        val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+        stateHolder.downloadUrl = url
+        stateHolder.dlDone = false
+        stateHolder.dlError = null
+        stateHolder.dlRetries = 0
+        stateHolder.dlPercent = 0
+        stateHolder.dlSpeed = 0L
+        com.panel.app.util.DownloadManager.download(
+            url = url,
+            outputFile = apkFile,
+            onProgress = { bytes, total, percent, speed ->
+                stateHolder.dlDownloaded = bytes
+                stateHolder.dlTotal = total
+                stateHolder.dlPercent = percent
+                stateHolder.dlSpeed = speed
+            },
+            onSuccess = { file ->
+                stateHolder.dlDone = true
+                stateHolder.dlState = com.panel.app.util.DownloadManager.State(
+                    url = url, file = file, downloaded = file.length(),
+                    total = file.length(), percent = 100, retries = 0,
+                    status = com.panel.app.util.DownloadManager.State.Status.DONE
+                )
+                android.widget.Toast.makeText(context, "APK 下载完成，可以安装了", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onFailure = { msg ->
+                stateHolder.dlError = msg
+                stateHolder.dlState = null
+                android.widget.Toast.makeText(context, "下载失败: $msg", android.widget.Toast.LENGTH_LONG).show()
+            },
+            onRetry = {
+                stateHolder.dlRetries++
+                stateHolder.dlError = null
+                android.widget.Toast.makeText(
+                    context,
+                    "自动重试中... (${stateHolder.dlRetries}/${com.panel.app.util.DownloadManager.MAX_RETRIES})",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        )
+    }
+
+    fun resetDownloadState(stateHolder: DownloadStateHolder) {
+        com.panel.app.util.DownloadManager.cancel(stateHolder.downloadUrl ?: "")
+        stateHolder.downloadUrl = null
+        stateHolder.dlState = null
+        stateHolder.dlDownloaded = 0L
+        stateHolder.dlTotal = 0L
+        stateHolder.dlPercent = 0
+        stateHolder.dlSpeed = 0L
+        stateHolder.dlRetries = 0
+        stateHolder.dlError = null
+        stateHolder.dlDone = false
+    }
+
+    @Composable
+    private fun DownloadProgressCard(
+        state: com.panel.app.util.DownloadManager.State,
+        downloaded: Long,
+        total: Long,
+        percent: Int,
+        speed: Long,
+        retries: Int,
+        isError: Boolean,
+        isDone: Boolean,
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = when {
+                isError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                isDone -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // 头部：状态文字 + 百分比
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (isError) {
+                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        } else if (isDone) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
+                        Text(
+                            text = when {
+                                isError -> "下载失败"
+                                isDone -> "下载完成"
+                                else -> "下载中 ${percent}%"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = if (isDone) FontWeight.Bold else FontWeight.Medium,
+                            color = when {
+                                isError -> MaterialTheme.colorScheme.error
+                                isDone -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
+                    if (speed > 0L) {
+                        Text(formatSpeed(speed), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                // 进度条
+                LinearProgressIndicator(
+                    progress = if (total > 0) downloaded.toFloat() / total else (percent / 100f),
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    color = when {
+                        isError -> MaterialTheme.colorScheme.error
+                        isDone -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+                // 字节数 + 重试
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (total > 0) "${formatBytes(downloaded)} / ${formatBytes(total)}" else "${formatBytes(downloaded)}",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (retries > 0 && !isDone) {
+                        Text("重试 $retries 次", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
+        else -> "${"%.2f".format(bytes / (1024.0 * 1024.0))} MB"
+    }
+
+    private fun formatSpeed(bytesPerSec: Long): String = when {
+        bytesPerSec < 1024 -> "$bytesPerSec B/s"
+        bytesPerSec < 1024 * 1024 -> "${"%.1f".format(bytesPerSec / 1024.0)} KB/s"
+        else -> "${"%.2f".format(bytesPerSec / (1024.0 * 1024.0))} MB/s"
+    }
 
 /**
  * 现代化紧凑导航卡片 (高频二级入口)
