@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -184,9 +186,12 @@ fun TasksScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredTasks.isEmpty()) {
+                    // 空状态必须自己可滚动：PullToRefreshBox 依赖嵌套滚动分发，
+                    // 内容不可滚动时下拉手势产生不了滚动增量，列表为空就刷不动
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                             .padding(top = 40.dp),
                         contentAlignment = Alignment.Center
                     ) {

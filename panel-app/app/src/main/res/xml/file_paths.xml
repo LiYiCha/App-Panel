@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 首选：App 自己的 media 目录 /sdcard/Android/media/<包名>/files/logs，
+         Android 11+ 上第三方文件管理器（MT 管理器等）无需授权即可浏览 -->
+    <external-media-path
+        name="media_logs"
+        path="logs/" />
+    <!-- 回退：/sdcard/Android/data/<包名>/files/logs -->
+    <external-files-path
+        name="external_logs"
+        path="logs/" />
+    <!-- 再回退：<内部存储>/files/logs -->
+    <files-path
+        name="internal_logs"
+        path="logs/" />
+</paths>

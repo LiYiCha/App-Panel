@@ -73,8 +73,8 @@ class SafeCallAdapterFactory : CallAdapter.Factory() {
 
         override fun execute(): Response<Any?> = try {
             delegate.execute()
-        } catch (e: Exception) {
-            errorResponse(e)
+        } catch (t: Throwable) {
+            errorResponse(t)
         }
 
         override fun enqueue(callback: Callback<Any?>) {
@@ -85,12 +85,13 @@ class SafeCallAdapterFactory : CallAdapter.Factory() {
 
                 override fun onFailure(call: Call<Any?>, t: Throwable) {
                     // 协程取消时 OkHttp 抛的是 IOException("Canceled")，
-                    // 转成失败响应即可（resume 会被已取消的 continuation 丢弃），不影响结构化并发
-                    if (t is Exception) {
-                        callback.onResponse(call, errorResponse(t))
-                    } else {
-                        callback.onFailure(call, t)
-                    }
+                    // 转成失败响应即可（resume 会被已取消的 continuation 丢弃），不影响结构化并发。
+                    //
+                    // 关键：这里必须**无条件**把 Throwable 转成失败响应。
+                    // OkHttp 的 AsyncCall 对非 IOException 的异常是"先回调 onFailure，
+                    // 再把异常原样抛到调度线程"。如果把 t 继续丢给 callback.onFailure，
+                    // 它最终会作为协程异常冒到主线程导致闪退；转成响应后异常就到此为止。
+                    callback.onResponse(call, errorResponse(t))
                 }
             })
         }
@@ -110,7 +111,7 @@ class SafeCallAdapterFactory : CallAdapter.Factory() {
          */
         const val ERROR_CODE = 599
 
-        private fun errorResponse(e: Exception): Response<Any?> {
+        private fun errorResponse(e: Throwable): Response<Any?> {
             val message = "网络请求失败：${describe(e)}"
             // 带上 code/message/msg，青龙、白虎、unwrap() 三种读法都能取到提示
             val jsonBody = JsonObject().apply {
@@ -125,7 +126,7 @@ class SafeCallAdapterFactory : CallAdapter.Factory() {
             )
         }
 
-        private fun describe(e: Exception): String = when (e) {
+        private fun describe(e: Throwable): String = when (e) {
             is java.net.SocketTimeoutException -> "连接超时，请检查面板地址与网络"
             is java.net.UnknownHostException -> "域名无法解析，请检查面板地址是否正确"
             is java.net.ConnectException -> "连接被拒绝（${e.message ?: "端口可能未开放"}）"

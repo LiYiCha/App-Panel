@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +41,10 @@ fun LoginScreen(
     onBack: (() -> Unit)? = null,
     onLoginSuccess: () -> Unit
 ) {
+    // 从面板管理等上级页面进入时，返回键应回到上一页；
+    // 作为根页面（没有上级回退栈）时不拦截，交给系统退出应用
+    onBack?.let { back -> BackHandler { back() } }
+
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val uiState by viewModel.uiState.collectAsState()

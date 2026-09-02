@@ -33,6 +33,17 @@
             </intent-filter>
         </activity>
 
+        <!-- 供第三方文件管理器（MT 管理器等）通过 content:// 打开日志目录 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

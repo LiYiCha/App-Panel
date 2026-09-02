@@ -3,6 +3,7 @@ package com.panel.app.ui.screens
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,8 @@ fun CreateScriptScreen(
     existingDirs: List<String>,
     onBack: () -> Unit
 ) {
+    BackHandler { onBack() }
+
     val context = LocalContext.current
 
     var filename by remember { mutableStateOf("") }

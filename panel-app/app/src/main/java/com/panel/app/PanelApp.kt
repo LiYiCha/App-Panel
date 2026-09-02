@@ -10,16 +10,14 @@ class PanelApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 初始化日志落盘目录并回灌上次会话的日志尾部（冷启动也能看到上次崩溃）
+        com.panel.app.data.logger.AppLogger.init(this)
+
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            val stack = android.util.Log.getStackTraceString(throwable)
-            android.util.Log.e("PanelApp", "Uncaught exception on thread ${thread.name}: $stack", throwable)
-            com.panel.app.data.logger.AppLogger.log(
-                level = com.panel.app.data.logger.LogLevel.ERROR,
-                tag = "CRASH_GUARD",
-                message = "全局捕获未处理异常 [${thread.name}]: ${throwable.message ?: throwable.javaClass.simpleName}",
-                error = stack
-            )
+            // 关键：崩溃日志必须同步写文件。
+            // 以前只写内存列表，进程一死就没了，所以控制台永远查不到崩溃原因
+            com.panel.app.data.logger.AppLogger.recordCrash(thread, throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }
         createNotificationChannels()

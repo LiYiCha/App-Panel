@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,6 +41,8 @@ fun LogViewerScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
+    BackHandler { onBack() }
+
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()

@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,8 @@ fun PanelManagerScreen(
     onNavigateToSwitchAccount: (PanelInstance) -> Unit,
     onAllPanelsDeleted: () -> Unit
 ) {
+    BackHandler { onBack() }
+
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val panels = uiState.panels

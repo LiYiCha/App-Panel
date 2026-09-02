@@ -18,6 +18,9 @@ import com.panel.app.util.PanelUrl
 import com.panel.app.util.runSafely
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -207,7 +210,7 @@ class MainViewModel @Inject constructor(
         val panels = _uiState.value.panels
         if (index in panels.indices) {
             val targetPanel = panels[index]
-            prefs.edit { putString("active_panel_id", targetPanel.id) }
+            setActivePanelId(targetPanel.id)
             _uiState.value = _uiState.value.copy(
                 selectedPanelIndex = index,
                 tasks = emptyList(),
@@ -223,6 +226,39 @@ class MainViewModel @Inject constructor(
             loadDiskCache(targetPanel.id)
             refreshPanelRemoteData(targetPanel)
         }
+    }
+
+    /**
+     * 调用一个面板接口，把"抛异常"和"返回失败 Result"统一成同一个失败 [Result]。
+     *
+     * 适配器方法声明上都是"不抛异常的"，但两处例外会让它违约：
+     * Gson 把 null 塞进 Kotlin 非空字段后读取时的 NPE、构造 Retrofit 时的
+     * IllegalArgumentException 等。异常一旦冒出 `await()`，
+     * 而 `viewModelScope.launch` 没有异常处理器，就会走到 Thread 的
+     * UncaughtExceptionHandler —— 直接闪退。
+     */
+    private suspend fun <T> safeCall(block: suspend () -> Result<T>): Result<T> =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    /** [safeCall] 的并发版，用于一次并发拉起全部核心接口 */
+    private fun <T> CoroutineScope.safeAsync(block: suspend () -> Result<T>): Deferred<Result<T>> =
+        async { safeCall(block) }
+
+    /**
+     * 写入"当前工作面板" id。
+     * 必须用 `commit = true` 同步落盘：`SharedPreferences.edit {}` 默认是 `apply()`（异步），
+     * 写盘完成前 Room 的 panelsFlow 可能已经推送新一轮面板列表，
+     * 此时 `initData` 读到的仍是旧 id，会拿着**上一个面板**去刷新
+     * （现象就是：刚登录青龙，控制台却在报"失败去连接 118.x.x.x"这个白虎地址）。
+     */
+    private fun setActivePanelId(panelId: String) {
+        prefs.edit(commit = true) { putString("active_panel_id", panelId) }
     }
 
     fun refreshPanelRemoteData(panel: PanelInstance, notifyOnNoCredential: Boolean = false) {
@@ -263,79 +299,108 @@ class MainViewModel @Inject constructor(
             }
 
             _uiState.value = _uiState.value.copy(isLoading = true)
-            val adapter = repository.getAdapter(activePanel)
+            try {
+                // 适配器在构造阶段就会用 baseUrl 建 Retrofit，地址非法会抛异常，
+                // 这一步必须就地收敛，否则异常冒到主线程就是闪退
+                val adapter = runSafely { repository.getAdapter(activePanel) }.getOrElse { e ->
+                    if (getActivePanel().id == activePanel.id) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = "面板地址不可用: ${e.message ?: "无法创建连接"}"
+                        )
+                    }
+                    return@launch
+                }
 
-            // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s
-            val tasksDeferred = async { adapter.getTasks() }
-            val subsDeferred = async { adapter.getSubscriptions() }
-            val envsDeferred = async { adapter.getEnvs() }
-            val depsDeferred = async { adapter.getDeps() }
-            val configFilesDeferred = async { adapter.getConfigFiles() }
-            val scriptTreeDeferred = async { adapter.getScriptTree() }
-            val metricsDeferred = async { adapter.getMetrics() }
+                // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s
+                val tasksDeferred = safeAsync { adapter.getTasks() }
+                val subsDeferred = safeAsync { adapter.getSubscriptions() }
+                val envsDeferred = safeAsync { adapter.getEnvs() }
+                val depsDeferred = safeAsync { adapter.getDeps() }
+                val configFilesDeferred = safeAsync { adapter.getConfigFiles() }
+                val scriptTreeDeferred = safeAsync { adapter.getScriptTree() }
+                val metricsDeferred = safeAsync { adapter.getMetrics() }
 
-            val tasksRes = tasksDeferred.await()
-            val remoteTasks = tasksRes.getOrNull() ?: emptyList()
+                val tasksRes = tasksDeferred.await()
+                val subsRes = subsDeferred.await()
+                val envsRes = envsDeferred.await()
+                val depsRes = depsDeferred.await()
+                val configFilesRes = configFilesDeferred.await()
+                val scriptTreeRes = scriptTreeDeferred.await()
+                val metricsRes = metricsDeferred.await()
 
-            val subsRes = subsDeferred.await()
-            val remoteSubs = subsRes.getOrNull() ?: emptyList()
+                // 再次检查用户是否在网络请求期间切换了面板，如果是则丢弃结果以防旧数据覆盖
+                if (getActivePanel().id != activePanel.id) {
+                    return@launch
+                }
 
-            val envsRes = envsDeferred.await()
-            val remoteEnvs = envsRes.getOrNull() ?: emptyList()
+                // 关键：请求失败时**保留上一次的数据**。
+                // 以前是 `getOrNull() ?: emptyList()`，一次网络抖动/断网就会：
+                //  1. 把已加载的界面清成空（看起来像"未登录"）；
+                //  2. 把空列表写进磁盘缓存 —— 断网进出一次，该面板的数据就永久没了。
+                val previous = _uiState.value
+                val remoteTasks = tasksRes.getOrNull() ?: previous.tasks
+                val remoteSubs = subsRes.getOrNull() ?: previous.subscriptions
+                val remoteEnvs = envsRes.getOrNull() ?: previous.envs
+                val remoteDeps = depsRes.getOrNull() ?: previous.deps
+                val remoteScriptTree = scriptTreeRes.getOrNull() ?: previous.scriptTree
 
-            val depsRes = depsDeferred.await()
-            val remoteDeps = depsRes.getOrNull() ?: emptyList()
+                val fileList = configFilesRes.getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: previous.configFiles.takeIf { it.isNotEmpty() }
+                    ?: listOf(if (activePanel.type == PanelType.BAIHU) "config.json" else "config.sh")
+                val defaultFile = fileList.firstOrNull { it.equals("config.sh", ignoreCase = true) || it.equals("config.json", ignoreCase = true) }
+                    ?: fileList.firstOrNull { !it.contains("/") && (it.endsWith(".sh") || it.endsWith(".json") || it.endsWith(".js")) }
+                    ?: fileList.firstOrNull()
+                    ?: "config.sh"
+                val configContentRes = if (configFilesRes.isSuccess) {
+                    safeCall { adapter.readConfig(defaultFile) }
+                } else {
+                    Result.failure(configFilesRes.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
+                }
+                val content = configContentRes.getOrNull() ?: previous.configContent
 
-            val configFilesRes = configFilesDeferred.await()
-            val fileList = configFilesRes.getOrNull() ?: listOf(if (activePanel.type == PanelType.BAIHU) "config.json" else "config.sh")
-            val defaultFile = fileList.firstOrNull { it.equals("config.sh", ignoreCase = true) || it.equals("config.json", ignoreCase = true) }
-                ?: fileList.firstOrNull { !it.contains("/") && (it.endsWith(".sh") || it.endsWith(".json") || it.endsWith(".js")) }
-                ?: fileList.firstOrNull()
-                ?: "config.sh"
-            val configContentRes = adapter.readConfig(defaultFile)
-            val content = configContentRes.getOrNull() ?: ""
+                val previousPanel = _uiState.value.panels.firstOrNull { it.id == activePanel.id }
+                val (cpu, ram) = metricsRes.getOrNull()
+                    ?: Pair(previousPanel?.cpuUsage ?: "--", previousPanel?.ramUsage ?: "--")
 
-            val scriptTreeRes = scriptTreeDeferred.await()
-            val remoteScriptTree = scriptTreeRes.getOrNull() ?: emptyList()
+                val errorMsg = listOfNotNull(
+                    tasksRes.exceptionOrNull()?.let { "任务加载失败: ${it.message}" },
+                    envsRes.exceptionOrNull()?.let { "环境变量加载失败: ${it.message}" },
+                    scriptTreeRes.exceptionOrNull()?.let { "脚本文件加载失败: ${it.message}" }
+                ).firstOrNull()
 
-            val errorMsg = when {
-                tasksRes.isFailure -> "任务加载失败: ${tasksRes.exceptionOrNull()?.message}"
-                envsRes.isFailure -> "环境变量加载失败: ${envsRes.exceptionOrNull()?.message}"
-                scriptTreeRes.isFailure -> "脚本文件加载失败: ${scriptTreeRes.exceptionOrNull()?.message}"
-                else -> null
+                val updatedPanels = _uiState.value.panels.map {
+                    if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
+                }
+
+                // 只有至少一个核心接口真的成功，才更新"已加载过网络数据"标记并落盘缓存，
+                // 避免把失败时的空数据固化成缓存
+                val hasSuccess = tasksRes.isSuccess || envsRes.isSuccess ||
+                        scriptTreeRes.isSuccess || subsRes.isSuccess
+                if (hasSuccess) {
+                    hasNetworkDataLoaded = true
+                    saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, defaultFile, content)
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    panels = updatedPanels,
+                    tasks = remoteTasks,
+                    subscriptions = remoteSubs,
+                    envs = remoteEnvs,
+                    deps = remoteDeps,
+                    configFiles = fileList,
+                    selectedConfigFile = defaultFile,
+                    configContent = content,
+                    scriptTree = remoteScriptTree,
+                    toastMessage = errorMsg ?: _uiState.value.toastMessage
+                )
+            } finally {
+                // 无论成功、失败还是中途 return，刷新态都必须收掉，
+                // 否则下拉刷新会一直转圈（以前中途 return 时 isLoading 会永久卡在 true）
+                if (getActivePanel().id == activePanel.id) {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
             }
-
-            val metricsRes = metricsDeferred.await()
-            val (cpu, ram) = metricsRes.getOrNull() ?: Pair("--", "--")
-
-            // 再次检查用户是否在网络请求期间切换了面板，如果是则丢弃结果以防旧数据覆盖
-            if (getActivePanel().id != activePanel.id) {
-                return@launch
-            }
-
-            val updatedPanels = _uiState.value.panels.map {
-                if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
-            }
-
-            // 标记已发起过网络请求，下次不再使用缓存
-            hasNetworkDataLoaded = true
-
-            // 网络请求成功后，始终保存结果到缓存（包括空数据）
-            saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, defaultFile, content)
-
-            _uiState.value = _uiState.value.copy(
-                panels = updatedPanels,
-                tasks = remoteTasks,
-                subscriptions = remoteSubs,
-                envs = remoteEnvs,
-                deps = remoteDeps,
-                configFiles = fileList,
-                selectedConfigFile = defaultFile,
-                configContent = content,
-                scriptTree = remoteScriptTree,
-                isLoading = false,
-                toastMessage = errorMsg ?: _uiState.value.toastMessage
-            )
         }
     }
 
@@ -387,7 +452,7 @@ class MainViewModel @Inject constructor(
             if (authResult.isSuccess) {
                 val validToken = authResult.getOrNull()
                 val savedInstance = candidate.copy(token = validToken ?: candidate.token)
-                prefs.edit { putString("active_panel_id", savedInstance.id) }
+                setActivePanelId(savedInstance.id)
                 repository.savePanel(savedInstance)
                 val currentPanels = repository.panelsFlow.first()
                 val targetIndex = currentPanels.indexOfFirst { it.id == savedInstance.id }.let { if (it >= 0) it else 0 }
@@ -439,7 +504,7 @@ class MainViewModel @Inject constructor(
             if (res.isSuccess) {
                 val saved = panel.copy(token = res.getOrNull())
                 _uiState.value = _uiState.value.copy(otpPendingPanel = null)
-                prefs.edit { putString("active_panel_id", saved.id) }
+                setActivePanelId(saved.id)
                 repository.savePanel(saved)
                 val currentPanels = repository.panelsFlow.first()
                 val targetIndex = currentPanels.indexOfFirst { it.id == saved.id }.let { if (it >= 0) it else 0 }

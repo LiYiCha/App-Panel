@@ -1,5 +1,6 @@
 package com.panel.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
@@ -34,6 +35,10 @@ data class LogItem(
     val id: String? = null
 )
 
+/** JsonObject 空安全取值：字段为 JsonNull 或类型不符时返回 null，避免 asString 抛异常 */
+private fun com.google.gson.JsonObject.strOrNull(key: String): String? =
+    get(key)?.takeIf { it.isJsonPrimitive }?.asString
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServerLogsScreen(
@@ -41,6 +46,8 @@ fun ServerLogsScreen(
     onBack: () -> Unit,
     onOpenLogViewer: (String, String) -> Unit = { _, _ -> }
 ) {
+    BackHandler { onBack() }
+
     var logTree by remember { mutableStateOf<com.google.gson.JsonElement?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -66,24 +73,28 @@ fun ServerLogsScreen(
         val groups = mutableListOf<ScriptLogGroup>()
         val rootFiles = mutableListOf<LogItem>()
 
-        val arr = if (logTree?.isJsonObject == true && logTree!!.asJsonObject.has("data")) {
-            logTree!!.asJsonObject.get("data").asJsonArray
-        } else if (logTree?.isJsonArray == true) {
-            logTree!!.asJsonArray
-        } else null
+        // Gson 的 JsonNull 不是 null，直接 asJsonArray/asString 会抛 UnsupportedOperationException
+        // 把 Composable 炸掉，所以所有取值都必须先判类型
+        val arr: com.google.gson.JsonArray? = when {
+            logTree?.isJsonArray == true -> logTree!!.asJsonArray
+            logTree?.isJsonObject == true ->
+                logTree!!.asJsonObject.get("data")?.takeIf { it.isJsonArray }?.asJsonArray
+            else -> null
+        }
 
         arr?.forEach { elem ->
             if (elem.isJsonObject) {
                 val obj = elem.asJsonObject
-                val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: "未命名任务"
-                val isDir = obj.get("type")?.asString == "directory" || obj.has("children")
-                if (isDir && obj.has("children") && obj.get("children").isJsonArray) {
+                val title = obj.strOrNull("title") ?: obj.strOrNull("name") ?: "未命名任务"
+                val isDir = obj.strOrNull("type") == "directory" || obj.has("children")
+                val children = obj.get("children")?.takeIf { it.isJsonArray }?.asJsonArray
+                if (isDir && children != null) {
                     val subFiles = mutableListOf<LogItem>()
-                    obj.get("children").asJsonArray.forEach { sub ->
+                    children.forEach { sub ->
                         if (sub.isJsonObject) {
                             val subObj = sub.asJsonObject
-                            val subTitle = subObj.get("title")?.asString ?: subObj.get("name")?.asString ?: "log"
-                            val id = subObj.get("id")?.asString
+                            val subTitle = subObj.strOrNull("title") ?: subObj.strOrNull("name") ?: "log"
+                            val id = subObj.strOrNull("id")
                             val fullPath = if (!id.isNullOrEmpty()) id else "$title/$subTitle"
                             subFiles.add(LogItem(subTitle, fullPath, id))
                         }
@@ -94,7 +105,7 @@ fun ServerLogsScreen(
                         groups.add(ScriptLogGroup(title, subFiles))
                     }
                 } else {
-                    val id = obj.get("id")?.asString
+                    val id = obj.strOrNull("id")
                     rootFiles.add(LogItem(title, id ?: title, id))
                 }
             }

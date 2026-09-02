@@ -225,6 +225,17 @@ class QinglongV15Adapter(
     override suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>> {
         ensureAuth()
         val cronId = toId(taskId)?.toString() ?: taskId.substringBefore('.')
+        // SimpleDateFormat 每次局部新建，且整体 try/catch：
+        // 历史日志数组的字段（filename/time）若为 JsonNull，asString/asLong 会抛异常，
+        // 不收敛的话会经 viewModelScope 冒到主线程导致闪退
+        return try {
+            loadTaskInstancesInternal(cronId)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun loadTaskInstancesInternal(cronId: String): Result<List<TaskInstanceRecord>> {
         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
 
         val fromInstances = runCatching {
@@ -263,25 +274,27 @@ class QinglongV15Adapter(
         if (fromInstances.isNotEmpty()) return Result.success(fromInstances)
 
         // 旧版本没有 running_instance 表，退回历史日志文件列表
-        val history = api.getCronHistoryLogs(getAuthHeader(), cronId)
-            .unwrap("获取历史日志失败").getOrNull()?.data
-            ?.takeIf { it.isJsonArray }?.asJsonArray
-            ?.mapNotNull { elem ->
-                if (!elem.isJsonObject) return@mapNotNull null
-                val obj = elem.asJsonObject
-                val filename = obj.get("filename")?.asString ?: return@mapNotNull null
-                val directory = obj.get("directory")?.asString.orEmpty()
-                val time = obj.get("time")?.asLong ?: 0L
-                TaskInstanceRecord(
-                    id = filename,
-                    startTime = if (time > 0) sdf.format(java.util.Date(time)) else filename.removeSuffix(".log"),
-                    endTime = null,
-                    duration = "--",
-                    exitCode = 0,
-                    statusText = "已完成",
-                    logPath = if (directory.isNotEmpty()) "$directory/$filename" else filename
-                )
-            }
+        val history = runCatching {
+            api.getCronHistoryLogs(getAuthHeader(), cronId)
+                .unwrap("获取历史日志失败").getOrNull()?.data
+                ?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.mapNotNull { elem ->
+                    if (!elem.isJsonObject) return@mapNotNull null
+                    val obj = elem.asJsonObject
+                    val filename = obj.strOrNull("filename") ?: return@mapNotNull null
+                    val directory = obj.strOrNull("directory").orEmpty()
+                    val time = obj.longOrNull("time") ?: 0L
+                    TaskInstanceRecord(
+                        id = filename,
+                        startTime = if (time > 0) sdf.format(java.util.Date(time)) else filename.removeSuffix(".log"),
+                        endTime = null,
+                        duration = "--",
+                        exitCode = 0,
+                        statusText = "已完成",
+                        logPath = if (directory.isNotEmpty()) "$directory/$filename" else filename
+                    )
+                }
+        }.getOrNull()
 
         return Result.success(history ?: emptyList())
     }
@@ -873,21 +886,35 @@ class QinglongV15Adapter(
 
     // ---------------------------------------------------------------- 8. 监控
 
+    /**
+     * 这里必须整体 try/catch + 空安全取值。
+     *
+     * 白虎的 [BaihuPanelAdapter.getMetrics] 全程包在 try/catch 里，
+     * 而这里原先既没包 try/catch，又直接对 `loadAvg` 数组元素调 `asDouble()` ——
+     * 元素若是 JsonNull（青龙部分版本/降级响应会出现）会抛
+     * UnsupportedOperationException，**不是 IOException**，
+     * OkHttp 的 AsyncCall 会先回调 onFailure 再把它重抛到调度线程 → 进程崩溃。
+     * 这是"青龙崩、白虎不崩"的典型差异点之一。
+     */
     override suspend fun getMetrics(): Result<Pair<String, String>> {
         ensureAuth()
-        return api.getDashboardSystem(getAuthHeader())
-            .unwrapTo("获取监控数据失败") { env ->
-                val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
-                if (obj == null) {
-                    "--" to "--"
-                } else {
-                    val ram = obj.get("memUsagePercent")?.asString ?: "--"
-                    val load1 = obj.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
-                    val cpus = obj.get("cpus")?.asInt ?: 1
-                    val cpu = String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
-                    cpu to ram
+        return try {
+            api.getDashboardSystem(getAuthHeader())
+                .unwrapTo("获取监控数据失败") { env ->
+                    val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
+                    if (obj == null) {
+                        "--" to "--"
+                    } else {
+                        val ram = obj.strOrNull("memUsagePercent") ?: "--"
+                        val load1 = obj.arrayFirstDouble("loadAvg") ?: 0.0
+                        val cpus = obj.intOrNull("cpus") ?: 1
+                        val cpu = String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
+                        cpu to ram
+                    }
                 }
-            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -903,28 +930,31 @@ class QinglongV15Adapter(
     /** GET /api/dashboard/runtime 的 running[] 直接带 instanceId 与 logPath */
     override suspend fun getRunningTasks(): Result<List<RunningTaskInfo>> {
         ensureAuth()
-        return api.getDashboardRuntime(getAuthHeader())
-            .unwrapTo("获取运行中任务失败") { env ->
-                val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
-                val running = obj?.getAsJsonArray("running")
-                running?.mapNotNull { elem ->
-                    if (!elem.isJsonObject) return@mapNotNull null
-                    val item = elem.asJsonObject
-                    val taskId = item.get("id")?.asString
-                        ?: item.get("id")?.asLong?.toString()
-                        ?: return@mapNotNull null
-                    RunningTaskInfo(
-                        taskId = taskId,
-                        name = item.get("name")?.asString ?: "任务 #$taskId",
-                        instanceId = item.get("instanceId")?.asString
-                            ?: item.get("instanceId")?.asLong?.toString(),
-                        pid = item.get("pid")?.asInt,
-                        elapsedSeconds = item.get("elapsed")?.asLong,
-                        logPath = item.get("logPath")?.asString
-                    )
+        return try {
+            api.getDashboardRuntime(getAuthHeader())
+                .unwrapTo("获取运行中任务失败") { env ->
+                    val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
+                    val running = obj?.get("running")?.takeIf { it.isJsonArray }?.asJsonArray
+                    running?.mapNotNull { elem ->
+                        if (!elem.isJsonObject) return@mapNotNull null
+                        val item = elem.asJsonObject
+                        val taskId = item.strOrNull("id")
+                            ?: item.longOrNull("id")?.toString()
+                            ?: return@mapNotNull null
+                        RunningTaskInfo(
+                            taskId = taskId,
+                            name = item.strOrNull("name") ?: "任务 #$taskId",
+                            instanceId = item.strOrNull("instanceId")
+                                ?: item.longOrNull("instanceId")?.toString(),
+                            pid = item.intOrNull("pid"),
+                            elapsedSeconds = item.longOrNull("elapsed"),
+                            logPath = item.strOrNull("logPath")
+                        )
+                    } ?: emptyList()
                 }
-                    ?: emptyList()
-            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /** 青龙支持按实例精确停止：POST /api/crons/{id}/instances/{instanceId}/stop */
@@ -951,10 +981,21 @@ class QinglongV15Adapter(
             }
     }
 
+    /**
+     * data 为 JsonNull 时必须降级成空数组。
+     * 原先 `it.data ?: JsonArray()` 拦不住 JsonNull（它不是 null，是个对象实例），
+     * 返回 JsonNull 后 UI 侧再调 `asJsonArray` 就会抛 UnsupportedOperationException 直接崩。
+     */
     override suspend fun getLogsTree(): Result<com.google.gson.JsonElement> {
         ensureAuth()
-        return api.getLogsTree(getAuthHeader())
-            .unwrapTo("获取日志文件列表失败") { it.data ?: com.google.gson.JsonArray() }
+        return try {
+            api.getLogsTree(getAuthHeader())
+                .unwrapTo("获取日志文件列表失败") { env ->
+                    env.data?.takeIf { it.isJsonArray || it.isJsonObject } ?: com.google.gson.JsonArray()
+                }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     override suspend fun getLogDetail(path: String, file: String): Result<String> {
@@ -1046,10 +1087,11 @@ class QinglongV15Adapter(
             val runningCount = if (fallbackCrons.isNotEmpty()) fallbackCrons.count { it.status == 0 } else 0
 
             val cpu = system?.let { s ->
-                val load1 = s.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble
-                    ?: s.get("cpu")?.takeIf { it.isJsonPrimitive }?.asDouble
+                val load1 = s.getAsJsonArray("loadAvg")?.firstOrNull { it.isJsonPrimitive }
+                    ?.let { runCatching { it.asNumber.toDouble() }.getOrNull() }
+                    ?: s.get("cpu")?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asNumber.toDouble() }.getOrNull() }
                     ?: 0.0
-                val cpus = s.get("cpus")?.asInt ?: 1
+                val cpus = s.intOrNull("cpus") ?: 1
                 if (load1 > 0) String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0) else null
             }
 
@@ -1111,7 +1153,7 @@ class QinglongV15Adapter(
                         system?.let { s ->
                             s.strOf("version")?.let { put("青龙内核", "v$it") }
                             s.strOf("platform")?.let { put("系统环境", it) }
-                            s.get("cpus")?.asInt?.let { put("CPU 核数", "$it") }
+                            s.intOf("cpus")?.let { put("CPU 核数", "$it") }
                             s.longOf("uptime")?.let { put("运行时长", formatSeconds(it)) }
                             s.strOf("memUsagePercent")?.let { put("内存占用", "$it%") }
                         }
@@ -1255,6 +1297,25 @@ class QinglongV15Adapter(
         seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
         else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
     }
+
+    // ---------- JsonObject 空安全取值 ----------
+    // Gson 的 JsonNull 不是 null，而是单例对象；在它上面调 asString / asInt /
+    // asLong / asDouble / asJsonArray 都会抛 UnsupportedOperationException。
+    // 青龙部分版本与降级响应会出现字段为 null 的情况，必须先判 isJsonPrimitive。
+
+    private fun com.google.gson.JsonObject?.strOrNull(key: String): String? =
+        this?.get(key)?.takeIf { it.isJsonPrimitive }?.asString
+
+    private fun com.google.gson.JsonObject?.intOrNull(key: String): Int? =
+        this?.get(key)?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asNumber.toInt() }.getOrNull() }
+
+    private fun com.google.gson.JsonObject?.longOrNull(key: String): Long? =
+        this?.get(key)?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asNumber.toLong() }.getOrNull() }
+
+    private fun com.google.gson.JsonObject?.arrayFirstDouble(key: String): Double? =
+        this?.get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.firstOrNull { it.isJsonPrimitive }
+            ?.let { runCatching { it.asNumber.toDouble() }.getOrNull() }
 
     private fun formatBytes(bytes: Long?): String? {
         if (bytes == null || bytes <= 0) return null
