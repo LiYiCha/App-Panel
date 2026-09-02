@@ -112,35 +112,6 @@ App-Panel/
 
 ---
 
-## 🔨 本地构建与发布
-
-### 1. 调试编译
-```bash
-cd panel-app
-./gradlew assembleDebug
-```
-产物 APK 生成于 `panel-app/app/build/outputs/apk/debug/app-debug.apk`。
-
-### 2. 正式签名打包
-正式版需要使用签名证书：
-```bash
-cd panel-app
-./gradlew assembleRelease
-```
-产物 APK 生成于 `panel-app/app/build/outputs/apk/release/app-release.apk`。
-
-### 3. 一键自动化发版脚本 (Windows PowerShell)
-```powershell
-.\release.ps1 -Version 2.0.0 -Message "Panel Hub 2.0.0 正式版发布"
-```
-脚本将自动完成：
-1. 更新版本元数据；
-2. 执行 Release 签名混淆构建；
-3. 导出命名规范的 APK 至 `release/` 目录；
-4. 创建 Git 标签并推送到远程 GitHub 仓库，触发 GitHub Actions 持续集成。
-
----
-
 ## 📄 开源许可
 
 本项目依据根目录下 [LICENSE](LICENSE) 许可协议开源分发。

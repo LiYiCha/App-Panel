@@ -8,7 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -66,9 +65,9 @@ fun SettingsScreen(
     onOpenBackup: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
     onOpenExecutionHistory: () -> Unit = {},
+    onOpenSystemSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
     val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
@@ -76,12 +75,10 @@ fun SettingsScreen(
 
     var showAboutDialog by remember { mutableStateOf(false) }
     var pingLatency by remember { mutableStateOf<String?>(null) }
-    var isTestingPing by remember { mutableStateOf(false) }
     var isReachable by remember { mutableStateOf<Boolean?>(null) }
     var remoteDashboard by remember { mutableStateOf<com.panel.app.data.model.PanelDashboard?>(null) }
-    var selectedTimeout by remember { mutableStateOf(15) }
+    var selectedTimeout by remember { mutableIntStateOf(15) }
     var showTimeoutDialog by remember { mutableStateOf(false) }
-    var showSystemSettingsPage by remember { mutableStateOf(false) }
 
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
@@ -92,7 +89,6 @@ fun SettingsScreen(
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
-        isTestingPing = true
         val latency = withContext(Dispatchers.IO) {
             try {
                 val start = System.currentTimeMillis()
@@ -112,56 +108,10 @@ fun SettingsScreen(
         }
         pingLatency = latency
         isReachable = latency.endsWith("ms")
-        isTestingPing = false
 
         viewModel.loadDashboard { res ->
             remoteDashboard = res.getOrNull()
         }
-    }
-
-    if (showSystemSettingsPage) {
-        androidx.activity.compose.BackHandler { showSystemSettingsPage = false }
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                if (currentPanel.type == PanelType.BAIHU) "白虎系统状态与配置" else "青龙系统高级配置",
-                                fontSize = 15.sp,
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                "${currentPanel.name} (${currentPanel.baseUrl})",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { showSystemSettingsPage = false }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                        }
-                    }
-                )
-            }
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (currentPanel.type == PanelType.QINGLONG_V15 || currentPanel.type == PanelType.QINGLONG_V10) {
-                    QinglongSystemSettingsCard(viewModel = viewModel)
-                } else {
-                    BaihuSystemSettingsCard(dashboard = remoteDashboard)
-                }
-            }
-        }
-        return
     }
 
     Column(
@@ -395,7 +345,7 @@ fun SettingsScreen(
                 onClick = onOpenDeps
             )
             ModernNavTile(
-                icon = Icons.Default.Article,
+                icon = Icons.AutoMirrored.Filled.Article,
                 title = "服务端日志",
                 desc = "脚本文件日志",
                 badge = null,
@@ -436,7 +386,7 @@ fun SettingsScreen(
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = { showSystemSettingsPage = true }
+                onClick = onOpenSystemSettings
             )
             ModernNavTile(
                 icon = Icons.Default.Terminal,
@@ -531,7 +481,7 @@ fun SettingsScreen(
             title = { Text("关于 Panel Hub", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("版本: v2.3.0 (高聚合无感流转版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
+                    Text("版本: ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
                     Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板。支持定时任务多状态联动、代码语法高亮与行号、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
                 }
             },
@@ -562,7 +512,7 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             RadioButton(selected = selectedTimeout == seconds, onClick = null)
-                            Text("${seconds} 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
+                            Text("$seconds 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
                         }
                     }
                 }
@@ -578,15 +528,15 @@ fun SettingsScreen(
         val info = updateInfo!!
         AlertDialog(
             onDismissRequest = {
-                if (dlHolder.dlState?.status == com.panel.app.util.DownloadManager.State.Status.DOWNLOADING) {
-                    com.panel.app.util.DownloadManager.cancel(dlHolder.downloadUrl ?: "")
+                if (dlHolder.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                    DownloadManager.cancel(dlHolder.downloadUrl ?: "")
                 }
                 showUpdateDialog = false
             },
             title = {
                 Text(
                     when {
-                        dlHolder.dlState != null && dlHolder.dlState!!.status == com.panel.app.util.DownloadManager.State.Status.DONE -> "下载完成"
+                        dlHolder.dlState != null && dlHolder.dlState!!.status == DownloadManager.State.Status.DONE -> "下载完成"
                         dlHolder.dlError != null -> "下载失败"
                         else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
                     },
@@ -617,7 +567,6 @@ fun SettingsScreen(
                     // 下载进度卡
                     if (dlHolder.dlState != null) {
                         DownloadProgressCard(
-                            state = dlHolder.dlState!!,
                             downloaded = dlHolder.dlDownloaded,
                             total = dlHolder.dlTotal,
                             percent = dlHolder.dlPercent,
@@ -636,7 +585,7 @@ fun SettingsScreen(
                             onClick = {
                                 dlHolder.dlError = null
                                 dlHolder.downloadUrl?.let { url ->
-                                    startDownload(context, info, url, dlHolder)
+                                    startDownload(context, url, dlHolder)
                                 }
                             }
                         ) { Text("重新下载", fontSize = 12.sp) }
@@ -645,7 +594,7 @@ fun SettingsScreen(
                         Button(
                             onClick = {
                                 val apkFile = dlHolder.dlState?.file ?: return@Button
-                                com.panel.app.util.DownloadManager.installAndCleanup(context, apkFile)
+                                DownloadManager.installAndCleanup(context, apkFile)
                                 dlHolder.dlDone = false
                                 dlHolder.dlState = null
                                 showUpdateDialog = false
@@ -661,7 +610,7 @@ fun SettingsScreen(
                         Button(
                             onClick = {
                                 dlHolder.downloadUrl = info.downloadUrl
-                                startDownload(context, info, info.downloadUrl!!, dlHolder)
+                                startDownload(context, info.downloadUrl, dlHolder)
                             }
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -677,8 +626,8 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        if (dlHolder.dlState?.status == com.panel.app.util.DownloadManager.State.Status.DOWNLOADING) {
-                            com.panel.app.util.DownloadManager.cancel(dlHolder.downloadUrl ?: "")
+                        if (dlHolder.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                            DownloadManager.cancel(dlHolder.downloadUrl ?: "")
                         }
                         resetDownloadState(dlHolder)
                         showUpdateDialog = false
@@ -692,7 +641,6 @@ fun SettingsScreen(
 // ── 下载辅助函数（顶层，接受 context 参数以避免作用域问题）────────────────
 fun startDownload(
     context: android.content.Context,
-    info: com.panel.app.util.AppUpdateInfo,
     url: String,
     stateHolder: DownloadStateHolder,
 ) {
@@ -703,7 +651,7 @@ fun startDownload(
         stateHolder.dlRetries = 0
         stateHolder.dlPercent = 0
         stateHolder.dlSpeed = 0L
-        com.panel.app.util.DownloadManager.download(
+        DownloadManager.download(
             url = url,
             outputFile = apkFile,
             onProgress = { bytes, total, percent, speed ->
@@ -714,32 +662,41 @@ fun startDownload(
             },
             onSuccess = { file ->
                 stateHolder.dlDone = true
-                stateHolder.dlState = com.panel.app.util.DownloadManager.State(
+                stateHolder.dlState = DownloadManager.State(
                     url = url, file = file, downloaded = file.length(),
                     total = file.length(), percent = 100, retries = 0,
-                    status = com.panel.app.util.DownloadManager.State.Status.DONE
+                    status = DownloadManager.State.Status.DONE
                 )
-                android.widget.Toast.makeText(context, "APK 下载完成，可以安装了", android.widget.Toast.LENGTH_SHORT).show()
+                // 切回主线程显示 Toast
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, "APK 下载完成，可以安装了", Toast.LENGTH_SHORT).show()
+                }
             },
             onFailure = { msg ->
                 stateHolder.dlError = msg
                 stateHolder.dlState = null
-                android.widget.Toast.makeText(context, "下载失败: $msg", android.widget.Toast.LENGTH_LONG).show()
+                // 切回主线程显示 Toast
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, "下载失败: $msg", Toast.LENGTH_LONG).show()
+                }
             },
             onRetry = {
                 stateHolder.dlRetries++
                 stateHolder.dlError = null
-                android.widget.Toast.makeText(
-                    context,
-                    "自动重试中... (${stateHolder.dlRetries}/${com.panel.app.util.DownloadManager.MAX_RETRIES})",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                // 切回主线程显示 Toast
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        context,
+                        "自动重试中... (${stateHolder.dlRetries}/${DownloadManager.MAX_RETRIES})",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         )
     }
 
 fun resetDownloadState(stateHolder: DownloadStateHolder) {
-    com.panel.app.util.DownloadManager.cancel(stateHolder.downloadUrl ?: "")
+    DownloadManager.cancel(stateHolder.downloadUrl ?: "")
     stateHolder.downloadUrl = null
     stateHolder.dlState = null
     stateHolder.dlDownloaded = 0L
@@ -753,7 +710,6 @@ fun resetDownloadState(stateHolder: DownloadStateHolder) {
 
 @Composable
 private fun DownloadProgressCard(
-    state: com.panel.app.util.DownloadManager.State,
     downloaded: Long,
     total: Long,
     percent: Int,
@@ -807,7 +763,7 @@ private fun DownloadProgressCard(
                 }
                 // 进度条
                 LinearProgressIndicator(
-                    progress = if (total > 0) downloaded.toFloat() / total else (percent / 100f),
+                    progress = { if (total > 0) downloaded.toFloat() / total else (percent / 100f) },
                     modifier = Modifier.fillMaxWidth().height(4.dp),
                     trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                     color = when {
@@ -823,7 +779,7 @@ private fun DownloadProgressCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (total > 0) "${formatBytes(downloaded)} / ${formatBytes(total)}" else "${formatBytes(downloaded)}",
+                        text = if (total > 0) "${formatBytes(downloaded)} / ${formatBytes(total)}" else formatBytes(downloaded),
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -938,7 +894,7 @@ private fun CompactMetricChip(label: String, value: String, color: Color, modifi
  * 青龙面板系统设置二级内容。
  */
 @Composable
-private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
+fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf<Map<String, String>?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
@@ -991,7 +947,7 @@ private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
                             onClick = {
                                 val v = logDays.toIntOrNull()
                                 viewModel.saveLogRemoveFrequency(v)
-                                Toast.makeText(context, if (v == null) "已清除日志自动清理限制" else "日志保留天数已设置为 ${v} 天", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (v == null) "已清除日志自动清理限制" else "日志保留天数已设置为 $v 天", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.height(52.dp),
                             shape = RoundedCornerShape(8.dp)
@@ -1080,7 +1036,7 @@ private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
  * 白虎面板系统概览二级内容。
  */
 @Composable
-private fun BaihuSystemSettingsCard(dashboard: com.panel.app.data.model.PanelDashboard?) {
+fun BaihuSystemSettingsCard(dashboard: com.panel.app.data.model.PanelDashboard?) {
     Column(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (dashboard == null) {
             Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {

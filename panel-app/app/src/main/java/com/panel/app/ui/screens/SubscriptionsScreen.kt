@@ -4,11 +4,10 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.Note
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -30,7 +29,8 @@ import com.panel.app.ui.viewmodel.MainViewModel
 fun SubscriptionsScreen(
     viewModel: MainViewModel,
     showCreateDialog: Boolean = false,
-    onDismissCreateDialog: () -> Unit = {}
+    onDismissCreateDialog: () -> Unit = {},
+    onCreateClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -135,7 +135,7 @@ fun SubscriptionsScreen(
                 }
 
                 Button(
-                    onClick = { onDismissCreateDialog() /* toggle create handled by parent */ },
+                    onClick = onCreateClick,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     modifier = Modifier.height(30.dp),
                     shape = RoundedCornerShape(8.dp)
@@ -155,16 +155,22 @@ fun SubscriptionsScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredSubs.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = 40.dp),
-                        contentAlignment = Alignment.Center
+                    // PullToRefreshBox 完全依赖 nested scroll 手势，空态必须是可滚动容器，否则下拉无响应
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text("暂无匹配的仓库同步任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        item {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = if (uiState.isLoading) "正在刷新仓库同步任务..." else "暂无匹配的仓库同步任务",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 } else {
@@ -411,7 +417,7 @@ fun RepoSyncCard(
                         }
                     }
                     IconButton(onClick = onViewLog, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Notes, contentDescription = "日志", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Filled.Note, contentDescription = "日志", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
                         Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))

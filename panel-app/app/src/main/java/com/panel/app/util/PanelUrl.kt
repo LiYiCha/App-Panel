@@ -2,6 +2,7 @@ package com.panel.app.util
 
 import android.net.Uri
 import java.util.Locale
+import androidx.core.net.toUri
 
 /**
  * 面板服务地址的唯一校验 / 规范化入口。
@@ -43,7 +44,7 @@ object PanelUrl {
         // 去掉末尾斜杠：NetworkClient.buildRetrofit 会自行补 '/'，否则会拼出双斜杠
         val candidate = withScheme.trimEnd('/')
 
-        val uri = runCatching { Uri.parse(candidate) }.getOrNull()
+        val uri = runCatching { candidate.toUri() }.getOrNull()
         val scheme = uri?.scheme?.lowercase(Locale.US)
         if (uri == null || scheme.isNullOrEmpty()) {
             return Result.failure(

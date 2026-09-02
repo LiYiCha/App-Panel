@@ -21,14 +21,12 @@ panel-app/build/
 panel-app/app/build/
 *.apk
 *.aab
-*.apk
 output-metadata.json
 
 # IntelliJ
 # Android Studio & IDE
 .idea/
 *.iml
-.idea/
 misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
@@ -39,7 +37,6 @@ temp
 *.keystore
 panel-app/key/
 keystore.properties
-local.properties
 .DS_Store
 
 # Google Services (e.g. APIs or Firebase)

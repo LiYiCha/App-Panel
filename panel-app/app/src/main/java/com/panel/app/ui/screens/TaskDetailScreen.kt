@@ -23,7 +23,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.panel.app.data.model.TaskInstanceRecord
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.ui.viewmodel.MainViewModel
 
@@ -46,7 +45,7 @@ fun TaskDetailScreen(
     val task = uiState.tasks.find { it.id == taskId }
         ?: UnifiedTask(taskId, "任务详情", "", "", "已就绪")
 
-    var selectedTab by remember { mutableStateOf(0) } // 0: 任务详细信息, 1: 运行日志历史
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: 任务详细信息, 1: 运行日志历史
     var showEditDialog by remember { mutableStateOf(false) }
     var deletingTask by remember { mutableStateOf(false) }
 
@@ -64,7 +63,7 @@ fun TaskDetailScreen(
                         fontSize = 15.sp,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis
                     )
                 },
                 navigationIcon = {
@@ -377,7 +376,7 @@ fun TaskDetailScreen(
                                                     fontSize = 10.sp,
                                                     fontFamily = FontFamily.Monospace,
                                                     maxLines = 1,
-                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                             }
                                         }
@@ -477,7 +476,7 @@ fun TaskDetailScreen(
                                                 fontSize = 9.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                                 maxLines = 1,
-                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
                                     }

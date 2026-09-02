@@ -1,7 +1,5 @@
 package com.panel.app.ui.screens
 
-import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
@@ -14,13 +12,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,35 +41,24 @@ fun ServerLogsScreen(
     onBack: () -> Unit,
     onOpenLogViewer: (String, String) -> Unit = { _, _ -> }
 ) {
-    val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-
     var logTree by remember { mutableStateOf<com.google.gson.JsonElement?>(null) }
-    var activeLogPath by remember { mutableStateOf<String?>(null) }
-    var activeLogContent by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(true) }
-    var isReadingFile by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     val reloadTree = {
         isLoading = true
-        viewModel.loadServerLogsTree { elem ->
+        errorMessage = null
+        viewModel.loadServerLogsTree { elem, error ->
             logTree = elem
+            errorMessage = error
             isLoading = false
         }
     }
 
     LaunchedEffect(Unit) {
         reloadTree()
-    }
-
-    BackHandler {
-        if (activeLogPath != null) {
-            activeLogPath = null
-        } else {
-            onBack()
-        }
     }
 
     // 将服务端的目录树按脚本/任务名称深度归类分组
@@ -159,99 +144,48 @@ fun ServerLogsScreen(
                 title = {
                     Column {
                         Text(
-                            text = if (activeLogPath != null) activeLogPath!! else "服务端日志 (按脚本归类)",
+                            text = "服务端日志 (按脚本归类)",
                             fontSize = 16.sp,
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
-                        if (activeLogPath == null) {
-                            Text(
-                                text = "共 ${categorizedGroups.size} 个脚本模块 · $totalLogsCount 份日志记录",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "共 ${categorizedGroups.size} 个脚本模块 · $totalLogsCount 份日志记录",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (activeLogPath != null) {
-                            activeLogPath = null
-                        } else {
-                            onBack()
-                        }
-                    }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    if (activeLogPath != null) {
-                        IconButton(onClick = {
-                            clipboardManager.setText(AnnotatedString(activeLogContent))
-                            Toast.makeText(context, "日志内容已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "复制日志")
-                        }
-                    } else {
-                        IconButton(onClick = {
-                            reloadTree()
-                            Toast.makeText(context, "正在刷新服务端日志列表...", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                        }
+                    IconButton(onClick = { reloadTree() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
                     }
                 }
             )
         }
     ) { innerPadding ->
-        Box(
+        PullToRefreshBox(
+            isRefreshing = isLoading,
+            onRefresh = { reloadTree() },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            if (isLoading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                }
-            } else if (activeLogPath != null) {
-                // 日志内容阅读器界面
-                if (isReadingFile) {
+            when {
+                // 首次加载：尚未拿到任何数据才显示全屏加载，刷新时交给顶部指示器
+                isLoading && logTree == null && errorMessage == null -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                    }
-                } else {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        val lines = remember(activeLogContent) { activeLogContent.lines() }
-                        if (lines.isEmpty() || activeLogContent.isBlank()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("该日志文件内容为空", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                items(lines) { line ->
-                                    Text(
-                                        text = line,
-                                        fontSize = 11.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
                     }
                 }
-            } else {
+                else -> {
                 // 脚本归类分组主界面
                 Column(
                     modifier = Modifier.fillMaxSize(),
@@ -295,16 +229,50 @@ fun ServerLogsScreen(
                     }
 
                     // 2. 按脚本分组展示列表
-                    if (filteredGroups.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    if (searchQuery.isNotBlank()) "未搜索到匹配的脚本日志" else "暂无服务端日志文件",
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                    if (errorMessage != null) {
+                        // 加载失败时明确告知原因，而不是停留在加载态让人误以为没有日志
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            item {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(40.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("日志列表加载失败", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = errorMessage!!,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    OutlinedButton(onClick = { reloadTree() }) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("重试", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (filteredGroups.isEmpty()) {
+                        // PullToRefreshBox 完全依赖 nested scroll 手势，空态必须是可滚动容器，否则下拉无响应
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(top = 40.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            item {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = if (isLoading) "正在刷新服务端日志..." else if (searchQuery.isNotBlank()) "未搜索到匹配的脚本日志" else "暂无服务端日志文件",
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -473,6 +441,7 @@ fun ServerLogsScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }

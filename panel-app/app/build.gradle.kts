@@ -78,7 +78,7 @@ android {
 
     applicationVariants.all {
         if (name == "release") {
-            outputs.map { output ->
+            outputs.forEach { output ->
                 (output as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
                     "Panel-App-v${versionName}.apk"
             }

@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.*
@@ -14,6 +15,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.panel.app.data.model.PanelType
 import com.panel.app.ui.screens.*
 import com.panel.app.ui.theme.PanelAppTheme
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -26,6 +28,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             val uiState by viewModel.uiState.collectAsState()
 
@@ -119,6 +122,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenExecutionHistoryScreen = {
                                     navController.navigate("execution_history")
+                                },
+                                onOpenSystemSettingsScreen = {
+                                    navController.navigate("system_settings")
                                 },
                                 onNavigateToCreateScript = {
                                     navController.navigate("create_script")
@@ -294,6 +300,16 @@ class MainActivity : ComponentActivity() {
                         composable("standalone_deps") {
                             StandaloneDepsScreen(
                                 viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("system_settings") {
+                            val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
+                            SystemSettingsScreen(
+                                viewModel = viewModel,
+                                panelType = currentPanel?.type ?: PanelType.BAIHU,
+                                dashboard = viewModel.getCachedDashboard(),
                                 onBack = { navController.popBackStack() }
                             )
                         }

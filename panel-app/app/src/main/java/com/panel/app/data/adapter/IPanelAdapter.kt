@@ -62,7 +62,7 @@ interface IPanelAdapter {
         return Result.success(RestoreReport("任务", tasks.size, ok, skipped, errors))
     }
 
-    /** 恢复环境变量列表，返回逐项报告 */
+    /** 恢复环境变量列表，返回逐项报告。重复项自动跳过 */
     suspend fun restoreEnvs(envs: List<BackupEnv>): Result<RestoreReport> {
         val errors = mutableListOf<String>()
         var ok = 0
@@ -72,14 +72,23 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            saveEnv(UnifiedEnv(id = "", name = e.name, value = e.value, remarks = e.remarks, enabled = e.enabled))
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${e.name}: ${it.message}") }
+            val res = saveEnv(UnifiedEnv(id = "", name = e.name, value = e.value, remarks = e.remarks, enabled = e.enabled))
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${e.name}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("环境变量", envs.size, ok, skipped, errors))
     }
 
-    /** 恢复脚本列表（逐条创建），返回逐项报告 */
+    /** 恢复脚本列表（逐条创建），返回逐项报告。重复项自动跳过 */
     suspend fun restoreScripts(scripts: List<BackupScript>): Result<RestoreReport> {
         val errors = mutableListOf<String>()
         var ok = 0
@@ -89,9 +98,18 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            createScript(s.path, s.content)
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${s.path}: ${it.message}") }
+            val res = createScript(s.path, s.content)
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${s.path}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("脚本", scripts.size, ok, skipped, errors))
     }
@@ -99,6 +117,7 @@ interface IPanelAdapter {
     /**
      * 恢复配置文件。配置文件结构因面板而异，
      * 只有来源面板与目标面板类型一致时才允许恢复，否则整类跳过。
+     * 重复项自动跳过。
      */
     suspend fun restoreConfigFiles(
         files: List<BackupConfigFile>,
@@ -118,9 +137,18 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            saveConfig(f.path, f.content)
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${f.path}: ${it.message}") }
+            val res = saveConfig(f.path, f.content)
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${f.path}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("配置文件", files.size, ok, skipped, errors))
     }

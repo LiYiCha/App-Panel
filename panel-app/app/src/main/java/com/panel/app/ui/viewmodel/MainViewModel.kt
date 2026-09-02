@@ -2,6 +2,7 @@ package com.panel.app.ui.viewmodel
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.panel.app.data.adapter.BaihuPanelAdapter
@@ -71,22 +72,26 @@ class MainViewModel @Inject constructor(
     private val prefs: SharedPreferences = context.getSharedPreferences("panel_hub_prefs", Context.MODE_PRIVATE)
     private val gson = com.google.gson.Gson()
 
+    // 标记是否已发起过网络请求获取数据
+    private var hasNetworkDataLoaded = false
+
     private fun loadDiskCache(panelId: String) {
         try {
-            val file = java.io.File(context.cacheDir, "panel_cache_${panelId.hashCode()}.json")
+            val file = java.io.File(context.cacheDir, "panel_cache_${panelId}.json")
             if (file.exists()) {
                 val json = file.readText()
                 val data = gson.fromJson(json, CachedPanelData::class.java)
-                if (data != null && getActivePanel().id == panelId) {
+                // 只有从未加载过网络数据时，才使用缓存作为初始数据
+                if (data != null && getActivePanel().id == panelId && !hasNetworkDataLoaded) {
                     _uiState.value = _uiState.value.copy(
-                        tasks = if (data.tasks.isNotEmpty() && _uiState.value.tasks.isEmpty()) data.tasks else _uiState.value.tasks,
-                        envs = if (data.envs.isNotEmpty() && _uiState.value.envs.isEmpty()) data.envs else _uiState.value.envs,
-                        subscriptions = if (data.subscriptions.isNotEmpty() && _uiState.value.subscriptions.isEmpty()) data.subscriptions else _uiState.value.subscriptions,
-                        deps = if (data.deps.isNotEmpty() && _uiState.value.deps.isEmpty()) data.deps else _uiState.value.deps,
-                        scriptTree = if (data.scriptTree.isNotEmpty() && _uiState.value.scriptTree.isEmpty()) data.scriptTree else _uiState.value.scriptTree,
-                        configFiles = if (data.configFiles.isNotEmpty() && _uiState.value.configFiles.isEmpty()) data.configFiles else _uiState.value.configFiles,
-                        selectedConfigFile = if (data.selectedConfigFile.isNotEmpty()) data.selectedConfigFile else _uiState.value.selectedConfigFile,
-                        configContent = if (data.configContent.isNotEmpty() && _uiState.value.configContent.isEmpty()) data.configContent else _uiState.value.configContent
+                        tasks = data.tasks,
+                        envs = data.envs,
+                        subscriptions = data.subscriptions,
+                        deps = data.deps,
+                        scriptTree = data.scriptTree,
+                        configFiles = data.configFiles,
+                        selectedConfigFile = data.selectedConfigFile,
+                        configContent = data.configContent
                     )
                 }
             }
@@ -105,7 +110,7 @@ class MainViewModel @Inject constructor(
         configContent: String
     ) {
         try {
-            val file = java.io.File(context.cacheDir, "panel_cache_${panelId.hashCode()}.json")
+            val file = java.io.File(context.cacheDir, "panel_cache_${panelId}.json")
             val data = CachedPanelData(tasks, envs, subs, deps, scriptTree, configFiles, selectedConfigFile, configContent)
             file.writeText(gson.toJson(data))
         } catch (_: Exception) {}
@@ -139,7 +144,6 @@ class MainViewModel @Inject constructor(
 
     private fun initData() {
         viewModelScope.launch {
-            repository.initDefaultPanelsIfEmpty()
             repository.panelsFlow.collect { panelList ->
                 // 彻底清理无账号密码且无 token 的虚假/历史残留面板
                 val validPanels = panelList.filter {
@@ -171,6 +175,7 @@ class MainViewModel @Inject constructor(
                         deps = if (isPanelChanged) emptyList() else _uiState.value.deps,
                         scriptTree = if (isPanelChanged) emptyList() else _uiState.value.scriptTree
                     )
+                    loadDiskCache(activePanel.id)
                     refreshPanelRemoteData(activePanel)
                 } else {
                     _uiState.value = _uiState.value.copy(
@@ -194,7 +199,7 @@ class MainViewModel @Inject constructor(
 
     fun toggleTheme() {
         val newTheme = !_uiState.value.isDarkTheme
-        prefs.edit().putBoolean("is_dark_theme", newTheme).apply()
+        prefs.edit { putBoolean("is_dark_theme", newTheme) }
         _uiState.value = _uiState.value.copy(isDarkTheme = newTheme)
     }
 
@@ -202,7 +207,7 @@ class MainViewModel @Inject constructor(
         val panels = _uiState.value.panels
         if (index in panels.indices) {
             val targetPanel = panels[index]
-            prefs.edit().putString("active_panel_id", targetPanel.id).apply()
+            prefs.edit { putString("active_panel_id", targetPanel.id) }
             _uiState.value = _uiState.value.copy(
                 selectedPanelIndex = index,
                 tasks = emptyList(),
@@ -210,14 +215,17 @@ class MainViewModel @Inject constructor(
                 envs = emptyList(),
                 deps = emptyList(),
                 scriptTree = emptyList(),
-                isLoading = true,
-                toastMessage = "已切换至面板 [${targetPanel.name}]"
+                configFiles = emptyList(),
+                selectedConfigFile = "config.sh",
+                configContent = ""
             )
+            hasNetworkDataLoaded = false
+            loadDiskCache(targetPanel.id)
             refreshPanelRemoteData(targetPanel)
         }
     }
 
-    fun refreshPanelRemoteData(panel: PanelInstance) {
+    fun refreshPanelRemoteData(panel: PanelInstance, notifyOnNoCredential: Boolean = false) {
         viewModelScope.launch {
             // 若面板无凭证，尝试使用已存账号密码静默认证；若无凭据直接停止，避免发空请求被 401 拦截
             var activePanel = panel
@@ -240,7 +248,10 @@ class MainViewModel @Inject constructor(
                     }
                 } else {
                     if (getActivePanel().id == panel.id) {
-                        _uiState.value = _uiState.value.copy(isLoading = false)
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            toastMessage = if (notifyOnNoCredential) "面板未登录，请先在面板管理中登录后再刷新" else _uiState.value.toastMessage
+                        )
                     }
                     return@launch
                 }
@@ -306,29 +317,22 @@ class MainViewModel @Inject constructor(
                 if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
             }
 
-            val finalTasks = if (tasksRes.isSuccess) remoteTasks else _uiState.value.tasks
-            val finalSubs = if (subsRes.isSuccess) remoteSubs else _uiState.value.subscriptions
-            val finalEnvs = if (envsRes.isSuccess) remoteEnvs else _uiState.value.envs
-            val finalDeps = if (depsRes.isSuccess) remoteDeps else _uiState.value.deps
-            val finalScriptTree = if (scriptTreeRes.isSuccess) remoteScriptTree else _uiState.value.scriptTree
+            // 标记已发起过网络请求，下次不再使用缓存
+            hasNetworkDataLoaded = true
 
-            val finalConfigFiles = if (configFilesRes.isSuccess) fileList else _uiState.value.configFiles
-            val finalConfigContent = if (configContentRes.isSuccess) content else _uiState.value.configContent
-
-            if (tasksRes.isSuccess || envsRes.isSuccess || subsRes.isSuccess || depsRes.isSuccess || scriptTreeRes.isSuccess) {
-                saveDiskCache(activePanel.id, finalTasks, finalEnvs, finalSubs, finalDeps, finalScriptTree, finalConfigFiles, defaultFile, finalConfigContent)
-            }
+            // 网络请求成功后，始终保存结果到缓存（包括空数据）
+            saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, defaultFile, content)
 
             _uiState.value = _uiState.value.copy(
                 panels = updatedPanels,
-                tasks = finalTasks,
-                subscriptions = finalSubs,
-                envs = finalEnvs,
-                deps = finalDeps,
-                configFiles = if (configFilesRes.isSuccess) fileList else _uiState.value.configFiles,
+                tasks = remoteTasks,
+                subscriptions = remoteSubs,
+                envs = remoteEnvs,
+                deps = remoteDeps,
+                configFiles = fileList,
                 selectedConfigFile = defaultFile,
-                configContent = if (configContentRes.isSuccess) content else _uiState.value.configContent,
-                scriptTree = finalScriptTree,
+                configContent = content,
+                scriptTree = remoteScriptTree,
                 isLoading = false,
                 toastMessage = errorMsg ?: _uiState.value.toastMessage
             )
@@ -337,7 +341,7 @@ class MainViewModel @Inject constructor(
 
     fun refreshCurrentPanel() {
         val active = getActivePanel()
-        refreshPanelRemoteData(active)
+        refreshPanelRemoteData(active, notifyOnNoCredential = true)
     }
 
     fun authenticateAndSavePanel(
@@ -383,7 +387,7 @@ class MainViewModel @Inject constructor(
             if (authResult.isSuccess) {
                 val validToken = authResult.getOrNull()
                 val savedInstance = candidate.copy(token = validToken ?: candidate.token)
-                prefs.edit().putString("active_panel_id", savedInstance.id).apply()
+                prefs.edit { putString("active_panel_id", savedInstance.id) }
                 repository.savePanel(savedInstance)
                 val currentPanels = repository.panelsFlow.first()
                 val targetIndex = currentPanels.indexOfFirst { it.id == savedInstance.id }.let { if (it >= 0) it else 0 }
@@ -435,7 +439,7 @@ class MainViewModel @Inject constructor(
             if (res.isSuccess) {
                 val saved = panel.copy(token = res.getOrNull())
                 _uiState.value = _uiState.value.copy(otpPendingPanel = null)
-                prefs.edit().putString("active_panel_id", saved.id).apply()
+                prefs.edit { putString("active_panel_id", saved.id) }
                 repository.savePanel(saved)
                 val currentPanels = repository.panelsFlow.first()
                 val targetIndex = currentPanels.indexOfFirst { it.id == saved.id }.let { if (it >= 0) it else 0 }
@@ -457,17 +461,6 @@ class MainViewModel @Inject constructor(
 
     fun cancelOtp() {
         _uiState.value = _uiState.value.copy(otpPendingPanel = null)
-    }
-
-    fun authenticateAndAddPanel(
-        name: String,
-        type: PanelType,
-        baseUrl: String,
-        username: String,
-        password: String,
-        onResult: (Boolean, String) -> Unit
-    ) {
-        authenticateAndSavePanel(null, name, type, baseUrl, username, password, onResult)
     }
 
     // ==================== 1. 任务管理 ====================
@@ -711,14 +704,6 @@ class MainViewModel @Inject constructor(
     }
 
     // ==================== 3. 配置文件 ====================
-    fun switchConfigFile(path: String) {
-        viewModelScope.launch {
-            val res = repository.getAdapter(getActivePanel()).readConfig(path)
-            val content = res.getOrNull() ?: ""
-            _uiState.value = _uiState.value.copy(selectedConfigFile = path, configContent = content)
-        }
-    }
-
     fun readConfigFile(path: String, onLoaded: (String) -> Unit = {}) {
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).readConfig(path)
@@ -917,7 +902,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun toggleDevMode(enabled: Boolean) {
-        prefs.edit().putBoolean("is_dev_mode", enabled).apply()
+        prefs.edit { putBoolean("is_dev_mode", enabled) }
         com.panel.app.data.logger.AppLogger.isDevModeEnabled = enabled
         _uiState.value = _uiState.value.copy(isDevMode = enabled, toastMessage = if (enabled) "开发者模式已开启" else "开发者模式已关闭")
     }
@@ -929,10 +914,11 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun loadServerLogsTree(onLoaded: (com.google.gson.JsonElement) -> Unit) {
+    /** 无论成败都回调：失败时 elem 为 null 且携带错误原因，避免调用方永久停留在加载态 */
+    fun loadServerLogsTree(onResult: (com.google.gson.JsonElement?, String?) -> Unit) {
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).getLogsTree()
-            res.getOrNull()?.let { onLoaded(it) }
+            onResult(res.getOrNull(), res.exceptionOrNull()?.message)
         }
     }
 
@@ -1005,17 +991,32 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    /** 从备份 JSON 恢复勾选内容，返回逐类报告 */
-    fun restoreBackup(json: String, onResult: (List<RestoreReport>, String?) -> Unit) {
-        viewModelScope.launch {
-            val backup = parseBackupJson(json)
-            if (backup == null) {
-                onResult(emptyList(), "备份文件格式无法解析，请确认选择的是本 App 导出的备份文件")
-                return@launch
-            }
+    /** 解析备份 JSON 并返回预览数据（不执行恢复） */
+    fun previewRestore(json: String): PreviewRestoreData? {
+        return parseBackupJson(json)?.let { backup ->
+            PreviewRestoreData(
+                sourcePanelType = backup.sourcePanelType,
+                sourcePanelName = backup.sourcePanelName,
+                tasks = backup.tasks,
+                envs = backup.envs,
+                scripts = backup.scripts,
+                configFiles = backup.configFiles
+            )
+        }
+    }
 
+    /** 从备份数据选择性恢复，返回逐类报告 */
+    fun restorePreview(
+        data: PreviewRestoreData,
+        selectedTasks: List<BackupTask> = data.tasks,
+        selectedEnvs: List<BackupEnv> = data.envs,
+        selectedScripts: List<BackupScript> = data.scripts,
+        selectedConfigs: List<BackupConfigFile> = data.configFiles,
+        onResult: (List<RestoreReport>, String?) -> Unit
+    ) {
+        viewModelScope.launch {
             val adapter = repository.getAdapter(getActivePanel())
-            val sourceType = backup.sourcePanelType?.let { raw ->
+            val sourceType = data.sourcePanelType?.let { raw ->
                 runCatching {
                     when (raw.uppercase()) {
                         "QINGLONG" -> PanelType.QINGLONG_V15 // 兼容旧备份
@@ -1026,20 +1027,20 @@ class MainViewModel @Inject constructor(
             } ?: getActivePanel().type
 
             val reports = mutableListOf<RestoreReport>()
-            if (backup.tasks.isNotEmpty()) {
-                adapter.restoreTasks(backup.tasks).getOrNull()?.let { reports.add(it) }
+            if (selectedTasks.isNotEmpty()) {
+                adapter.restoreTasks(selectedTasks).getOrNull()?.let { reports.add(it) }
             }
-            if (backup.envs.isNotEmpty()) {
-                adapter.restoreEnvs(backup.envs).getOrNull()?.let { reports.add(it) }
+            if (selectedEnvs.isNotEmpty()) {
+                adapter.restoreEnvs(selectedEnvs).getOrNull()?.let { reports.add(it) }
             }
-            if (backup.scripts.isNotEmpty()) {
-                adapter.restoreScripts(backup.scripts).getOrNull()?.let { reports.add(it) }
+            if (selectedScripts.isNotEmpty()) {
+                adapter.restoreScripts(selectedScripts).getOrNull()?.let { reports.add(it) }
             }
-            if (backup.configFiles.isNotEmpty()) {
-                adapter.restoreConfigFiles(backup.configFiles, sourceType).getOrNull()?.let { reports.add(it) }
+            if (selectedConfigs.isNotEmpty()) {
+                adapter.restoreConfigFiles(selectedConfigs, sourceType).getOrNull()?.let { reports.add(it) }
             }
             if (reports.isEmpty()) {
-                onResult(emptyList(), "备份文件里没有可恢复的内容")
+                onResult(emptyList(), "没有选中的内容")
                 return@launch
             }
             refreshPanelRemoteData(getActivePanel())
@@ -1117,8 +1118,7 @@ class MainViewModel @Inject constructor(
     /** 非青龙面板返回 null，UI 据此隐藏设置卡片 */
     fun loadQinglongSystemSettings(onResult: (Map<String, String>?) -> Unit) {
         viewModelScope.launch {
-            val adapter = repository.getAdapter(getActivePanel())
-            val res = when (adapter) {
+            val res = when (val adapter = repository.getAdapter(getActivePanel())) {
                 is QinglongV15Adapter -> adapter.fetchSystemSettings().getOrNull()
                 is QinglongV10Adapter -> adapter.fetchSystemSettings().getOrNull()
                 else -> null
@@ -1129,8 +1129,7 @@ class MainViewModel @Inject constructor(
 
     fun saveLogRemoveFrequency(days: Int?) {
         viewModelScope.launch {
-            val adapter = repository.getAdapter(getActivePanel())
-            val res = when (adapter) {
+            val res = when (val adapter = repository.getAdapter(getActivePanel())) {
                 is QinglongV15Adapter -> adapter.saveLogRemoveFrequency(days)
                 is QinglongV10Adapter -> adapter.saveLogRemoveFrequency(days)
                 else -> return@launch
@@ -1143,8 +1142,7 @@ class MainViewModel @Inject constructor(
 
     fun saveCronConcurrency(count: Int?) {
         viewModelScope.launch {
-            val adapter = repository.getAdapter(getActivePanel())
-            val res = when (adapter) {
+            val res = when (val adapter = repository.getAdapter(getActivePanel())) {
                 is QinglongV15Adapter -> adapter.saveCronConcurrency(count)
                 is QinglongV10Adapter -> adapter.saveCronConcurrency(count)
                 else -> return@launch
@@ -1157,8 +1155,7 @@ class MainViewModel @Inject constructor(
 
     fun sendTestNotify(title: String, content: String) {
         viewModelScope.launch {
-            val adapter = repository.getAdapter(getActivePanel())
-            val res = when (adapter) {
+            val res = when (val adapter = repository.getAdapter(getActivePanel())) {
                 is QinglongV15Adapter -> adapter.sendTestNotify(title, content)
                 is QinglongV10Adapter -> adapter.sendTestNotify(title, content)
                 else -> return@launch
@@ -1290,14 +1287,6 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(toastMessage = "删除失败: ${res.exceptionOrNull()?.message}")
             }
             refreshPanelRemoteData(getActivePanel())
-        }
-    }
-
-    fun updatePanelInstance(panel: PanelInstance) {
-        viewModelScope.launch {
-            repository.savePanel(panel)
-            _uiState.value = _uiState.value.copy(toastMessage = "面板 [${panel.name}] 配置已更新！")
-            refreshPanelRemoteData(panel)
         }
     }
 

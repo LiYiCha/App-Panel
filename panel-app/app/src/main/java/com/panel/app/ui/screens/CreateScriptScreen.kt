@@ -5,7 +5,6 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -218,7 +217,7 @@ console.log("Hello from Panel Hub!");
                             SuggestionChip(
                                 onClick = {
                                     val base = if (filename.contains('.')) filename.substringBeforeLast('.') else filename
-                                    filename = (if (base.isBlank()) "script" else base) + ext
+                                    filename = (base.ifBlank { "script" }) + ext
                                 },
                                 label = { Text(ext, fontSize = 10.sp) }
                             )
@@ -238,7 +237,7 @@ console.log("Hello from Panel Hub!");
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDirDropdownExpanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = isDirDropdownExpanded,

@@ -2,7 +2,6 @@ package com.panel.app.util
 
 import com.panel.app.BuildConfig
 import com.panel.app.data.remote.NetworkClient
-import com.panel.app.data.remote.api.GitHubRelease
 import com.panel.app.data.remote.api.GitHubReleaseApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

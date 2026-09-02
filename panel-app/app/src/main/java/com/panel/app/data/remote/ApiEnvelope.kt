@@ -83,12 +83,9 @@ fun <E : ApiEnvelope> Response<E>.unwrap(fallbackMessage: String): Result<E> {
         )
     }
 
-    val body = body()
+    val body = body() ?: return Result.failure(ApiError(httpCode, "$fallbackMessage: 响应为空"))
 
     // 2. HTTP 成功但空响应体
-    if (body == null) {
-        return Result.failure(ApiError(httpCode, "$fallbackMessage: 响应为空"))
-    }
 
     // 3. 业务层失败：HTTP 200 但 code != 200（白虎全部错误、青龙大部分错误走这里）
     val bizCode = body.code ?: CODE_OK

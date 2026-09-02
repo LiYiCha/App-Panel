@@ -35,7 +35,7 @@ fun StandaloneScriptEditorScreen(
     }
 
     var searchQuery by remember { mutableStateOf("") }
-    var fontSizeSp by remember { mutableStateOf(12) }
+    var fontSizeSp by remember { mutableIntStateOf(12) }
     var showSearchBar by remember { mutableStateOf(false) }
 
     // 动态脚本真实源码：使用 remember(initialContent) 与 LaunchedEffect 确保真实文件源码加载后立刻呈现

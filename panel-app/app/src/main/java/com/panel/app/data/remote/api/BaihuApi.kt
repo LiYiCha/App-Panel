@@ -106,22 +106,22 @@ data class BaihuCreateTaskReq(
     val name: String,
     val remark: String? = null,
     val command: String? = null,
-    val pre_command: String? = null,
-    val post_command: String? = null,
+    val preCommand: String? = null,
+    val postCommand: String? = null,
     val tags: String? = null,
     val type: String = "task",
     val config: String? = null,
     val schedule: String,
     val timeout: Int = 30,
-    val work_dir: String? = null,
+    val workDir: String? = null,
     val envs: String? = null,
     val languages: com.google.gson.JsonElement? = null,
-    val agent_id: String? = null,
-    val trigger_type: String? = null,
-    val retry_count: Int? = null,
-    val retry_interval: Int? = null,
-    val random_range: Int? = null,
-    val pin_type: String? = null
+    val agentId: String? = null,
+    val triggerType: String? = null,
+    val retryCount: Int? = null,
+    val retryInterval: Int? = null,
+    val randomRange: Int? = null,
+    val pinType: String? = null
 )
 
 /** 字段对齐 `vo.TaskUpdateReq` */
@@ -205,7 +205,7 @@ data class BaihuCreateDepReq(
     val name: String,
     val version: String? = null,
     val language: String,
-    val lang_version: String? = null,
+    val langVersion: String? = null,
     val remark: String? = null
 )
 
@@ -583,7 +583,7 @@ interface BaihuApi {
 
     // ---------------- 7. 脚本管理 ----------------
     @GET("api/v1/scripts")
-    suspend fun getScripts(): Response<com.panel.app.data.remote.api.BaihuScriptsResp>
+    suspend fun getScripts(): Response<BaihuScriptsResp>
 
     @POST("api/v1/scripts")
     suspend fun createScript(@Body req: BaihuScriptReq): Response<BaihuCommonResp>
@@ -606,7 +606,7 @@ interface BaihuApi {
     ): Response<BaihuLoginLogsResp>
 }
 
-data class BaihuClearLogsReq(val task_id: String? = null)
+data class BaihuClearLogsReq(val taskId: String? = null)
 
 data class BaihuScriptItem(
     val id: String,

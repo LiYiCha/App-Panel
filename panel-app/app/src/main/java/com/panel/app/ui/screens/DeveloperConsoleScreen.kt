@@ -25,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.logger.AppLogger
 import com.panel.app.data.logger.LogLevel
-import com.panel.app.data.logger.LogEntry
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)

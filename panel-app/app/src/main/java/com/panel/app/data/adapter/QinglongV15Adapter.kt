@@ -498,6 +498,13 @@ class QinglongV15Adapter(
                 QlCreateCronReq(name = t.name, command = t.command, schedule = t.schedule, labels = t.labels)
             ).unwrap("创建任务失败")
             if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                // 任务已存在时跳过，而不是报错
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
                 errors.add("${t.name}: ${res.exceptionOrNull()?.message}")
                 continue
             }
@@ -521,7 +528,7 @@ class QinglongV15Adapter(
         return Result.success(RestoreReport("任务", tasks.size, ok, skipped, errors))
     }
 
-    /** 高保真恢复环境变量：一次 POST 数组，第二轮批量恢复禁用状态 */
+    /** 高保真恢复环境变量：一次 POST 数组，第二轮批量恢复禁用状态。重复变量自动跳过 */
     override suspend fun restoreEnvs(envs: List<BackupEnv>): Result<RestoreReport> {
         ensureAuth()
         val valid = envs.filter { it.name.isNotBlank() }
@@ -540,7 +547,40 @@ class QinglongV15Adapter(
 
         val created = api.createEnvs(getAuthHeader(), valid.map { QlCreateEnvReq(it.name, it.value, it.remarks) })
             .unwrap("导入环境变量失败")
-        if (created.isFailure) return Result.failure(created.exceptionOrNull() ?: Exception("导入失败"))
+        if (created.isFailure) {
+            val errMsg = created.exceptionOrNull()?.message ?: ""
+            // 部分变量已存在时，改用逐条创建模式
+            if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                var ok = 0
+                var dupSkipped = 0
+                val errors = mutableListOf<String>()
+                for (e in valid) {
+                    val res = api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(e.name, e.value, e.remarks)))
+                        .unwrap("导入环境变量失败")
+                    if (res.isSuccess) {
+                        ok++
+                    } else {
+                        val eMsg = res.exceptionOrNull()?.message ?: ""
+                        if ("已存在".contains(eMsg) || "exist".equals(eMsg, ignoreCase = true) ||
+                            "duplicate".equals(eMsg, ignoreCase = true) || eMsg.contains("重复")) {
+                            dupSkipped++
+                        } else {
+                            errors.add("${e.name}: ${res.exceptionOrNull()?.message}")
+                        }
+                    }
+                }
+                // 恢复禁用状态
+                val wantDisabled = valid.filter { !it.enabled }.map { it.name }
+                if (wantDisabled.isNotEmpty()) {
+                    val current = api.getEnvs(getAuthHeader()).unwrap("回查变量列表失败").getOrNull()?.data.orEmpty()
+                    val ids = current.filter { wantDisabled.contains(it.name) }.mapNotNull { cleanId(it.id).toLongOrNull() }
+                    if (ids.isNotEmpty()) api.disableEnvs(getAuthHeader(), ids).unwrap("恢复禁用状态失败")
+                }
+                return Result.success(RestoreReport("环境变量", envs.size, ok, skipped + dupSkipped, errors))
+            }
+            return Result.failure(created.exceptionOrNull() ?: Exception("导入失败"))
+        }
 
         val wantDisabled = valid.filter { !it.enabled }.map { it.name }
         if (wantDisabled.isNotEmpty()) {
@@ -867,26 +907,23 @@ class QinglongV15Adapter(
             .unwrapTo("获取运行中任务失败") { env ->
                 val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
                 val running = obj?.getAsJsonArray("running")
-                if (running == null) {
-                    emptyList()
-                } else {
-                    running.mapNotNull { elem ->
-                        if (!elem.isJsonObject) return@mapNotNull null
-                        val item = elem.asJsonObject
-                        val taskId = item.get("id")?.asString
-                            ?: item.get("id")?.asLong?.toString()
-                            ?: return@mapNotNull null
-                        RunningTaskInfo(
-                            taskId = taskId,
-                            name = item.get("name")?.asString ?: "任务 #$taskId",
-                            instanceId = item.get("instanceId")?.asString
-                                ?: item.get("instanceId")?.asLong?.toString(),
-                            pid = item.get("pid")?.asInt,
-                            elapsedSeconds = item.get("elapsed")?.asLong,
-                            logPath = item.get("logPath")?.asString
-                        )
-                    }
+                running?.mapNotNull { elem ->
+                    if (!elem.isJsonObject) return@mapNotNull null
+                    val item = elem.asJsonObject
+                    val taskId = item.get("id")?.asString
+                        ?: item.get("id")?.asLong?.toString()
+                        ?: return@mapNotNull null
+                    RunningTaskInfo(
+                        taskId = taskId,
+                        name = item.get("name")?.asString ?: "任务 #$taskId",
+                        instanceId = item.get("instanceId")?.asString
+                            ?: item.get("instanceId")?.asLong?.toString(),
+                        pid = item.get("pid")?.asInt,
+                        elapsedSeconds = item.get("elapsed")?.asLong,
+                        logPath = item.get("logPath")?.asString
+                    )
                 }
+                    ?: emptyList()
             }
     }
 
@@ -971,11 +1008,11 @@ class QinglongV15Adapter(
                     }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
                 }
 
-                var overview = overviewDef.await()
+                val overview = overviewDef.await()
                 val trend = trendDef.await()
-                var topCount = topCountDef.await()
+                val topCount = topCountDef.await()
                 val topTime = topTimeDef.await()
-                var labels = labelsDef.await()
+                val labels = labelsDef.await()
                 var system = systemDef.await()
 
             // 官方标准青龙回退：若 /api/dashboard/* 404（非标版本特性），自动通过 /api/system 与任务列表聚合真实数据
@@ -1222,7 +1259,7 @@ class QinglongV15Adapter(
     private fun formatBytes(bytes: Long?): String? {
         if (bytes == null || bytes <= 0) return null
         return when {
-            bytes < 1024 -> "${bytes} B"
+            bytes < 1024 -> "$bytes B"
             bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
             else -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
         }

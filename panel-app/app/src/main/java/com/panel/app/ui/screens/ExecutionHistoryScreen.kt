@@ -1,6 +1,5 @@
 package com.panel.app.ui.screens
 
-import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
@@ -18,9 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,13 +33,9 @@ fun ExecutionHistoryScreen(
     onBack: () -> Unit,
     onOpenLogViewer: (String, String) -> Unit
 ) {
-    val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val uiState by viewModel.uiState.collectAsState()
-
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatus by remember { mutableStateOf("all") }
-    var viewMode by remember { mutableStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
+    var viewMode by remember { mutableIntStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
     var isLoading by remember { mutableStateOf(false) }
     var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(emptyList()) }
     val expandedScripts = remember { mutableStateMapOf<String, Boolean>() }
@@ -285,16 +277,18 @@ fun ExecutionHistoryScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (filteredList.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = 60.dp),
-                            contentAlignment = Alignment.Center
+                        // PullToRefreshBox 完全依赖 nested scroll 手势，空态必须是可滚动容器，否则下拉无响应
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(top = 60.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text(if (isLoading) "正在同步执行历史记录..." else "暂无匹配的执行历史记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            item {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(if (isLoading) "正在同步执行历史记录..." else "暂无匹配的执行历史记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     } else if (viewMode == 0) {
@@ -518,7 +512,7 @@ fun ExecutionHistoryScreen(
                                             }
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                                 Icon(Icons.Default.HourglassEmpty, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text(text = if (record.duration.isNotBlank()) record.duration else "完成", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(text = record.duration.ifBlank { "--" }, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }

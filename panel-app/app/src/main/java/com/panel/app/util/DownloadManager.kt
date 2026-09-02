@@ -1,9 +1,11 @@
 package com.panel.app.util
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -26,8 +28,14 @@ import kotlin.math.min
  */
 object DownloadManager {
 
-    private const val GITHUB_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private val GITHUB_UA: String by lazy {
+        val osVersion = android.os.Build.VERSION.RELEASE
+        val model = android.os.Build.MODEL
+        "Mozilla/5.0 (Linux; Android $osVersion; $model) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
+    }
+
     private const val CHUNK_SIZE = 64 * 1024          // 64 KB
     internal const val MAX_RETRIES = 3
     private const val RETRY_BASE_DELAY_MS = 1_000L
@@ -49,16 +57,10 @@ object DownloadManager {
         val retries: Int = 0,
         val status: Status = Status.IDLE,
     ) {
-        enum class Status { IDLE, DOWNLOADING, FAILED, DONE, CANCELLED }
+        enum class Status { IDLE, DOWNLOADING, DONE }
     }
 
     // ── 公开 API ────────────────────────────────────────────────────────────
-
-    /** 查询某 URL 的当前下载状态 */
-    fun getState(url: String): State? = _states[url]
-
-    /** 获取所有活跃下载 */
-    fun getActive(): List<State> = _states.values.filter { it.status == State.Status.DOWNLOADING }.toList()
 
     /** 取消指定下载并清理临时文件 */
     fun cancel(url: String) {
@@ -88,7 +90,7 @@ object DownloadManager {
         val initialState = State(url, outputFile, downloaded = resumedOffset)
         _states[url] = initialState
 
-        GlobalScope.launch(Dispatchers.IO) {
+        scope.launch {
             doDownload(url, initialState, onProgress, onSuccess, onFailure, onRetry)
         }
     }
@@ -112,8 +114,7 @@ object DownloadManager {
             ).show()
         }
         // 安装后延迟清理
-        val ctx = object : android.content.ContextWrapper(context.applicationContext) {}
-        GlobalScope.launch(Dispatchers.IO) {
+        scope.launch {
             delay(CLEANUP_DELAY_MS)
             apkFile.delete()
         }
@@ -155,9 +156,11 @@ object DownloadManager {
                     lastBytes = 0L
                     file.parentFile?.mkdirs()
                     if (file.exists()) file.delete()
-                    if (!file.createNewFile()) throw IllegalStateException("无法创建下载文件")
+                    if (!withContext(Dispatchers.IO) {
+                            file.createNewFile()
+                        }) throw IllegalStateException("无法创建下载文件")
                     totalBytes = response.body?.contentLength() ?: -1L
-                    streamChunks(response.body!!, file, 0L) { chunk, bytesRead ->
+                    streamChunks(response.body!!, file, 0L) { _, bytesRead ->
                         downloaded += bytesRead
                         val now = System.currentTimeMillis()
                         val dt = max((now - lastTs) / 1000.0, 0.001)

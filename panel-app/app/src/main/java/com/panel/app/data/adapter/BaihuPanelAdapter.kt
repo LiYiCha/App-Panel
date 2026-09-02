@@ -882,6 +882,13 @@ class BaihuPanelAdapter(
                 )
             ).unwrap("创建任务失败")
             if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                // 任务已存在时跳过，而不是报错
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
                 errors.add("${t.name}: ${res.exceptionOrNull()?.message}")
                 continue
             }
@@ -908,7 +915,7 @@ class BaihuPanelAdapter(
         return Result.success(RestoreReport("任务", tasks.size, ok, skipped, errors))
     }
 
-    /** 白虎的 bulk_save 直接支持 enabled，一次请求即可完成高保真恢复 */
+    /** 白虎的 bulk_save 直接支持 enabled，一次请求即可完成高保真恢复。重复变量自动跳过 */
     override suspend fun restoreEnvs(envs: List<BackupEnv>): Result<RestoreReport> {
         ensureAuth()
         val valid = envs.filter { it.name.isNotBlank() }
@@ -924,11 +931,34 @@ class BaihuPanelAdapter(
                 )
             }
         ).unwrap("导入环境变量失败")
-        return if (res.isSuccess) {
-            Result.success(RestoreReport("环境变量", envs.size, valid.size, skipped, emptyList()))
-        } else {
-            Result.failure(res.exceptionOrNull() ?: Exception("导入失败"))
+        if (res.isSuccess) {
+            return Result.success(RestoreReport("环境变量", envs.size, valid.size, skipped, emptyList()))
         }
+        val errMsg = res.exceptionOrNull()?.message ?: ""
+        // 部分变量已存在时，降级为逐条创建
+        if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+            "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+            var ok = 0
+            var dupSkipped = 0
+            val errors = mutableListOf<String>()
+            for (e in valid) {
+                val singleRes = api.bulkSaveEnvs(listOf(BaihuBulkEnvReq(name = e.name, value = e.value, remark = e.remarks, enabled = e.enabled)))
+                    .unwrap("导入环境变量失败")
+                if (singleRes.isSuccess) {
+                    ok++
+                } else {
+                    val eMsg = singleRes.exceptionOrNull()?.message ?: ""
+                    if ("已存在".contains(eMsg) || "exist".equals(eMsg, ignoreCase = true) ||
+                        "duplicate".equals(eMsg, ignoreCase = true) || eMsg.contains("重复")) {
+                        dupSkipped++
+                    } else {
+                        errors.add("${e.name}: ${singleRes.exceptionOrNull()?.message}")
+                    }
+                }
+            }
+            return Result.success(RestoreReport("环境变量", envs.size, ok, skipped + dupSkipped, errors))
+        }
+        return Result.failure(res.exceptionOrNull() ?: Exception("导入失败"))
     }
 
     override suspend fun getDepLog(depId: String): Result<String> {
