@@ -9,6 +9,24 @@ import java.util.regex.Pattern
 
 object UniversalEnvParser {
 
+    // 自定义解析规则列表（可通过网络加载）
+    private val customRules = mutableListOf<Rule>()
+
+    data class Rule(
+        val keyRegex: String = ".*",
+        val splitChar: String = ";"
+    )
+
+    /** 从网络加载自定义解析规则，追加到内置规则之前 */
+    fun loadCustomRules(rules: List<Rule>) {
+        synchronized(customRules) {
+            customRules.addAll(0, rules)
+        }
+    }
+
+    /** 获取当前所有规则（内置+自定义） */
+    fun getAllRules(): List<Rule> = synchronized(customRules) { customRules.toList() }
+
     /**
      * 还原 HTML 转义实体 (如 &#38;, &amp;, &#34;, &#61;) 与 URL Percent 编码
      */
@@ -49,9 +67,9 @@ object UniversalEnvParser {
                     element.asJsonArray.forEach { item ->
                         if (item.isJsonObject) {
                             val obj = item.asJsonObject
-                            val name = obj.get("name")?.asString ?: ""
-                            val value = obj.get("value")?.asString ?: ""
-                            val remarks = obj.get("remarks")?.asString ?: "JSON导入"
+                            val name = obj.get("name")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val value = obj.get("value")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val remarks = obj.get("remarks")?.takeIf { !it.isJsonNull }?.asString ?: "JSON导入"
                             if (name.isNotEmpty()) {
                                 result.add(
                                     UnifiedEnv(
@@ -70,31 +88,32 @@ object UniversalEnvParser {
             } catch (_: Exception) {}
         }
 
-        // 1.5 支持 URL Query / & 连接的多键值对格式 (如 app=mdwz&dataEncStr=ODhDMTk2Mjk3ODYxNkU5QzA0REE2OTgwNjUz)
-        if (sanitized.contains("&") && !sanitized.startsWith("export ", ignoreCase = true)) {
-            val queryPairs = sanitized.split("&")
-            val isAllKeyValue = queryPairs.all { part ->
-                val p = part.trim()
-                p.contains("=") && Regex("""^[A-Za-z_][A-Za-z0-9_]*=""").containsMatchIn(p)
-            }
-            if (isAllKeyValue && queryPairs.size > 1) {
-                queryPairs.forEach { pair ->
-                    val cleanPair = pair.trim()
-                    val key = cleanPair.substringBefore("=").trim()
-                    val value = cleanPair.substringAfter("=").trim().replace(Regex("^[\"']|[\"']$"), "")
-                    if (key.isNotEmpty()) {
-                        result.add(
-                            UnifiedEnv(
-                                id = UUID.randomUUID().toString(),
-                                name = key,
-                                value = value,
-                                remarks = "URL参数串导入",
-                                enabled = true
-                            )
+        // 1.5 URL Query 格式: app=mdwz&dataEncStr=xxx 或含 & 值的 URL（如 redirect=https://a.com?a=1&b=2）
+        // 关键：不能盲目按 & 拆分，因为 value 本身可能含 &（如 URL 查询参数）。
+        // 用环境变量名模式 [A-Za-z_][A-Za-z0-9_]*= 来定位 key 边界，确保只在合法 key 前切分。
+        if (!sanitized.startsWith("export ", ignoreCase = true) &&
+            Regex("""[A-Za-z_][A-Za-z0-9_]*=""").containsMatchIn(sanitized)
+        ) {
+            val keyPattern = Regex("""([A-Za-z_][A-Za-z0-9_]*)=(.*?)(?=[A-Za-z_][A-Za-z0-9_]*=|$)""")
+            val matches = keyPattern.findAll(sanitized)
+            val pairs = matches.mapNotNull { m ->
+                val key = m.groupValues[1].trim()
+                val value = m.groupValues[2].trim()
+                if (key.isNotEmpty()) Pair(key, value) else null
+            }.toList()
+            if (pairs.size >= 2) {
+                pairs.forEach { (k, v) ->
+                    result.add(
+                        UnifiedEnv(
+                            id = UUID.randomUUID().toString(),
+                            name = k,
+                            value = v,
+                            remarks = "URL参数导入",
+                            enabled = true
                         )
-                    }
+                    )
                 }
-                if (result.isNotEmpty()) return result
+                return result
             }
         }
 
@@ -252,20 +271,21 @@ object UniversalEnvParser {
         }
 
         // 2. URL Query 格式检测 (含 & 且不含 ;)
-        if (sanitized.contains("&") && !sanitized.contains(";")) {
+        // 若值本身是完整 URL（含 ://），不做拆分，整体保留
+        if (sanitized.contains("&") && !sanitized.contains(";") && !sanitized.contains("://")) {
             val parts = sanitized.split("&")
-            parts.forEach { part ->
+            val pairs = parts.mapNotNull { part ->
                 val trimmed = part.trim()
-                if (trimmed.contains("=")) {
-                    val idx = trimmed.indexOf("=")
-                    val k = trimmed.substring(0, idx).trim()
-                    val v = trimmed.substring(idx + 1).trim()
-                    if (k.isNotEmpty()) {
-                        list.add(Pair(k, v))
-                    }
-                }
+                val eqIdx = trimmed.indexOf('=')
+                if (eqIdx <= 0) return@mapNotNull null
+                val k = trimmed.substring(0, eqIdx).trim()
+                val v = trimmed.substring(eqIdx + 1).trim()
+                if (k.isNotEmpty()) Pair(k, v) else null
+            }.toList()
+            if (pairs.isNotEmpty()) {
+                list.addAll(pairs)
+                if (list.isNotEmpty()) return list
             }
-            if (list.isNotEmpty()) return list
         }
 
         // 3. Cookie 或分号多键值变量 (如 pt_key=...; pt_pin=...)

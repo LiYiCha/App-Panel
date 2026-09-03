@@ -155,7 +155,7 @@ fun ServerLogsScreen(
                 title = {
                     Column {
                         Text(
-                            text = "服务端日志 (按脚本归类)",
+                            text = "历史日志 (${categorizedGroups.size})",
                             fontSize = 16.sp,
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
@@ -199,7 +199,7 @@ fun ServerLogsScreen(
                 else -> {
                 // 脚本归类分组主界面
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.wrapContentSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // 1. 搜索框与快捷折叠操作栏
@@ -279,7 +279,7 @@ fun ServerLogsScreen(
                                     Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        text = if (isLoading) "正在刷新服务端日志..." else if (searchQuery.isNotBlank()) "未搜索到匹配的脚本日志" else "暂无服务端日志文件",
+                                        text = if (isLoading) "正在刷新历史日志..." else if (searchQuery.isNotBlank()) "未搜索到匹配的脚本日志" else "暂无历史日志文件",
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

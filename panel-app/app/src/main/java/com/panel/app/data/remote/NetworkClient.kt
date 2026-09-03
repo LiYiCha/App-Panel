@@ -173,15 +173,32 @@ object NetworkClient {
         .setLenient()
         .create()
 
+    /**
+     * Retrofit 实例缓存（key = baseUrl）。
+     *
+     * `Retrofit.create()` 会为接口生成动态代理，并**反射解析该接口的全部方法**
+     * （解析注解、参数处理器、构造 ServiceMethod 缓存）。QinglongV15Api / BaihuApi
+     * 都有几十个方法，这个开销相当可观。
+     *
+     * 之前每次调用都新建实例，而适配器又是在每次 `getAdapter()` 时重建的，
+     * 于是每点一次按钮、每轮询一次日志，都要把整条 Retrofit + 动态代理链路
+     * 重建一遍再丢弃 —— 大量一次性对象把 GC 顶起来，表现为主线程停顿、界面闪烁/花屏。
+     *
+     * baseUrl 的数量等于面板数量，缓存条目天然有界。
+     */
+    private val retrofitCache = ConcurrentHashMap<String, Retrofit>()
+
     fun buildRetrofit(baseUrl: String): Retrofit {
         val cleanUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        return Retrofit.Builder()
-            .baseUrl(cleanUrl)
-            .client(unsafeOkHttpClient)
-            // 必须放在转换器之前：把所有网络/解析异常收敛成失败响应，避免异常冒到主线程闪退
-            .addCallAdapterFactory(SafeCallAdapterFactory())
-            .addConverterFactory(GsonConverterFactory.create(gson))
-            .build()
+        return retrofitCache.getOrPut(cleanUrl) {
+            Retrofit.Builder()
+                .baseUrl(cleanUrl)
+                .client(unsafeOkHttpClient)
+                // 必须放在转换器之前：把所有网络/解析异常收敛成失败响应，避免异常冒到主线程闪退
+                .addCallAdapterFactory(SafeCallAdapterFactory())
+                .addConverterFactory(GsonConverterFactory.create(gson))
+                .build()
+        }
     }
 
     fun injectCookie(host: String, name: String, value: String) {

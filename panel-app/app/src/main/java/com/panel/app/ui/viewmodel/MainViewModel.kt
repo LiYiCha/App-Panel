@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.panel.app.data.adapter.BaihuPanelAdapter
 import com.panel.app.data.adapter.QinglongV10Adapter
 import com.panel.app.data.adapter.QinglongV15Adapter
+import com.panel.app.data.remote.api.QinglongV15Api
 import com.panel.app.data.backup.*
 import com.panel.app.data.model.*
 import com.panel.app.data.model.RunningTaskInfo
@@ -21,11 +22,27 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import javax.inject.Inject
+
+/**
+ * 刷新范围。
+ *
+ * 一次全量刷新会并发 7 个接口 + 串行读配置，青龙侧还会因脚本树逐目录补拉产生 N+1，
+ * 实测一次可达 8+N 次请求。而绝大多数写操作（如保存一个环境变量、置顶一个任务）
+ * 只影响其中一类数据，没必要把任务/订阅/变量/依赖/脚本树/配置/监控全部重打一遍。
+ *
+ * 因此写操作按需声明自己真正影响的类别，未声明的类别沿用内存中的既有数据。
+ */
+enum class RefreshScope { TASKS, SUBS, ENVS, DEPS, SCRIPTS, CONFIG, METRICS }
 
 data class MainUiState(
     val isDarkTheme: Boolean = false,
@@ -52,7 +69,10 @@ data class MainUiState(
     val expandedScriptFolders: Set<String> = emptySet(),
     val toastMessage: String? = null,
     /** 非空表示该面板开启了两步验证，等待用户输入动态验证码 */
-    val otpPendingPanel: PanelInstance? = null
+    val otpPendingPanel: PanelInstance? = null,
+    /** 脚本内容缓存：路径 -> 内容 */
+    val scriptViewerCache: Map<String, String> = emptyMap(),
+    val scriptViewerLoadingPath: String? = null
 )
 
 data class CachedPanelData(
@@ -78,9 +98,13 @@ class MainViewModel @Inject constructor(
     // 标记是否已发起过网络请求获取数据
     private var hasNetworkDataLoaded = false
 
+    /** 仪表盘上次成功拉取时间 panelId -> 时间戳，配合 TTL 复用缓存 */
+    private val dashboardFetchedAt = mutableMapOf<String, Long>()
+    private val dashboardTtlMs = 60_000L
+
     private fun loadDiskCache(panelId: String) {
         try {
-            val file = java.io.File(context.cacheDir, "panel_cache_${panelId}.json")
+            val file = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
             if (file.exists()) {
                 val json = file.readText()
                 val data = gson.fromJson(json, CachedPanelData::class.java)
@@ -113,7 +137,8 @@ class MainViewModel @Inject constructor(
         configContent: String
     ) {
         try {
-            val file = java.io.File(context.cacheDir, "panel_cache_${panelId}.json")
+            java.io.File(context.filesDir, "cache").mkdirs()
+            val file = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
             val data = CachedPanelData(tasks, envs, subs, deps, scriptTree, configFiles, selectedConfigFile, configContent)
             file.writeText(gson.toJson(data))
         } catch (_: Exception) {}
@@ -178,8 +203,14 @@ class MainViewModel @Inject constructor(
                         deps = if (isPanelChanged) emptyList() else _uiState.value.deps,
                         scriptTree = if (isPanelChanged) emptyList() else _uiState.value.scriptTree
                     )
-                    loadDiskCache(activePanel.id)
-                    refreshPanelRemoteData(activePanel)
+                    // 1. 先恢复磁盘缓存（IO线程），让 UI 立刻显示上次的数据
+                    viewModelScope.launch(Dispatchers.IO) {
+                        loadDiskCache(activePanel.id)
+                        // 2. 缓存恢复完成后，在后台异步发起网络同步（不阻塞 UI）
+                        if (!hasNetworkDataLoaded) {
+                            refreshPanelRemoteData(activePanel)
+                        }
+                    }
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isDatabaseReady = true,
@@ -223,8 +254,12 @@ class MainViewModel @Inject constructor(
                 configContent = ""
             )
             hasNetworkDataLoaded = false
-            loadDiskCache(targetPanel.id)
-            refreshPanelRemoteData(targetPanel)
+            viewModelScope.launch(Dispatchers.IO) {
+                loadDiskCache(targetPanel.id)
+                if (!hasNetworkDataLoaded) {
+                    refreshPanelRemoteData(targetPanel)
+                }
+            }
         }
     }
 
@@ -261,7 +296,17 @@ class MainViewModel @Inject constructor(
         prefs.edit(commit = true) { putString("active_panel_id", panelId) }
     }
 
-    fun refreshPanelRemoteData(panel: PanelInstance, notifyOnNoCredential: Boolean = false) {
+    /**
+     * 拉取面板远端数据。
+     *
+     * @param scopes 需要刷新的数据类别；传 null（默认）表示全量刷新。
+     *               写操作应只传自己真正影响的类别，避免无谓的全量请求。
+     */
+    fun refreshPanelRemoteData(
+        panel: PanelInstance,
+        notifyOnNoCredential: Boolean = false,
+        scopes: Set<RefreshScope>? = null
+    ) {
         viewModelScope.launch {
             // 若面板无凭证，尝试使用已存账号密码静默认证；若无凭据直接停止，避免发空请求被 401 拦截
             var activePanel = panel
@@ -311,22 +356,25 @@ class MainViewModel @Inject constructor(
                     return@launch
                 }
 
-                // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s
-                val tasksDeferred = safeAsync { adapter.getTasks() }
-                val subsDeferred = safeAsync { adapter.getSubscriptions() }
-                val envsDeferred = safeAsync { adapter.getEnvs() }
-                val depsDeferred = safeAsync { adapter.getDeps() }
-                val configFilesDeferred = safeAsync { adapter.getConfigFiles() }
-                val scriptTreeDeferred = safeAsync { adapter.getScriptTree() }
-                val metricsDeferred = safeAsync { adapter.getMetrics() }
+                // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s。
+                // scopes 非空时只发起真正需要的请求，其余类别沿用内存中已有数据。
+                fun wants(scope: RefreshScope) = scopes == null || scope in scopes
 
-                val tasksRes = tasksDeferred.await()
-                val subsRes = subsDeferred.await()
-                val envsRes = envsDeferred.await()
-                val depsRes = depsDeferred.await()
-                val configFilesRes = configFilesDeferred.await()
-                val scriptTreeRes = scriptTreeDeferred.await()
-                val metricsRes = metricsDeferred.await()
+                val tasksDeferred = if (wants(RefreshScope.TASKS)) safeAsync { adapter.getTasks() } else null
+                val subsDeferred = if (wants(RefreshScope.SUBS)) safeAsync { adapter.getSubscriptions() } else null
+                val envsDeferred = if (wants(RefreshScope.ENVS)) safeAsync { adapter.getEnvs() } else null
+                val depsDeferred = if (wants(RefreshScope.DEPS)) safeAsync { adapter.getDeps() } else null
+                val configFilesDeferred = if (wants(RefreshScope.CONFIG)) safeAsync { adapter.getConfigFiles() } else null
+                val scriptTreeDeferred = if (wants(RefreshScope.SCRIPTS)) safeAsync { adapter.getScriptTree() } else null
+                val metricsDeferred = if (wants(RefreshScope.METRICS)) safeAsync { adapter.getMetrics() } else null
+
+                val tasksRes = tasksDeferred?.await()
+                val subsRes = subsDeferred?.await()
+                val envsRes = envsDeferred?.await()
+                val depsRes = depsDeferred?.await()
+                val configFilesRes = configFilesDeferred?.await()
+                val scriptTreeRes = scriptTreeDeferred?.await()
+                val metricsRes = metricsDeferred?.await()
 
                 // 再次检查用户是否在网络请求期间切换了面板，如果是则丢弃结果以防旧数据覆盖
                 if (getActivePanel().id != activePanel.id) {
@@ -337,14 +385,15 @@ class MainViewModel @Inject constructor(
                 // 以前是 `getOrNull() ?: emptyList()`，一次网络抖动/断网就会：
                 //  1. 把已加载的界面清成空（看起来像"未登录"）；
                 //  2. 把空列表写进磁盘缓存 —— 断网进出一次，该面板的数据就永久没了。
+                // 局部刷新时未发起请求的类别同样走这里，天然沿用既有数据。
                 val previous = _uiState.value
-                val remoteTasks = tasksRes.getOrNull() ?: previous.tasks
-                val remoteSubs = subsRes.getOrNull() ?: previous.subscriptions
-                val remoteEnvs = envsRes.getOrNull() ?: previous.envs
-                val remoteDeps = depsRes.getOrNull() ?: previous.deps
-                val remoteScriptTree = scriptTreeRes.getOrNull() ?: previous.scriptTree
+                val remoteTasks = tasksRes?.getOrNull() ?: previous.tasks
+                val remoteSubs = subsRes?.getOrNull() ?: previous.subscriptions
+                val remoteEnvs = envsRes?.getOrNull() ?: previous.envs
+                val remoteDeps = depsRes?.getOrNull() ?: previous.deps
+                val remoteScriptTree = scriptTreeRes?.getOrNull() ?: previous.scriptTree
 
-                val fileList = configFilesRes.getOrNull()
+                val fileList = configFilesRes?.getOrNull()
                     ?.takeIf { it.isNotEmpty() }
                     ?: previous.configFiles.takeIf { it.isNotEmpty() }
                     ?: listOf(if (activePanel.type == PanelType.BAIHU) "config.json" else "config.sh")
@@ -352,31 +401,32 @@ class MainViewModel @Inject constructor(
                     ?: fileList.firstOrNull { !it.contains("/") && (it.endsWith(".sh") || it.endsWith(".json") || it.endsWith(".js")) }
                     ?: fileList.firstOrNull()
                     ?: "config.sh"
-                val configContentRes = if (configFilesRes.isSuccess) {
+                val configContentRes = if (configFilesRes?.isSuccess == true) {
                     safeCall { adapter.readConfig(defaultFile) }
                 } else {
-                    Result.failure(configFilesRes.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
+                    Result.failure(configFilesRes?.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
                 }
                 val content = configContentRes.getOrNull() ?: previous.configContent
 
                 val previousPanel = _uiState.value.panels.firstOrNull { it.id == activePanel.id }
-                val (cpu, ram) = metricsRes.getOrNull()
+                val (cpu, ram) = metricsRes?.getOrNull()
                     ?: Pair(previousPanel?.cpuUsage ?: "--", previousPanel?.ramUsage ?: "--")
 
                 val errorMsg = listOfNotNull(
-                    tasksRes.exceptionOrNull()?.let { "任务加载失败: ${it.message}" },
-                    envsRes.exceptionOrNull()?.let { "环境变量加载失败: ${it.message}" },
-                    scriptTreeRes.exceptionOrNull()?.let { "脚本文件加载失败: ${it.message}" }
+                    tasksRes?.exceptionOrNull()?.let { "任务加载失败: ${it.message}" },
+                    envsRes?.exceptionOrNull()?.let { "环境变量加载失败: ${it.message}" },
+                    scriptTreeRes?.exceptionOrNull()?.let { "脚本文件加载失败: ${it.message}" }
                 ).firstOrNull()
 
                 val updatedPanels = _uiState.value.panels.map {
                     if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
                 }
 
-                // 只有至少一个核心接口真的成功，才更新"已加载过网络数据"标记并落盘缓存，
-                // 避免把失败时的空数据固化成缓存
-                val hasSuccess = tasksRes.isSuccess || envsRes.isSuccess ||
-                        scriptTreeRes.isSuccess || subsRes.isSuccess
+                // 只有实际发起过的请求里至少一个成功，才更新"已加载过网络数据"标记并落盘缓存。
+                // 判断基准必须是"本次真实发起过的请求"，否则只刷依赖/变量的局部刷新永远落不了盘。
+                val hasSuccess = listOfNotNull<Result<Any?>>(
+                    tasksRes, envsRes, scriptTreeRes, subsRes, depsRes, configFilesRes
+                ).any { it.isSuccess }
                 if (hasSuccess) {
                     hasNetworkDataLoaded = true
                     saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, defaultFile, content)
@@ -533,7 +583,25 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val list = _uiState.value.tasks.map { if (it.id == taskId) it.copy(isRunning = true, statusText = "运行中") else it }
             _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务开始执行...")
-            repository.getAdapter(getActivePanel()).runTask(listOf(taskId))
+            val res = repository.getAdapter(getActivePanel()).runTask(listOf(taskId))
+            if (!res.isSuccess) {
+                _uiState.value = _uiState.value.copy(toastMessage = "启动失败: ${res.exceptionOrNull()?.message}")
+                return@launch
+            }
+            // 轻量轮询：首等待 3s 让服务端真正拉起进程，之后每 3s 校验一次，最多 10 次（约 33s）。
+            // 每轮只同步目标任务的状态字段，不整列表替换，避免列表抖动与选中态丢失。
+            // 无需 isActive 守卫：delay / suspend 调用在协程取消时会抛 CancellationException 自动退出。
+            delay(3000)
+            repeat(10) {
+                delay(3000)
+                val freshTasks = repository.getAdapter(getActivePanel()).getTasks().getOrNull()
+                    ?: return@repeat
+                val freshTarget = freshTasks.firstOrNull { it.id == taskId } ?: return@launch
+                _uiState.value = _uiState.value.copy(
+                    tasks = _uiState.value.tasks.map { if (it.id == taskId) freshTarget else it }
+                )
+                if (!freshTarget.isRunning) return@launch
+            }
         }
     }
 
@@ -572,7 +640,7 @@ class MainViewModel @Inject constructor(
                 val err = res.exceptionOrNull()?.message ?: "未知错误"
                 _uiState.value = _uiState.value.copy(toastMessage = "创建任务失败: $err")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.TASKS))
         }
     }
 
@@ -692,6 +760,36 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun deleteTaskInstance(instanceId: String, onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            val res = adapter.deleteTaskInstance(instanceId)
+            if (res.isSuccess) {
+                _uiState.value = _uiState.value.copy(
+                    activeTaskInstances = _uiState.value.activeTaskInstances.filter { it.id != instanceId },
+                    toastMessage = "已删除"
+                )
+                onDeleted()
+            } else {
+                _uiState.value = _uiState.value.copy(toastMessage = res.exceptionOrNull()?.message ?: "删除失败")
+            }
+        }
+    }
+
+    fun batchDeleteTaskInstances(instanceIds: List<String>, onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            val res = adapter.batchDeleteTaskInstances(instanceIds)
+            if (res.isSuccess) {
+                val remaining = _uiState.value.activeTaskInstances.filter { it.id !in instanceIds }
+                _uiState.value = _uiState.value.copy(activeTaskInstances = remaining, toastMessage = "已删除 ${instanceIds.size} 条")
+                onDeleted()
+            } else {
+                _uiState.value = _uiState.value.copy(toastMessage = res.exceptionOrNull()?.message ?: "批量删除失败")
+            }
+        }
+    }
+
     // ==================== 2. 订阅管理 ====================
     fun createSubscription(sub: UnifiedSubscription) {
         viewModelScope.launch {
@@ -701,7 +799,9 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "订阅已保存")
             }
-            refreshPanelRemoteData(getActivePanel())
+            // 白虎的"订阅"就是 type=repo 的任务，其任务列表接口不筛 type，
+            // 因此订阅的增删会同时反映在订阅页和任务页，两边都要刷
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SUBS, RefreshScope.TASKS))
         }
     }
 
@@ -713,7 +813,7 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "仓库任务已更新")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SUBS, RefreshScope.TASKS))
         }
     }
 
@@ -819,7 +919,7 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(toastMessage = "保存变量失败: $err")
                 onResult?.invoke(false, err)
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.ENVS))
         }
     }
 
@@ -849,7 +949,7 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(toastMessage = "脚本已保存，但创建定时任务失败: $err")
                 onComplete(false, "脚本已保存，但定时任务创建失败: $err")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS, RefreshScope.TASKS))
         }
     }
 
@@ -865,7 +965,7 @@ class MainViewModel @Inject constructor(
                     "导入失败: ${res.exceptionOrNull()?.message}"
                 }
             )
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.ENVS))
         }
     }
 
@@ -874,6 +974,26 @@ class MainViewModel @Inject constructor(
             repository.getAdapter(getActivePanel()).deleteEnv(listOf(envId))
             val list = _uiState.value.envs.filterNot { it.id == envId }
             _uiState.value = _uiState.value.copy(envs = list, toastMessage = "环境变量已删除")
+        }
+    }
+
+    /** 拖拽排序后同步到服务端（仅青龙支持） */
+    fun moveEnvToServer(envId: String, fromIndex: Int, toIndex: Int) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            adapter.moveEnv(envId, fromIndex, toIndex)
+                .onSuccess { _ ->
+                    _uiState.value = _uiState.value.copy(toastMessage = "排序已同步")
+                }
+                .onFailure { e ->
+                    val msg = e.message ?: ""
+                    val friendlyMsg = if (msg.contains("不支持移动") || msg.contains("不支持")) {
+                        "当前面板不支持拖拽排序环境变量，仅支持列表视图顺序"
+                    } else {
+                        "排序同步失败: $msg"
+                    }
+                    _uiState.value = _uiState.value.copy(toastMessage = friendlyMsg)
+                }
         }
     }
 
@@ -897,9 +1017,31 @@ class MainViewModel @Inject constructor(
             val list = _uiState.value.envs.map { if (envIds.contains(it.id)) it.copy(enabled = enable) else it }
             _uiState.value = _uiState.value.copy(envs = list, toastMessage = "已批量${if (enable) "启用" else "禁用"} ${envIds.size} 个变量")
             val adapter = repository.getAdapter(getActivePanel())
-            for (id in envIds) {
-                adapter.toggleEnv(id, enable)
+            if (enable) adapter.batchEnableEnvs(envIds) else adapter.batchDisableEnvs(envIds)
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.ENVS))
+        }
+    }
+
+    fun pinEnv(envId: String, pin: Boolean) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            val res = if (pin) adapter.pinEnv(listOf(envId)) else adapter.unpinEnv(listOf(envId))
+            if (res.isSuccess) {
+                val list = _uiState.value.envs.map {
+                    if (it.id == envId) it.copy(isPinned = pin) else it
+                }
+                _uiState.value = _uiState.value.copy(envs = list, toastMessage = if (pin) "已置顶变量" else "已取消置顶")
+                refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.ENVS))
+            } else {
+                _uiState.value = _uiState.value.copy(toastMessage = res.exceptionOrNull()?.message ?: "操作失败")
             }
+        }
+    }
+
+    fun loadExportEnvsJson(envIds: List<String>, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val res = repository.getAdapter(getActivePanel()).exportEnvsJson(envIds)
+            onResult(res.getOrNull())
         }
     }
 
@@ -931,8 +1073,8 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).batchDeleteDeps(depIds)
             val updated = _uiState.value.deps.filterNot { depIds.contains(it.id) }
-            _uiState.value = _uiState.value.copy(deps = updated, toastMessage = if (res.isSuccess) "已批量卸载/清除 ${depIds.size} 个依赖" else "已清除依赖记录")
-            refreshPanelRemoteData(getActivePanel())
+            _uiState.value = _uiState.value.copy(deps = updated)
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
@@ -944,16 +1086,16 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "安装失败: ${res.exceptionOrNull()?.message}")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
-    fun deleteDep(depId: String, type: String) {
+    fun deleteDep(depId: String, type: String, depName: String = "") {
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).deleteDep(depId, type)
             val updated = _uiState.value.deps.filterNot { it.id == depId }
-            _uiState.value = _uiState.value.copy(deps = updated, toastMessage = if (res.isSuccess) "依赖包已卸载/清除" else "已清除依赖记录")
-            refreshPanelRemoteData(getActivePanel())
+            _uiState.value = _uiState.value.copy(deps = updated)
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
@@ -961,8 +1103,8 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).forceDeleteDeps(depIds)
             val updated = _uiState.value.deps.filterNot { depIds.contains(it.id) }
-            _uiState.value = _uiState.value.copy(deps = updated, toastMessage = if (res.isSuccess) "已强制清除 ${depIds.size} 条依赖记录" else "清除记录失败")
-            refreshPanelRemoteData(getActivePanel())
+            _uiState.value = _uiState.value.copy(deps = updated)
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
@@ -1130,10 +1272,22 @@ class MainViewModel @Inject constructor(
         return repository.getCachedDashboard(getActivePanel().id)
     }
 
-    /** 仪表盘聚合数据，带本地持久化秒开与异步刷新 */
-    fun loadDashboard(onResult: (Result<PanelDashboard>) -> Unit) {
+    /**
+     * 仪表盘聚合数据，带本地持久化秒开与异步刷新。
+     *
+     * @param force true 忽略 TTL 强制走网络（用户主动下拉/点刷新按钮时使用）；
+     *              false 时 TTL 内直接复用缓存。青龙一次会并发 6~8 个接口，
+     *              自动触发场景（如切到设置 Tab）没必要每次都重打服务端。
+     */
+    fun loadDashboard(force: Boolean = false, onResult: (Result<PanelDashboard>) -> Unit) {
         val panel = getActivePanel()
         val cached = repository.getCachedDashboard(panel.id)
+        val withinTtl = cached != null &&
+            System.currentTimeMillis() - (dashboardFetchedAt[panel.id] ?: 0L) < dashboardTtlMs
+        if (!force && withinTtl) {
+            onResult(Result.success(cached!!))
+            return
+        }
         if (cached != null) {
             onResult(Result.success(cached))
         }
@@ -1142,6 +1296,7 @@ class MainViewModel @Inject constructor(
             val res = repository.getAdapter(panel).getDashboard()
             res.onSuccess { dashboard ->
                 repository.saveCachedDashboard(panel.id, dashboard)
+                dashboardFetchedAt[panel.id] = System.currentTimeMillis()
             }
             onResult(res)
         }
@@ -1257,7 +1412,7 @@ class MainViewModel @Inject constructor(
                     "重命名失败: ${res.exceptionOrNull()?.message}"
                 }
             )
-            if (res.isSuccess) refreshPanelRemoteData(getActivePanel())
+            if (res.isSuccess) refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
         }
     }
 
@@ -1272,7 +1427,7 @@ class MainViewModel @Inject constructor(
                     "重新安装失败: ${res.exceptionOrNull()?.message}"
                 }
             )
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
@@ -1286,7 +1441,7 @@ class MainViewModel @Inject constructor(
                     "取消失败: ${res.exceptionOrNull()?.message}"
                 }
             )
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
         }
     }
 
@@ -1309,7 +1464,7 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(toastMessage = "创建失败: $err")
                 onComplete?.invoke(false, err)
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
         }
     }
 
@@ -1317,17 +1472,31 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).saveScript(path, content)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "脚本 [$path] 保存成功！")
+                // 同步回写脚本缓存，否则保存后退出再进入，读到的仍是旧内容
+                val updatedCache = _uiState.value.scriptViewerCache + (path to content)
+                _uiState.value = _uiState.value.copy(
+                    scriptViewerCache = updatedCache,
+                    toastMessage = "脚本 [$path] 保存成功！"
+                )
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "保存失败: ${res.exceptionOrNull()?.message}")
             }
         }
     }
 
-    fun readScript(path: String, onRead: (String) -> Unit) {
+    fun readScript(path: String, onRead: (String) -> Unit = {}) {
         viewModelScope.launch {
+            // 优先使用缓存，避免重复请求
+            val cached = _uiState.value.scriptViewerCache[path]
+            if (cached != null) {
+                onRead(cached)
+                return@launch
+            }
+            _uiState.update { it.copy(scriptViewerLoadingPath = path) }
             val res = repository.getAdapter(getActivePanel()).readScript(path)
-            onRead(res.getOrNull() ?: "")
+            val content = res.getOrNull() ?: ""
+            _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+            onRead(content)
         }
     }
 
@@ -1339,7 +1508,7 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "创建文件夹失败: ${res.exceptionOrNull()?.message}")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
         }
     }
 
@@ -1351,7 +1520,7 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "删除失败: ${res.exceptionOrNull()?.message}")
             }
-            refreshPanelRemoteData(getActivePanel())
+            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
         }
     }
 

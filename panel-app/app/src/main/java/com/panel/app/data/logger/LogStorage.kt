@@ -95,7 +95,8 @@ object LogStorage {
     }
 
     private fun prefs(): SharedPreferences =
-        appContext!!.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?: throw IllegalStateException("LogStorage 未初始化，请先调用 init(context)")
 
     /** 启动与修改保留天数时调用：删除超出保留期的日志文件 */
     fun pruneExpired() {

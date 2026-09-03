@@ -50,7 +50,8 @@ fun DashboardScreen(
 
     fun load() {
         isLoading = true
-        viewModel.loadDashboard { result ->
+        // 进入页面与用户主动刷新都强制走网络，不受 TTL 节流影响
+        viewModel.loadDashboard(force = true) { result ->
             dashboard = result.getOrNull()
             errorMessage = result.exceptionOrNull()?.message
             isLoading = false

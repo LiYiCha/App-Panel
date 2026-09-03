@@ -27,6 +27,10 @@ interface IPanelAdapter {
     suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean>
     suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>>
     suspend fun getTaskLog(taskNameOrId: String): Result<String>
+    suspend fun deleteTaskInstance(instanceId: String): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持删除任务实例"))
+    suspend fun batchDeleteTaskInstances(instanceIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量删除任务实例"))
 
     // 3. 订阅管理 (Subscriptions)
     suspend fun getSubscriptions(query: String? = null): Result<List<UnifiedSubscription>>
@@ -169,6 +173,40 @@ interface IPanelAdapter {
         }
         return if (errors.isEmpty()) Result.success(ok)
         else Result.failure(Exception("成功 $ok 条；失败 ${errors.size} 条 — ${errors.take(3).joinToString("; ")}"))
+    }
+
+    /** 置顶环境变量（id 列表） */
+    suspend fun pinEnv(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持置顶环境变量"))
+
+    /** 取消置顶 */
+    suspend fun unpinEnv(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持取消置顶环境变量"))
+
+    /** 移动环境变量位置（fromIndex → toIndex，0-based） */
+    suspend fun moveEnv(envId: String, fromIndex: Int, toIndex: Int): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持移动环境变量位置"))
+
+    /** 批量启用环境变量 */
+    suspend fun batchEnableEnvs(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量启用环境变量"))
+
+    /** 批量禁用环境变量 */
+    suspend fun batchDisableEnvs(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量禁用环境变量"))
+
+    /** 导出选中环境变量为 JSON 字符串（供分享/保存用） */
+    suspend fun exportEnvsJson(envIds: List<String>): Result<String> {
+        val all = getEnvs(null).getOrNull() ?: return Result.failure(Exception("导出失败：无法获取变量列表"))
+        val subset = all.filter { it.id in envIds }
+        if (subset.isEmpty()) return Result.failure(Exception("未选中任何变量"))
+        val json = subset.joinToString(",\n") { e ->
+            """  {"name": "${e.name.replace("\"", "\\\"")}",
+               "value": "${e.value.replace("\"", "\\\"")}",
+               "remarks": "${(e.remarks ?: "").replace("\"", "\\\"")}",
+               "enabled": ${e.enabled}}"""
+        }
+        return Result.success("[$json\n]")
     }
 
     // 5. 配置文件 (Configs: config.sh / config.json / extra.sh)

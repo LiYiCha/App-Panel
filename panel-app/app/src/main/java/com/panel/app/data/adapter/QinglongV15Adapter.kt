@@ -7,12 +7,14 @@ import com.panel.app.data.remote.api.*
 import com.panel.app.data.remote.unwrap
 import com.panel.app.data.remote.unwrapTo
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
+import com.google.gson.JsonObject
 
 /**
  * 青龙面板 2.15+ 适配器。
@@ -27,6 +29,11 @@ import kotlinx.coroutines.isActive
 class QinglongV15Adapter(
     override val instance: PanelInstance
 ) : IPanelAdapter {
+
+    companion object {
+        /** 日志流最长持续 10 分钟，避免任务卡死时无限轮询服务端 */
+        private const val MAX_LOG_STREAM_DURATION_MS = 10 * 60 * 1000L
+    }
 
     private val api: QinglongV15Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV15Api::class.java)
     private var currentToken: String? = instance.token
@@ -48,15 +55,7 @@ class QinglongV15Adapter(
         return false
     }
 
-    private fun toIds(ids: List<String>): List<Long> = ids.mapNotNull { it.toLongOrNull() }
 
-    private fun toId(id: String): Long? = id.toLongOrNull() ?: id.toDoubleOrNull()?.toLong()
-
-    private fun cleanId(raw: Any?): String = when (raw) {
-        is Number -> raw.toLong().toString()
-        is String -> raw.toDoubleOrNull()?.toLong()?.toString() ?: raw.substringBefore('.')
-        else -> raw?.toString()?.substringBefore('.') ?: ""
-    }
 
     // ---------------------------------------------------------------- 认证
 
@@ -123,8 +122,20 @@ class QinglongV15Adapter(
         val running = status == 0
         val queued = status == 3
         val disabled = isDisabled == 1
+        val extraSchedules = runCatching {
+            extra_schedules?.let {
+                when (it) {
+                    is com.google.gson.JsonArray -> (0 until it.size()).mapNotNull { i ->
+                        val el = it.get(i)
+                        if (el.isJsonPrimitive && !el.isJsonNull) el.asString else null
+                    }
+                    is List<*> -> it.filterIsInstance<String>()
+                    else -> emptyList()
+                }
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
         return UnifiedTask(
-            id = cleanId(id),
+            id = QinglongApiHelpers.cleanId(id),
             name = name.orEmpty(),
             command = command.orEmpty(),
             schedule = schedule.orEmpty(),
@@ -140,6 +151,9 @@ class QinglongV15Adapter(
             labels = labels.orEmpty(),
             lastRunningTime = last_running_time,
             lastExecutionTime = last_execution_time,
+            extraSchedules = extraSchedules,
+            workDir = work_dir,
+            allowMultipleInstances = allow_multiple_instances == 1,
             createdAt = createdAt,
             updatedAt = updatedAt,
             pid = pid
@@ -154,7 +168,7 @@ class QinglongV15Adapter(
 
     override suspend fun updateTask(task: UnifiedTask): Result<Boolean> {
         ensureAuth()
-        val id: Any = toId(task.id) ?: task.id
+        val id: Any = QinglongApiHelpers.toId(task.id) ?: task.id
         return api.updateCron(
             getAuthHeader(),
             QlUpdateCronReq(id = id, name = task.name, command = task.command, schedule = task.schedule)
@@ -163,14 +177,14 @@ class QinglongV15Adapter(
 
     override suspend fun runTask(taskIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty()) return Result.failure(Exception("任务 ID 无效"))
         return api.runCrons(getAuthHeader(), ids).unwrap("运行任务失败").map { true }
     }
 
     override suspend fun stopTask(taskIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty()) return Result.failure(Exception("任务 ID 无效"))
         return api.stopCrons(getAuthHeader(), ids).unwrap("停止任务失败").map { true }
     }
@@ -184,7 +198,7 @@ class QinglongV15Adapter(
 
     override suspend fun toggleTask(taskId: String, enable: Boolean): Result<Boolean> {
         ensureAuth()
-        val id = toId(taskId) ?: return Result.failure(Exception("任务 ID 无效"))
+        val id = QinglongApiHelpers.toId(taskId) ?: return Result.failure(Exception("任务 ID 无效"))
         return (if (enable) api.enableCrons(getAuthHeader(), listOf(id))
         else api.disableCrons(getAuthHeader(), listOf(id)))
             .unwrap("切换任务状态失败").map { true }
@@ -192,14 +206,14 @@ class QinglongV15Adapter(
 
     override suspend fun deleteTask(taskIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty()) return Result.failure(Exception("任务 ID 列表为空或无效"))
         return api.deleteCrons(getAuthHeader(), ids).unwrap("删除任务失败").map { true }
     }
 
     override suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty()) return Result.failure(Exception("任务 ID 无效"))
         return (if (pin) api.pinCrons(getAuthHeader(), ids) else api.unpinCrons(getAuthHeader(), ids))
             .unwrap("置顶操作失败").map { true }
@@ -208,7 +222,7 @@ class QinglongV15Adapter(
     /** 批量打标签 / 去标签 */
     suspend fun addTaskLabels(taskIds: List<String>, labels: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty() || labels.isEmpty()) return Result.failure(Exception("任务 ID 或标签为空"))
         return api.addCronLabels(getAuthHeader(), QlLabelBatchReq(ids, labels))
             .unwrap("添加标签失败").map { true }
@@ -216,7 +230,7 @@ class QinglongV15Adapter(
 
     suspend fun removeTaskLabels(taskIds: List<String>, labels: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(taskIds)
+        val ids = QinglongApiHelpers.toIds(taskIds)
         if (ids.isEmpty() || labels.isEmpty()) return Result.failure(Exception("任务 ID 或标签为空"))
         return api.removeCronLabels(getAuthHeader(), QlLabelBatchReq(ids, labels))
             .unwrap("移除标签失败").map { true }
@@ -224,7 +238,7 @@ class QinglongV15Adapter(
 
     override suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>> {
         ensureAuth()
-        val cronId = toId(taskId)?.toString() ?: taskId.substringBefore('.')
+        val cronId = QinglongApiHelpers.toId(taskId)?.toString() ?: taskId.substringBefore('.')
         // SimpleDateFormat 每次局部新建，且整体 try/catch：
         // 历史日志数组的字段（filename/time）若为 JsonNull，asString/asLong 会抛异常，
         // 不收敛的话会经 viewModelScope 冒到主线程导致闪退
@@ -244,7 +258,7 @@ class QinglongV15Adapter(
                 ?.data.orEmpty()
                 .map { inst ->
                     TaskInstanceRecord(
-                        id = cleanId(inst.id),
+                        id = QinglongApiHelpers.cleanId(inst.id),
                         startTime = inst.started_at?.takeIf { it > 0 }
                             ?.let { sdf.format(java.util.Date(it * 1000)) }
                             ?: inst.created_at ?: "--",
@@ -253,12 +267,12 @@ class QinglongV15Adapter(
                             ?: inst.updated_at,
                         duration = when {
                             inst.finished_at != null && inst.started_at != null && inst.finished_at >= inst.started_at ->
-                                formatSeconds(inst.finished_at - inst.started_at)
-                            inst.duration != null -> formatSeconds(inst.duration)
+                                QinglongApiHelpers.formatSeconds(inst.finished_at - inst.started_at)
+                            inst.duration != null -> QinglongApiHelpers.formatSeconds(inst.duration)
                             else -> "--"
                         },
                         exitCode = inst.exit_code ?: if (inst.status == 1) 0 else 1,
-                        // InstanceStatus: 0=running, 1=success, 2=stopped, 3=failed
+                        // InstanceStatus: 0=running, 1=finished, 2=stopped, 3=error
                         statusText = when (inst.status) {
                             0 -> "运行中"
                             1 -> "成功"
@@ -266,7 +280,8 @@ class QinglongV15Adapter(
                             3 -> "失败"
                             else -> "完成"
                         },
-                        logPath = inst.log_path
+                        logPath = inst.log_path,
+                        pid = runCatching { inst.pid?.toInt() }.getOrNull()
                     )
                 }
         }.getOrNull().orEmpty()
@@ -301,11 +316,49 @@ class QinglongV15Adapter(
 
     override suspend fun getTaskLog(taskNameOrId: String): Result<String> {
         ensureAuth()
-        val cronId = toId(taskNameOrId)?.toString() ?: taskNameOrId.substringBefore('.')
+        val cronId = QinglongApiHelpers.toId(taskNameOrId)?.toString() ?: taskNameOrId.substringBefore('.')
         // tail 语义：读末尾内容（后端不传 offset/limit 时默认也是这个行为），
         // 并显式取到 truncate 标记，避免用户误以为看到的是完整日志
         return api.getCronLog(getAuthHeader(), cronId, tail = true)
             .unwrapTo("获取任务日志失败") { formatLogChunk(it) }
+    }
+
+    // 青龙 2.15 无单条删除运行实例的 API，通过存储清理整体清除
+    override suspend fun deleteTaskInstance(instanceId: String): Result<Boolean> =
+        Result.failure(Exception("青龙面板不支持删除单个任务实例，请使用\"清理存储数据\"功能"))
+
+    override suspend fun batchDeleteTaskInstances(instanceIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("青龙面板不支持删除单个任务实例，请使用\"清理存储数据\"功能"))
+
+    /**
+     * 清理历史运行实例：POST /api/system/storage-retention/cleanup
+     * 对齐青龙官方前端 /src/pages/setting/other.tsx 的实现。
+     * body.confirmation 必须传 "CLEAN"，否则会返回 400。
+     */
+    suspend fun cleanupStorageRetention(
+        runningInstanceRetentionDays: Int,
+        cronStatRetentionDays: Int,
+        compactDatabase: Boolean = false
+    ): Result<String> {
+        ensureAuth()
+        return try {
+            api.cleanupStorageRetention(
+                getAuthHeader(),
+                mapOf(
+                    "runningInstanceRetentionDays" to runningInstanceRetentionDays,
+                    "cronStatRetentionDays" to cronStatRetentionDays,
+                    "dependenceCacheTypes" to emptyList<String>(),
+                    "compactDatabase" to compactDatabase,
+                    "confirmation" to "CLEAN"
+                )
+            )
+                .unwrapTo("清理存储数据失败") { raw ->
+                    (raw.data as? JsonObject)?.get("message")?.takeIf { !it.isJsonNull }?.asString
+                        ?: "清理完成"
+                }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -315,7 +368,7 @@ class QinglongV15Adapter(
     private fun formatLogChunk(chunk: QlLogChunkResp): String {
         val body = chunk.data.orEmpty().ifBlank { "暂无运行日志输出" }
         if (chunk.truncated != true) return body
-        val total = chunk.total?.let { "（共 ${formatBytes(it)}）" } ?: ""
+        val total = chunk.total?.let { "（共 ${QinglongApiHelpers.formatBytes(it)}）" } ?: ""
         return "⚠ 日志过大，仅显示末尾部分$total。\n\n$body"
     }
 
@@ -341,7 +394,7 @@ class QinglongV15Adapter(
     private fun QlSubscriptionItem.toUnified(): UnifiedSubscription {
         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
         return UnifiedSubscription(
-            id = cleanId(id),
+            id = QinglongApiHelpers.cleanId(id),
             name = name ?: "未命名订阅",
             type = type ?: "public-repo",
             url = url.orEmpty(),
@@ -391,7 +444,7 @@ class QinglongV15Adapter(
 
     override suspend fun updateSubscription(sub: UnifiedSubscription): Result<Boolean> {
         ensureAuth()
-        val id: Any = toId(sub.id) ?: sub.id
+        val id: Any = QinglongApiHelpers.toId(sub.id) ?: sub.id
         return api.updateSubscription(
             getAuthHeader(),
             QlUpdateSubscriptionReq(
@@ -414,21 +467,21 @@ class QinglongV15Adapter(
 
     override suspend fun deleteSubscription(subIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(subIds)
+        val ids = QinglongApiHelpers.toIds(subIds)
         if (ids.isEmpty()) return Result.failure(Exception("订阅 ID 无效"))
         return api.deleteSubscriptions(getAuthHeader(), ids).unwrap("删除订阅失败").map { true }
     }
 
     override suspend fun runSubscription(subIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(subIds)
+        val ids = QinglongApiHelpers.toIds(subIds)
         if (ids.isEmpty()) return Result.failure(Exception("订阅 ID 无效"))
         return api.runSubscriptions(getAuthHeader(), ids).unwrap("运行订阅失败").map { true }
     }
 
     override suspend fun stopSubscription(subIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(subIds)
+        val ids = QinglongApiHelpers.toIds(subIds)
         if (ids.isEmpty()) return Result.failure(Exception("订阅 ID 无效"))
         return api.stopSubscriptions(getAuthHeader(), ids).unwrap("停止订阅失败").map { true }
     }
@@ -447,12 +500,14 @@ class QinglongV15Adapter(
             .unwrapTo("获取环境变量失败") { env ->
                 env.data.orEmpty().map { item ->
                     UnifiedEnv(
-                        id = cleanId(item.id),
+                        id = QinglongApiHelpers.cleanId(item.id),
                         name = item.name,
                         value = item.value,
                         remarks = item.remarks,
                         // EnvStatus: 0=normal, 1=disabled
-                        enabled = item.status == 0
+                        enabled = item.status == 0,
+                        labels = item.labels ?: emptyList(),
+                        isPinned = item.isPinned == 1
                     )
                 }
             }
@@ -463,12 +518,12 @@ class QinglongV15Adapter(
         if (env.name.isBlank()) {
             return Result.failure(Exception("变量名不能为空"))
         }
-        val isNew = env.id.isEmpty() || toId(env.id) == null
+        val isNew = env.id.isEmpty() || QinglongApiHelpers.toId(env.id) == null
         return (if (isNew) {
             api.createEnvs(getAuthHeader(), listOf(QlCreateEnvReq(env.name.trim(), env.value, env.remarks ?: "")))
                 .unwrap("创建环境变量失败")
         } else {
-            val id: Any = toId(env.id) ?: env.id
+            val id: Any = QinglongApiHelpers.toId(env.id) ?: env.id
             api.updateEnv(getAuthHeader(), QlUpdateEnvReq(id, env.name.trim(), env.value, env.remarks ?: ""))
                 .unwrap("更新环境变量失败")
         }).map { true }
@@ -476,7 +531,7 @@ class QinglongV15Adapter(
 
     override suspend fun toggleEnv(envId: String, enable: Boolean): Result<Boolean> {
         ensureAuth()
-        val id = toId(envId) ?: return Result.failure(Exception("环境变量 ID 无效"))
+        val id = QinglongApiHelpers.toId(envId) ?: return Result.failure(Exception("环境变量 ID 无效"))
         return (if (enable) api.enableEnvs(getAuthHeader(), listOf(id))
         else api.disableEnvs(getAuthHeader(), listOf(id)))
             .unwrap("切换变量状态失败").map { true }
@@ -484,9 +539,44 @@ class QinglongV15Adapter(
 
     override suspend fun deleteEnv(envIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(envIds)
+        val ids = QinglongApiHelpers.toIds(envIds)
         if (ids.isEmpty()) return Result.failure(Exception("环境变量 ID 无效"))
         return api.deleteEnvs(getAuthHeader(), ids).unwrap("删除环境变量失败").map { true }
+    }
+
+    override suspend fun pinEnv(envIds: List<String>): Result<Boolean> {
+        ensureAuth()
+        val ids = QinglongApiHelpers.toIds(envIds)
+        if (ids.isEmpty()) return Result.failure(Exception("环境变量 ID 无效"))
+        return api.pinEnvs(getAuthHeader(), ids).unwrap("置顶失败").map { true }
+    }
+
+    override suspend fun unpinEnv(envIds: List<String>): Result<Boolean> {
+        ensureAuth()
+        val ids = QinglongApiHelpers.toIds(envIds)
+        if (ids.isEmpty()) return Result.failure(Exception("环境变量 ID 无效"))
+        return api.unpinEnvs(getAuthHeader(), ids).unwrap("取消置顶失败").map { true }
+    }
+
+    override suspend fun moveEnv(envId: String, fromIndex: Int, toIndex: Int): Result<Boolean> {
+        ensureAuth()
+        val id = QinglongApiHelpers.toId(envId) ?: return Result.failure(Exception("环境变量 ID 无效"))
+        return api.moveEnv(getAuthHeader(), id.toString(), QlEnvMoveReq(fromIndex.toLong(), toIndex.toLong()))
+            .unwrap("移动位置失败").map { true }
+    }
+
+    override suspend fun batchEnableEnvs(envIds: List<String>): Result<Boolean> {
+        ensureAuth()
+        val ids = QinglongApiHelpers.toIds(envIds)
+        if (ids.isEmpty()) return Result.failure(Exception("环境变量 ID 无效"))
+        return api.enableEnvs(getAuthHeader(), ids).unwrap("批量启用失败").map { true }
+    }
+
+    override suspend fun batchDisableEnvs(envIds: List<String>): Result<Boolean> {
+        ensureAuth()
+        val ids = QinglongApiHelpers.toIds(envIds)
+        if (ids.isEmpty()) return Result.failure(Exception("环境变量 ID 无效"))
+        return api.disableEnvs(getAuthHeader(), ids).unwrap("批量禁用失败").map { true }
     }
 
     /**
@@ -531,7 +621,7 @@ class QinglongV15Adapter(
                 ?.let { parseCronArray(it) }.orEmpty()
             val byName = current.filter { it.name != null }.groupBy { it.name!! }
             fun idsOf(names: List<String>): List<Long> =
-                names.mapNotNull { n -> byName[n]?.firstOrNull()?.id?.let { cleanId(it).toLongOrNull() } }
+                names.mapNotNull { n -> byName[n]?.firstOrNull()?.id?.let { QinglongApiHelpers.cleanId(it).toLongOrNull() } }
             val disabledIds = idsOf(wantDisabled)
             val pinnedIds = idsOf(wantPinned)
             if (disabledIds.isNotEmpty()) api.disableCrons(getAuthHeader(), disabledIds).unwrap("恢复禁用状态失败")
@@ -548,7 +638,7 @@ class QinglongV15Adapter(
         val skipped = envs.size - valid.size
         if (valid.isEmpty()) return Result.success(RestoreReport("环境变量", envs.size, 0, skipped, emptyList()))
 
-        val invalid = valid.filter { !ENV_NAME_REGEX.matches(it.name) }
+        val invalid = valid.filter { !Regex(QinglongApiHelpers.ENV_NAME_REGEX).matches(it.name) }
         if (invalid.isNotEmpty()) {
             return Result.success(
                 RestoreReport(
@@ -587,7 +677,7 @@ class QinglongV15Adapter(
                 val wantDisabled = valid.filter { !it.enabled }.map { it.name }
                 if (wantDisabled.isNotEmpty()) {
                     val current = api.getEnvs(getAuthHeader()).unwrap("回查变量列表失败").getOrNull()?.data.orEmpty()
-                    val ids = current.filter { wantDisabled.contains(it.name) }.mapNotNull { cleanId(it.id).toLongOrNull() }
+                    val ids = current.filter { wantDisabled.contains(it.name) }.mapNotNull { QinglongApiHelpers.cleanId(it.id).toLongOrNull() }
                     if (ids.isNotEmpty()) api.disableEnvs(getAuthHeader(), ids).unwrap("恢复禁用状态失败")
                 }
                 return Result.success(RestoreReport("环境变量", envs.size, ok, skipped + dupSkipped, errors))
@@ -598,7 +688,7 @@ class QinglongV15Adapter(
         val wantDisabled = valid.filter { !it.enabled }.map { it.name }
         if (wantDisabled.isNotEmpty()) {
             val current = api.getEnvs(getAuthHeader()).unwrap("回查变量列表失败").getOrNull()?.data.orEmpty()
-            val ids = current.filter { wantDisabled.contains(it.name) }.mapNotNull { cleanId(it.id).toLongOrNull() }
+            val ids = current.filter { wantDisabled.contains(it.name) }.mapNotNull { QinglongApiHelpers.cleanId(it.id).toLongOrNull() }
             if (ids.isNotEmpty()) api.disableEnvs(getAuthHeader(), ids).unwrap("恢复禁用状态失败")
         }
 
@@ -612,7 +702,7 @@ class QinglongV15Adapter(
     override suspend fun importEnvs(envs: List<UnifiedEnv>): Result<Int> {
         ensureAuth()
         if (envs.isEmpty()) return Result.failure(Exception("没有可导入的环境变量"))
-        val invalid = envs.filter { !ENV_NAME_REGEX.matches(it.name) }
+        val invalid = envs.filter { !Regex(QinglongApiHelpers.ENV_NAME_REGEX).matches(it.name) }
         if (invalid.isNotEmpty()) {
             return Result.failure(
                 Exception(
@@ -660,7 +750,7 @@ class QinglongV15Adapter(
             name = nodeName,
             path = nodePath,
             isDir = isDirectory,
-            size = if (isDirectory) null else formatBytes(item.size),
+            size = if (isDirectory) null else QinglongApiHelpers.formatBytes(item.size),
             mtime = item.mtime,
             children = item.children?.map { mapScriptNode(it) }
         )
@@ -670,16 +760,22 @@ class QinglongV15Adapter(
         ensureAuth()
         return api.getScripts(getAuthHeader())
             .unwrapTo("获取青龙脚本列表失败") { env ->
-                env.data.orEmpty().map { node ->
-                    // 顶层目录不会带 children，需要按 path 再拉一层
-                    val mapped = mapScriptNode(node)
-                    if (mapped.isDir && mapped.children.isNullOrEmpty()) {
-                        runCatching {
-                            api.getScripts(getAuthHeader(), path = mapped.path)
-                                .unwrap("获取脚本目录失败").getOrNull()?.data
-                                ?.map { mapScriptNode(it) }
-                        }.getOrNull()?.let { mapped.copy(children = it) } ?: mapped
-                    } else mapped
+                val roots = env.data.orEmpty().map { mapScriptNode(it) }
+                // 顶层目录不会自带 children，需要按 path 再拉一层。
+                // 这里并发补拉：**不能改成懒加载**，因为脚本搜索（filterScriptTree）依赖完整树，
+                // 未展开的目录若没有子节点数据会导致搜不到文件。
+                // 并发化可在保持搜索能力的前提下，把 N 次串行请求压成一次 RTT 的耗时。
+                coroutineScope {
+                    roots.map { node ->
+                        async {
+                            if (!node.isDir || !node.children.isNullOrEmpty()) return@async node
+                            runCatching {
+                                api.getScripts(getAuthHeader(), path = node.path)
+                                    .unwrap("获取脚本目录失败").getOrNull()?.data
+                                    ?.map { mapScriptNode(it) }
+                            }.getOrNull()?.let { node.copy(children = it) } ?: node
+                        }
+                    }.awaitAll()
                 }
             }
     }
@@ -780,18 +876,19 @@ class QinglongV15Adapter(
     }
 
     private fun QlDepItem.toUnifiedDep(): UnifiedDep = UnifiedDep(
-        id = cleanId(id),
+        id = QinglongApiHelpers.cleanId(id),
         name = name,
         version = "",
         type = depTypeToString(type),
         remarks = remark,
         // DependenceStatus: 0=installing,1=installed,2=installFailed,3=removing,4=removed,5=removeFailed,6=queued,7=cancelled
-        status = status ?: 1,
+        // 服务端返回 null 表示状态未知（不应默认为1"已安装"，否则安装失败的包会一直显示为已安装）
+        status = status,
         log = log?.joinToString("\n")
     )
 
     private fun depTypeToString(raw: Any?): String = when (raw) {
-        is Number -> when (raw.toInt()) { 0 -> "nodejs"; 1 -> "python3"; 2 -> "linux"; else -> "nodejs" }
+        is Number -> when (raw.toLong()) { 0L -> "nodejs"; 1L -> "python3"; 2L -> "linux"; else -> "nodejs" }
         is String -> when (raw.lowercase()) {
             "0", "nodejs", "node" -> "nodejs"
             "1", "python3", "python" -> "python3"
@@ -818,7 +915,7 @@ class QinglongV15Adapter(
 
     override suspend fun batchDeleteDeps(depIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(depIds)
+        val ids = QinglongApiHelpers.toIds(depIds)
         if (ids.isEmpty()) return Result.failure(Exception("依赖 ID 列表为空或无效"))
         val normal = api.deleteDependencies(getAuthHeader(), ids).unwrap("删除依赖失败")
         if (normal.isSuccess) return Result.success(true)
@@ -829,7 +926,7 @@ class QinglongV15Adapter(
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(depIds)
+        val ids = QinglongApiHelpers.toIds(depIds)
         if (ids.isEmpty()) return Result.failure(Exception("依赖 ID 列表为空或无效"))
         return api.forceDeleteDependencies(getAuthHeader(), ids)
             .unwrap("强制清除记录失败").map { true }
@@ -838,7 +935,7 @@ class QinglongV15Adapter(
     /** 重新安装依赖：PUT /api/dependencies/reinstall */
     override suspend fun reinstallDeps(depIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(depIds)
+        val ids = QinglongApiHelpers.toIds(depIds)
         if (ids.isEmpty()) return Result.failure(Exception("依赖 ID 无效"))
         return api.reinstallDependencies(getAuthHeader(), ids)
             .unwrap("重新安装依赖失败").map { true }
@@ -847,7 +944,7 @@ class QinglongV15Adapter(
     /** 取消正在进行的安装：PUT /api/dependencies/cancel */
     override suspend fun cancelDeps(depIds: List<String>): Result<Boolean> {
         ensureAuth()
-        val ids = toIds(depIds)
+        val ids = QinglongApiHelpers.toIds(depIds)
         if (ids.isEmpty()) return Result.failure(Exception("依赖 ID 无效"))
         return api.cancelDependencies(getAuthHeader(), ids)
             .unwrap("取消安装失败").map { true }
@@ -855,32 +952,70 @@ class QinglongV15Adapter(
 
     override suspend fun getDepLog(depId: String): Result<String> {
         ensureAuth()
-        return api.getDependencyDetail(getAuthHeader(), depId)
-            .unwrapTo("获取依赖日志失败") { env ->
-                env.data?.log?.joinToString("\n")?.takeIf { it.isNotBlank() }
-                    ?: "暂无日志输出"
-            }
+        return try {
+            api.getDependencies(getAuthHeader(), null)
+                .unwrapTo("获取依赖日志失败") { env ->
+                    val items = parseDepArray(env.data)
+                    items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }
+                        ?.log?.joinToString("\n")?.takeIf { it.isNotBlank() }
+                        ?: "暂无日志输出"
+                }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     // ---------------------------------------------------------------- 7. 日志流
 
-    /** 轮询任务日志，任务结束后自动停止 */
-    override fun streamLog(logId: String): Flow<String> = flow {
-        var last = ""
-        while (currentCoroutineContext().isActive) {
-            val res = api.getCronLog(getAuthHeader(), logId, tail = true).unwrap("读取日志失败")
-            if (res.isFailure) {
-                emit("[ERROR] ${res.exceptionOrNull()?.message}")
-                return@flow
+    /** 轮询任务实时日志，任务结束后自动停止。
+     * 与前端 logModal.tsx 完全一致：
+     *   - 首次 GET /api/crons/{id}/log?limit=256KB&tail=true
+     *   * 后续 GET /api/crons/{id}/log?limit=256KB&offset={nextOffset}
+     *   - 始终维护完整累积内容：log = isFirst ? chunk : prevLog + chunk
+     *   - 每次 emit 完整累积内容（不 emit 增量片段）
+     *   - 使用 callbackFlow + try/catch 保证异常不泄漏到收集器
+     */
+    override fun streamLog(logId: String): Flow<String> = callbackFlow {
+        var offset: Long? = null
+        var accumulated = ""
+        val ctx = currentCoroutineContext()
+        val startAt = System.currentTimeMillis()
+        // 自适应退避：有增量回到 2s，空转逐步拉长到 10s，避免长任务期间高频空刷服务端
+        val backoffSteps = longArrayOf(2000L, 3000L, 5000L, 8000L, 10000L)
+        var idleStep = 0
+        try {
+            while (ctx.isActive) {
+                // 硬性时长上限，避免任务卡死时无限轮询
+                if (System.currentTimeMillis() - startAt > MAX_LOG_STREAM_DURATION_MS) {
+                    trySend(accumulated + "\n[INFO] 日志流已达 10 分钟上限，已自动停止。")
+                    break
+                }
+                val isFirst = offset == null
+                val res = api.getCronLog(
+                    getAuthHeader(), logId,
+                    offset = offset,
+                    limit = 256 * 1024,
+                    tail = isFirst
+                ).unwrap("读取日志失败")
+                if (res.isFailure) {
+                    trySend("[ERROR] ${res.exceptionOrNull()?.message ?: "请求失败"}")
+                    break
+                }
+                val chunk = res.getOrNull()
+                val newChunk = chunk?.data?.takeIf { it.isNotEmpty() } ?: ""
+                // 与前端一致：首次替换，后续追加
+                accumulated = if (isFirst) newChunk else accumulated + newChunk
+                if (accumulated.isNotEmpty()) trySend(accumulated)
+                val stillRunning = chunk?.logStatus == "running"
+                if (!stillRunning) break
+                offset = chunk.nextOffset
+                idleStep = if (newChunk.isNotEmpty()) 0 else minOf(idleStep + 1, backoffSteps.lastIndex)
+                delay(backoffSteps[idleStep])
             }
-            val chunk = res.getOrNull()
-            val content = chunk?.data ?: ""
-            if (content != last) {
-                last = content
-                emit(content)
-            }
-            if (chunk?.logStatus != "running") return@flow
-            delay(2000)
+        } catch (e: Exception) {
+            trySend("[ERROR] ${e.message ?: "日志流异常"}")
+        } finally {
+            close()
         }
     }
 
@@ -961,7 +1096,7 @@ class QinglongV15Adapter(
     override suspend fun stopRunningTask(taskId: String, instanceId: String?): Result<Boolean> {
         ensureAuth()
         val instance = instanceId ?: return stopTask(listOf(taskId))
-        val cronId = toId(taskId)?.toString() ?: taskId.substringBefore('.')
+        val cronId = QinglongApiHelpers.toId(taskId)?.toString() ?: taskId.substringBefore('.')
         return api.stopCronInstance(getAuthHeader(), cronId, instance)
             .unwrap("停止运行实例失败").map { true }
     }
@@ -972,7 +1107,7 @@ class QinglongV15Adapter(
         ensureAuth()
         return api.getLoginLogs(getAuthHeader())
             .unwrapTo("获取登录日志失败") { env ->
-                parseJsonArray(env.data).mapNotNull { elem ->
+                QinglongApiHelpers.parseJsonArray(env.data).mapNotNull { elem ->
                     if (!elem.isJsonObject) return@mapNotNull null
                     elem.asJsonObject.entrySet().associate { (k, v) ->
                         k to (if (v.isJsonPrimitive) v.asString else v.toString())
@@ -1073,10 +1208,10 @@ class QinglongV15Adapter(
             }
 
             fun com.google.gson.JsonObject?.intOf(key: String): Int? =
-                this?.get(key)?.takeIf { it.isJsonPrimitive }?.asNumber?.toInt()
+                this?.get(key)?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asNumber.toInt() }.getOrNull() }
 
             fun com.google.gson.JsonObject?.longOf(key: String): Long? =
-                this?.get(key)?.takeIf { it.isJsonPrimitive }?.asNumber?.toLong()
+                this?.get(key)?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asNumber.toLong() }.getOrNull() }
 
             fun com.google.gson.JsonObject?.strOf(key: String): String? =
                 this?.get(key)?.takeIf { it.isJsonPrimitive }?.asString
@@ -1101,14 +1236,14 @@ class QinglongV15Adapter(
                     c.labels?.forEach { l -> lMap[l] = (lMap[l] ?: 0) + 1 }
                 }
                 lMap.map { (k, v) -> LabelStat(k, v) }
-            } else parseLabelArray(labels)
+            } else QinglongDashboardHelpers.parseLabelArray(labels)
 
-            val parsedTopCount = parseRankArray(topCount) { obj ->
+            val parsedTopCount = QinglongDashboardHelpers.parseRankArray(topCount) { obj ->
                 TaskRank(
-                    rank = obj.get("rank")?.asInt ?: 0,
-                    name = obj.get("name")?.asString ?: "未知任务",
-                    value = "${obj.get("runCount")?.asInt ?: 0} 次",
-                    detail = "均耗 ${obj.get("avgTime")?.asLong ?: 0}ms · 成功率 ${obj.get("successRate")?.asString ?: "-"}%"
+                    rank = obj.get("rank")?.takeIf { !it.isJsonNull }?.asInt ?: 0,
+                    name = obj.get("name")?.takeIf { !it.isJsonNull }?.asString ?: "未知任务",
+                    value = "${obj.get("runCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0} 次",
+                    detail = "均耗 ${obj.get("avgTime")?.takeIf { !it.isJsonNull }?.asLong ?: 0}ms · 成功率 ${obj.get("successRate")?.takeIf { !it.isJsonNull }?.asString ?: "-"}%"
                 )
             }.ifEmpty {
                 if (fallbackCrons.isNotEmpty()) {
@@ -1136,14 +1271,14 @@ class QinglongV15Adapter(
                     todayFail = overview.longOf("todayFail"),
                     successRate = overview.strOf("successRate"),
                     avgTimeMs = overview.longOf("avgTime"),
-                    trend = parseTrendArray(trend),
+                    trend = QinglongDashboardHelpers.parseTrendArray(trend),
                     topByCount = parsedTopCount,
-                    topByTime = parseRankArray(topTime) { obj ->
+                    topByTime = QinglongDashboardHelpers.parseRankArray(topTime) { obj ->
                         TaskRank(
-                            rank = obj.get("rank")?.asInt ?: 0,
-                            name = obj.get("name")?.asString ?: "未知任务",
-                            value = "${obj.get("avgTime")?.asLong ?: 0}ms",
-                            detail = "峰值 ${obj.get("maxTime")?.asLong ?: 0}ms"
+                            rank = obj.get("rank")?.takeIf { !it.isJsonNull }?.asInt ?: 0,
+                            name = obj.get("name")?.takeIf { !it.isJsonNull }?.asString ?: "未知任务",
+                            value = "${obj.get("avgTime")?.takeIf { !it.isJsonNull }?.asLong ?: 0}ms",
+                            detail = "峰值 ${obj.get("maxTime")?.takeIf { !it.isJsonNull }?.asLong ?: 0}ms"
                         )
                     },
                     labelStats = fallbackLabelStats,
@@ -1154,7 +1289,7 @@ class QinglongV15Adapter(
                             s.strOf("version")?.let { put("青龙内核", "v$it") }
                             s.strOf("platform")?.let { put("系统环境", it) }
                             s.intOf("cpus")?.let { put("CPU 核数", "$it") }
-                            s.longOf("uptime")?.let { put("运行时长", formatSeconds(it)) }
+                            s.longOf("uptime")?.let { put("运行时长", QinglongApiHelpers.formatSeconds(it)) }
                             s.strOf("memUsagePercent")?.let { put("内存占用", "$it%") }
                         }
                     }
@@ -1165,138 +1300,40 @@ class QinglongV15Adapter(
         }
     }
 
-    private fun parseTrendArray(data: com.google.gson.JsonElement?): List<TrendPoint> {
-        if (data?.isJsonArray != true) return emptyList()
-        return data.asJsonArray.mapNotNull { elem ->
-            if (!elem.isJsonObject) return@mapNotNull null
-            val obj = elem.asJsonObject
-            TrendPoint(
-                date = obj.get("date")?.asString ?: "",
-                total = obj.get("total")?.asInt ?: 0,
-                success = obj.get("success")?.asInt ?: 0,
-                fail = obj.get("fail")?.asInt ?: 0
-            )
-        }
-    }
+    // ---------------------------------------------------------------- 系统设置（青龙专有）
 
-    private inline fun parseRankArray(
-        data: com.google.gson.JsonElement?,
-        map: (com.google.gson.JsonObject) -> TaskRank
-    ): List<TaskRank> {
-        if (data?.isJsonArray != true) return emptyList()
-        return data.asJsonArray.mapNotNull { if (it.isJsonObject) map(it.asJsonObject) else null }
-    }
-
-    private fun parseLabelArray(data: com.google.gson.JsonElement?): List<LabelStat> {
-        if (data?.isJsonArray != true) return emptyList()
-        return data.asJsonArray.mapNotNull { elem ->
-            if (!elem.isJsonObject) return@mapNotNull null
-            val obj = elem.asJsonObject
-            LabelStat(
-                label = obj.get("label")?.asString ?: "未分类",
-                count = obj.get("count")?.asInt ?: 0,
-                todayRuns = obj.get("todayRuns")?.asInt ?: 0,
-                successRate = obj.get("successRate")?.asString?.let { "$it%" },
-                avgTimeMs = obj.get("avgTime")?.asLong
-            )
-        }
-    }
-
-    // ---------------------------------------------------------------- 10. 系统设置（青龙专有）
-
-    /**
-     * 读取系统配置里的常用项。
-     * `GET /api/system/config` 返回 SystemInfo，字段随版本变化，
-     * 这里只按名字取需要的键，缺失就返回 null，避免强绑定某个版本的结构。
-     */
+    /** 读取系统配置里的常用项。字段随版本变化，只按名字取需要的键。 */
     suspend fun fetchSystemSettings(): Result<Map<String, String>> {
         ensureAuth()
-        return try {
-            val result = mutableMapOf<String, String>()
-
-            fun extractEntries(target: com.google.gson.JsonObject, prefix: String = "") {
-                target.entrySet().forEach { (k, v) ->
-                    val fullKey = if (prefix.isEmpty()) k else "$prefix.$k"
-                    if (v.isJsonPrimitive) {
-                        result[fullKey] = v.asString
-                        if (!result.containsKey(k)) {
-                            result[k] = v.asString
-                        }
-                    } else if (v.isJsonObject) {
-                        extractEntries(v.asJsonObject, fullKey)
-                    }
-                }
-            }
-
-            runCatching {
-                val resp = api.getSystemConfig(getAuthHeader())
-                val env = resp.unwrap("读取配置失败").getOrNull()
-                val obj = env?.data?.takeIf { it.isJsonObject }?.asJsonObject
-                if (obj != null) {
-                    extractEntries(obj)
-                }
-            }
-
-            if (!result.containsKey("logRemoveFrequency") || !result.containsKey("cronConcurrency")) {
-                runCatching {
-                    val sysResp = api.getSystemInfo(getAuthHeader())
-                    val sysEnv = sysResp.unwrap("读取系统信息失败").getOrNull()
-                    val sysObj = sysEnv?.data?.takeIf { it.isJsonObject }?.asJsonObject
-                    if (sysObj != null) {
-                        extractEntries(sysObj)
-                    }
-                }
-            }
-
-            Result.success(result)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return api.fetchSystemSettings(getAuthHeader())
     }
 
     /** 日志保留天数，null 表示不自动清理 */
     suspend fun saveLogRemoveFrequency(days: Int?): Result<Boolean> {
         ensureAuth()
-        return api.updateLogRemoveFrequency(getAuthHeader(), mapOf("logRemoveFrequency" to days))
-            .unwrap("保存日志保留天数失败").map { true }
+        return api.saveLogRemoveFrequency(getAuthHeader(), days)
     }
 
     /** 任务并发数，null 表示不限制 */
     suspend fun saveCronConcurrency(count: Int?): Result<Boolean> {
         ensureAuth()
-        return api.updateCronConcurrency(getAuthHeader(), mapOf("cronConcurrency" to count))
-            .unwrap("保存任务并发数失败").map { true }
+        return api.saveCronConcurrency(getAuthHeader(), count)
     }
 
     suspend fun sendTestNotify(title: String, content: String): Result<Boolean> {
         ensureAuth()
-        return api.testNotify(getAuthHeader(), mapOf("title" to title, "content" to content))
-            .unwrap("发送测试通知失败").map { true }
+        return api.sendTestNotify(getAuthHeader(), title, content)
     }
 
     /** 修改配置后需重载才会对调度器生效 */
     suspend fun reloadSystem(type: String? = null): Result<Boolean> {
         ensureAuth()
-        return api.reloadSystem(getAuthHeader(), mapOf("type" to type))
-            .unwrap("重载配置失败").map { true }
+        return api.reloadSystem(getAuthHeader(), type)
     }
 
     // ---------------------------------------------------------------- 工具
 
-    private fun parseJsonArray(data: com.google.gson.JsonElement?): List<com.google.gson.JsonElement> =
-        when {
-            data == null -> emptyList()
-            data.isJsonArray -> data.asJsonArray.toList()
-            data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
-                data.asJsonObject.getAsJsonArray("data").toList()
-            else -> emptyList()
-        }
 
-    private fun formatSeconds(seconds: Long): String = when {
-        seconds < 60 -> "${seconds}s"
-        seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
-        else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
-    }
 
     // ---------- JsonObject 空安全取值 ----------
     // Gson 的 JsonNull 不是 null，而是单例对象；在它上面调 asString / asInt /
@@ -1317,17 +1354,6 @@ class QinglongV15Adapter(
             ?.firstOrNull { it.isJsonPrimitive }
             ?.let { runCatching { it.asNumber.toDouble() }.getOrNull() }
 
-    private fun formatBytes(bytes: Long?): String? {
-        if (bytes == null || bytes <= 0) return null
-        return when {
-            bytes < 1024 -> "$bytes B"
-            bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
-            else -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-        }
-    }
 
-    private companion object {
-        /** 后端 Joi 约束：name 必须是合法 shell 变量名 */
-        val ENV_NAME_REGEX = Regex("^[a-zA-Z_][0-9a-zA-Z_]*$")
-    }
+
 }

@@ -273,7 +273,7 @@ fun ExecutionHistoryScreen(
             }
 
             // 3. 历史记录列表（支持按脚本归类分组）
-            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+            Box(modifier = Modifier.weight(1f)) {
                 PullToRefreshBox(
                     isRefreshing = isLoading,
                     onRefresh = { loadData() },

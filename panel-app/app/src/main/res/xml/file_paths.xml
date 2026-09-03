@@ -4,13 +4,17 @@
          Android 11+ 上第三方文件管理器（MT 管理器等）无需授权即可浏览 -->
     <external-media-path
         name="media_logs"
-        path="logs/" />
+        path="." />
     <!-- 回退：/sdcard/Android/data/<包名>/files/logs -->
     <external-files-path
         name="external_logs"
-        path="logs/" />
+        path="logs" />
     <!-- 再回退：<内部存储>/files/logs -->
     <files-path
         name="internal_logs"
-        path="logs/" />
+        path="logs" />
+    <!-- APK 安装：通过 cacheDir 下载并安装新版本 -->
+    <cache-path
+        name="cache_apk"
+        path="." />
 </paths>

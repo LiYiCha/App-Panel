@@ -181,4 +181,45 @@ interface QinglongV10Api {
         @Header("Authorization") auth: String,
         @Body ids: List<Long>
     ): Response<QlCommonResp>
+
+    // 6. 任务置顶（2.10+ 支持）
+    @PUT("api/crons/pin")
+    suspend fun pinCrons(
+        @Header("Authorization") auth: String,
+        @Body ids: List<Long>
+    ): Response<QlCommonResp>
+
+    @PUT("api/crons/unpin")
+    suspend fun unpinCrons(
+        @Header("Authorization") auth: String,
+        @Body ids: List<Long>
+    ): Response<QlCommonResp>
+
+    // 7. 用户登录日志
+    @GET("api/user/login-log")
+    suspend fun getLoginLogs(
+        @Header("Authorization") auth: String
+    ): Response<QlRawResp>
+
+    // 8. 仪表盘（系统监控）
+    @GET("api/dashboard/system")
+    suspend fun getDashboardSystem(
+        @Header("Authorization") auth: String
+    ): Response<QlRawResp>
+
+    // 9. 系统日志目录
+    @GET("api/logs")
+    suspend fun getLogsTree(
+        @Header("Authorization") auth: String
+    ): Response<QlRawResp>
+
+    @GET("api/logs/detail")
+    suspend fun getLogDetail(
+        @Header("Authorization") auth: String,
+        @Query("file") file: String,
+        @Query("path") path: String? = null,
+        @Query("offset") offset: Long? = null,
+        @Query("limit") limit: Int? = null,
+        @Query("tail") tail: Boolean? = null
+    ): Response<QlLogChunkResp>
 }

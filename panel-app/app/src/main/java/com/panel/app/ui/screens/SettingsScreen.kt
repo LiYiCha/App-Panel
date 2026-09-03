@@ -31,6 +31,7 @@ import com.panel.app.util.AppUpdateInfo
 import com.panel.app.util.AppUpdateManager
 import com.panel.app.util.DownloadManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -46,6 +47,7 @@ data class DownloadStateHolder(
     var dlRetries: Int = 0,
     var dlError: String? = null,
     var dlDone: Boolean = false,
+    var dlDownloading: Boolean = false,
 )
 
 /**
@@ -64,8 +66,10 @@ fun SettingsScreen(
     onOpenDashboard: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
-    onOpenExecutionHistory: () -> Unit = {},
+    onOpenLogHistory: () -> Unit = {},
     onOpenSystemSettings: () -> Unit = {},
+    onOpenPermissions: () -> Unit = {},
+    onOpenSubscriptionsScreen: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -84,8 +88,9 @@ fun SettingsScreen(
     var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
 
-    // 下载状态（统一持有，避免多变量作用域混乱）
-    val dlHolder = remember { DownloadStateHolder() }
+    // 下载状态（单个 Compose State，所有回调在主线程更新以触发 recompose）
+    val dlHolder = remember { mutableStateOf(DownloadStateHolder()) }
+    var dlJob by remember { mutableStateOf<Job?>(null) }
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
@@ -160,17 +165,6 @@ fun SettingsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Surface(
-                                    color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFFF9800).copy(alpha = 0.15f) else Color(0xFF2196F3).copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙",
-                                        fontSize = 9.sp,
-                                        color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFE65100) else Color(0xFF1565C0),
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
                             }
                             Text(
                                 text = currentPanel.baseUrl,
@@ -254,28 +248,25 @@ fun SettingsScreen(
                         Text("面板管理", fontSize = 11.sp)
                     }
 
-                    OutlinedButton(
+                    IconButton(
                         onClick = {
                             viewModel.refreshPanelRemoteData(currentPanel)
                             Toast.makeText(context, "正在刷新面板数据...", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(32.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                     }
+                    Text("刷新", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     var showLogoutConfirm by remember { mutableStateOf(false) }
-                    OutlinedButton(
+                    IconButton(
                         onClick = { showLogoutConfirm = true },
-                        modifier = Modifier.size(32.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "退出", modifier = Modifier.size(16.dp))
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "退出", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                     }
+                    Text("退出", fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
 
                     if (showLogoutConfirm) {
                         AlertDialog(
@@ -324,12 +315,12 @@ fun SettingsScreen(
             )
             ModernNavTile(
                 icon = Icons.Default.History,
-                title = "执行历史中心",
-                desc = "流水记录与终端",
+                title = "历史日志",
+                desc = "任务执行流水记录",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenExecutionHistory
+                onClick = onOpenLogHistory
             )
         }
 
@@ -345,13 +336,13 @@ fun SettingsScreen(
                 onClick = onOpenDeps
             )
             ModernNavTile(
-                icon = Icons.AutoMirrored.Filled.Article,
-                title = "服务端日志",
-                desc = "脚本文件日志",
+                icon = Icons.Default.SyncAlt,
+                title = "仓库订阅",
+                desc = "自动同步代码仓库",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenServerLogs
+                onClick = onOpenSubscriptionsScreen
             )
         }
 
@@ -377,8 +368,17 @@ fun SettingsScreen(
             )
         }
 
-        // Row 4
+        // Row 4: 订阅管理 + 系统高级配置
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ModernNavTile(
+                icon = Icons.Default.Sync,
+                title = "订阅仓库管理",
+                desc = "添加/同步定时仓库源",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenSubscriptionsScreen
+            )
             ModernNavTile(
                 icon = Icons.Default.Tune,
                 title = "系统高级配置",
@@ -387,6 +387,17 @@ fun SettingsScreen(
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenSystemSettings
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ModernNavTile(
+                icon = Icons.Default.Shield,
+                title = "账户权限管理",
+                desc = "用户与权限设置",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenPermissions
             )
             ModernNavTile(
                 icon = Icons.Default.Terminal,
@@ -453,6 +464,20 @@ fun SettingsScreen(
                     } else {
                         Text("v${BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 应用权限管理入口
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenPermissions() }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("应用权限管理", fontSize = 12.sp)
+                    Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
@@ -526,18 +551,22 @@ fun SettingsScreen(
     // 版本更新弹窗（含下载进度 / 失败 / 完成安装）
     if (showUpdateDialog && updateInfo != null) {
         val info = updateInfo!!
+        // 检查缓存目录是否已有已下载的 APK，允许直接安装无需重新下载
+        val cachedApk = File(context.cacheDir, "Panel-App-download.apk").takeIf { it.exists() && it.length() > 0 }
         AlertDialog(
             onDismissRequest = {
-                if (dlHolder.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
-                    DownloadManager.cancel(dlHolder.downloadUrl ?: "")
+                dlJob?.cancel()
+                if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                    DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
                 }
                 showUpdateDialog = false
             },
             title = {
                 Text(
                     when {
-                        dlHolder.dlState != null && dlHolder.dlState!!.status == DownloadManager.State.Status.DONE -> "下载完成"
-                        dlHolder.dlError != null -> "下载失败"
+                        cachedApk != null && !dlHolder.value.dlDone -> "APK 已就绪"
+                        dlHolder.value.dlState != null && dlHolder.value.dlState!!.status == DownloadManager.State.Status.DONE -> "下载完成"
+                        dlHolder.value.dlError != null -> "下载失败"
                         else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
                     },
                     fontSize = 15.sp
@@ -550,9 +579,17 @@ fun SettingsScreen(
                     if (info.publishedAt.isNotBlank() && info.publishedAt != "--") {
                         Text("发布: ${info.publishedAt}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                     }
+                    if (cachedApk != null) {
+                        val sizeStr = when {
+                            cachedApk.length() >= 1024 * 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024 / 1024)} MB"
+                            cachedApk.length() >= 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024)} KB"
+                            else -> "${cachedApk.length()} B"
+                        }
+                        Text("缓存 APK: ${cachedApk.name} ($sizeStr)", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text("更新说明:", fontSize = 11.sp, style = MaterialTheme.typography.titleSmall)
                     Surface(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
@@ -560,43 +597,33 @@ fun SettingsScreen(
                             text = info.releaseNotes,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(8.dp)
+                            modifier = Modifier.padding(8.dp).verticalScroll(rememberScrollState())
                         )
                     }
 
-                    // 下载进度卡
-                    if (dlHolder.dlState != null) {
+                    // 下载进度卡（仅在有效状态下显示）
+                    if (dlHolder.value.dlDownloading || dlHolder.value.dlState != null || dlHolder.value.dlPercent > 0 || dlHolder.value.dlError != null || dlHolder.value.dlDone) {
                         DownloadProgressCard(
-                            downloaded = dlHolder.dlDownloaded,
-                            total = dlHolder.dlTotal,
-                            percent = dlHolder.dlPercent,
-                            speed = dlHolder.dlSpeed,
-                            retries = dlHolder.dlRetries,
-                            isError = dlHolder.dlError != null,
-                            isDone = dlHolder.dlDone
+                            downloaded = dlHolder.value.dlDownloaded,
+                            total = dlHolder.value.dlTotal,
+                            percent = dlHolder.value.dlPercent,
+                            speed = dlHolder.value.dlSpeed,
+                            retries = dlHolder.value.dlRetries,
+                            isError = dlHolder.value.dlError != null,
+                            isDone = dlHolder.value.dlDone,
+                            isDownloading = dlHolder.value.dlDownloading
                         )
                     }
                 }
             },
             confirmButton = {
                 when {
-                    dlHolder.dlError != null -> {
+                    cachedApk != null && !dlHolder.value.dlDone -> {
+                        // 已有缓存 APK，直接安装
                         Button(
                             onClick = {
-                                dlHolder.dlError = null
-                                dlHolder.downloadUrl?.let { url ->
-                                    startDownload(context, url, dlHolder)
-                                }
-                            }
-                        ) { Text("重新下载", fontSize = 12.sp) }
-                    }
-                    dlHolder.dlDone -> {
-                        Button(
-                            onClick = {
-                                val apkFile = dlHolder.dlState?.file ?: return@Button
-                                DownloadManager.installAndCleanup(context, apkFile)
-                                dlHolder.dlDone = false
-                                dlHolder.dlState = null
+                                DownloadManager.installAndCleanup(context, cachedApk)
+                                dlHolder.value = dlHolder.value.copy(dlDone = true)
                                 showUpdateDialog = false
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
@@ -606,11 +633,41 @@ fun SettingsScreen(
                             Text("立即安装", fontSize = 12.sp)
                         }
                     }
-                    info.hasUpdate && !info.downloadUrl.isNullOrEmpty() -> {
+                    dlHolder.value.dlError != null -> {
                         Button(
                             onClick = {
-                                dlHolder.downloadUrl = info.downloadUrl
-                                startDownload(context, info.downloadUrl, dlHolder)
+                                dlHolder.value = dlHolder.value.copy(dlError = null, dlRetries = 0)
+                                dlHolder.value.downloadUrl?.let { url ->
+                                    dlJob?.cancel()
+                                    dlJob = coroutineScope.launch(Dispatchers.IO) {
+                                        runDownload(context, url, dlHolder)
+                                    }
+                                }
+                            }
+                        ) { Text("重新下载", fontSize = 12.sp) }
+                    }
+                    dlHolder.value.dlDone -> {
+                        Button(
+                            onClick = {
+                                val apkFile = dlHolder.value.dlState?.file ?: return@Button
+                                DownloadManager.installAndCleanup(context, apkFile)
+                                dlHolder.value = dlHolder.value.copy(dlDone = false, dlState = null)
+                                showUpdateDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即安装", fontSize = 12.sp)
+                        }
+                    }
+                    !info.downloadUrl.isNullOrEmpty() -> {
+                        Button(
+                            onClick = {
+                                dlJob?.cancel()
+                                dlJob = coroutineScope.launch(Dispatchers.IO) {
+                                    runDownload(context, info.downloadUrl, dlHolder)
+                                }
                             }
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -626,10 +683,11 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        if (dlHolder.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
-                            DownloadManager.cancel(dlHolder.downloadUrl ?: "")
+                        dlJob?.cancel()
+                        if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                            DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
                         }
-                        resetDownloadState(dlHolder)
+                        resetDownloadState(dlHolder.value)
                         showUpdateDialog = false
                     }
                 ) { Text("取消", fontSize = 12.sp) }
@@ -638,74 +696,68 @@ fun SettingsScreen(
     }
 }
 
-// ── 下载辅助函数（顶层，接受 context 参数以避免作用域问题）────────────────
-fun startDownload(
+// ── 下载辅助函数 ────────────────────────────────
+/**
+ * 启动下载；回调使用 Handler 切回主线程更新 holder，确保 Compose MutableState 在主线程写入。
+ */
+fun runDownload(
     context: android.content.Context,
     url: String,
-    stateHolder: DownloadStateHolder,
+    holder: MutableState<DownloadStateHolder>,
 ) {
-        val apkFile = File(context.cacheDir, "Panel-App-download.apk")
-        stateHolder.downloadUrl = url
-        stateHolder.dlDone = false
-        stateHolder.dlError = null
-        stateHolder.dlRetries = 0
-        stateHolder.dlPercent = 0
-        stateHolder.dlSpeed = 0L
-        DownloadManager.download(
-            url = url,
-            outputFile = apkFile,
-            onProgress = { bytes, total, percent, speed ->
-                stateHolder.dlDownloaded = bytes
-                stateHolder.dlTotal = total
-                stateHolder.dlPercent = percent
-                stateHolder.dlSpeed = speed
-            },
-            onSuccess = { file ->
-                stateHolder.dlDone = true
-                stateHolder.dlState = DownloadManager.State(
-                    url = url, file = file, downloaded = file.length(),
-                    total = file.length(), percent = 100, retries = 0,
-                    status = DownloadManager.State.Status.DONE
-                )
-                // 切回主线程显示 Toast
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(context, "APK 下载完成，可以安装了", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onFailure = { msg ->
-                stateHolder.dlError = msg
-                stateHolder.dlState = null
-                // 切回主线程显示 Toast
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(context, "下载失败: $msg", Toast.LENGTH_LONG).show()
-                }
-            },
-            onRetry = {
-                stateHolder.dlRetries++
-                stateHolder.dlError = null
-                // 切回主线程显示 Toast
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(
-                        context,
-                        "自动重试中... (${stateHolder.dlRetries}/${DownloadManager.MAX_RETRIES})",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
+    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+
+    // 重置状态并开始下载（主线程）
+    mainHandler.post {
+        holder.value = holder.value.copy(
+            downloadUrl = url, dlDone = false, dlError = null, dlRetries = 0,
+            dlPercent = 0, dlSpeed = 0L, dlDownloading = true
         )
     }
 
+    DownloadManager.download(
+        url = url,
+        outputFile = apkFile,
+        onProgress = { bytes, total, percent, speed ->
+            mainHandler.post {
+                holder.value = holder.value.copy(dlDownloaded = bytes, dlTotal = total, dlPercent = percent, dlSpeed = speed)
+            }
+        },
+        onSuccess = { file ->
+            mainHandler.post {
+                holder.value = holder.value.copy(
+                    dlDownloading = false, dlDone = true,
+                    dlState = DownloadManager.State(
+                        url = url, file = file, downloaded = file.length(),
+                        total = file.length(), percent = 100, retries = 0,
+                        status = DownloadManager.State.Status.DONE
+                    )
+                )
+                Toast.makeText(context, "APK 下载完成，可以安装了", Toast.LENGTH_SHORT).show()
+            }
+        },
+        onFailure = { msg ->
+            mainHandler.post {
+                holder.value = holder.value.copy(dlDownloading = false, dlError = msg, dlState = null)
+                Toast.makeText(context, "下载失败: $msg", Toast.LENGTH_LONG).show()
+            }
+        },
+        onRetry = {
+            mainHandler.post {
+                holder.value = holder.value.copy(dlRetries = holder.value.dlRetries + 1, dlError = null)
+                Toast.makeText(
+                    context,
+                    "自动重试中... (${holder.value.dlRetries}/${DownloadManager.MAX_RETRIES})",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    )
+}
+
 fun resetDownloadState(stateHolder: DownloadStateHolder) {
     DownloadManager.cancel(stateHolder.downloadUrl ?: "")
-    stateHolder.downloadUrl = null
-    stateHolder.dlState = null
-    stateHolder.dlDownloaded = 0L
-    stateHolder.dlTotal = 0L
-    stateHolder.dlPercent = 0
-    stateHolder.dlSpeed = 0L
-    stateHolder.dlRetries = 0
-    stateHolder.dlError = null
-    stateHolder.dlDone = false
 }
 
 @Composable
@@ -717,6 +769,7 @@ private fun DownloadProgressCard(
     retries: Int,
     isError: Boolean,
     isDone: Boolean,
+    isDownloading: Boolean = false,
 ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),

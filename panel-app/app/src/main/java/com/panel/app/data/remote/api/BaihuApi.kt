@@ -1,6 +1,7 @@
 package com.panel.app.data.remote.api
 
 import com.panel.app.data.remote.ApiEnvelope
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -149,6 +150,13 @@ data class BaihuUpdateTaskReq(
 )
 
 data class BaihuBatchDeleteTasksReq(val ids: List<String>)
+
+data class BaihuBatchDeleteTasksByQueryReq(
+    val name: String? = null,
+    val agent_id: String? = null,
+    val tags: String? = null,
+    val type: String? = null
+)
 
 data class BaihuEnvItem(
     val id: String,
@@ -431,6 +439,15 @@ interface BaihuApi {
     @POST("api/v1/tasks/batch-delete")
     suspend fun batchDeleteTasks(@Body req: BaihuBatchDeleteTasksReq): Response<BaihuCommonResp>
 
+    /** 按查询条件批量删除任务（name/agent_id/tags/type 均可选，至少传一个） */
+    @DELETE("api/v1/tasks/batch-by-query")
+    suspend fun batchDeleteTaskByQuery(
+        @Query("name") name: String? = null,
+        @Query("agent_id") agentId: String? = null,
+        @Query("tags") tags: String? = null,
+        @Query("type") type: String? = null
+    ): Response<BaihuCommonResp>
+
     @GET("api/v1/tasks/tags")
     suspend fun getTaskTags(): Response<BaihuTagsResp>
 
@@ -558,6 +575,17 @@ interface BaihuApi {
 
     @GET("api/v1/logs/{id}")
     suspend fun getLogDetail(@Path("id") id: String): Response<BaihuLogDetailResp>
+
+    /**
+     * SSE 流式实时日志接口。
+     * 返回 application/x-ndjson 流，每行是一条 JSON 事件。
+     * UI 层通过 OkHttp EventSource 消费此流。
+     */
+    @GET("api/v1/logs/sse")
+    suspend fun getLogSSE(
+        @Query("log_id") logId: String,
+        @Query("tail") tail: Int = 0
+    ): Response<ResponseBody>
 
     @DELETE("api/v1/logs/{id}")
     suspend fun deleteLog(@Path("id") id: String): Response<BaihuCommonResp>

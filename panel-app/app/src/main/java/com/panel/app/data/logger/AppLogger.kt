@@ -46,11 +46,6 @@ enum class LogLevel {
  *  - 时间戳改用不可变、线程安全的 `DateTimeFormatter`；
  *  - 列表写入一律 post 回主线程；
  *  - 自增 [idSequence] 保证日志 key 唯一（LazyColumn 的 key 重复会直接抛异常）。
- *
- * ### 为什么崩溃日志要单独走 [recordCrash]
- * 崩溃日志写进内存列表后进程就死了，列表随之消失，控制台永远看不到崩溃原因
- * （这就是之前"只记录到 HTTP 异常、没记录到崩溃异常"的原因）。
- * 所以崩溃必须**同步写文件**（见 [LogStorage.appendSync]），并在下次启动时回灌。
  */
 object AppLogger {
     private const val MAX_LOGS = 500

@@ -241,22 +241,13 @@ fun DeveloperConsoleScreen(
                         }
 
                         Button(
-                            onClick = {
-                                val error = LogDirOpener.open(context)
-                                error?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
-                            },
+                            onClick = { LogDirOpener.open(context) },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.height(32.dp)
                         ) {
                             Text("打开日志目录", fontSize = 10.sp)
                         }
                     }
-
-                    Text(
-                        text = "崩溃日志会自动同步写入文件（无需开启开发者模式）；MT 管理器等工具可直接浏览上述目录。",
-                        fontSize = 9.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
 

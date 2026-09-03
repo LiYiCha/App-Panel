@@ -1,5 +1,7 @@
 package com.panel.app.util
 
+import android.content.pm.PackageManager
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +30,7 @@ import kotlin.math.min
  */
 object DownloadManager {
 
+    private const val TAG = "DownloadManager"
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val GITHUB_UA: String by lazy {
@@ -97,27 +100,64 @@ object DownloadManager {
 
     /**
      * 触发系统安装器打开已下载的 APK，并在安装后自动清理临时文件。
+     *
+     * Android 8.0+ 中普通 App 无法获取 REQUEST_INSTALL_PACKAGES 签名权限，
+     * 改用 ACTION_INSTALL_PACKAGE Intent + FLAG_REQUEST_INSTALL_PACKAGES，
+     * 失败时引导用户到系统"安装未知应用"设置页。
      */
     fun installAndCleanup(context: android.content.Context, apkFile: File) {
-        if (!apkFile.exists()) return
+        if (!apkFile.exists()) {
+            Log.w(TAG, "installAndCleanup: APK 文件不存在 ${apkFile.absolutePath}")
+            return
+        }
         try {
-            val uri = android.net.Uri.fromFile(apkFile)
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_INSTALL_PACKAGE).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
+                )
+                putExtra(android.content.Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             }
             context.startActivity(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            // 尝试打开系统"安装未知应用"设置页
+            Log.w(TAG, "installAndCleanup: 直接安装失败，尝试引导至系统设置")
+            try {
+                val settingsIntent = android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES
+                ).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(settingsIntent)
+                android.widget.Toast.makeText(
+                    context,
+                    "请在设置中允许本应用安装未知应用，然后重试",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            } catch (e2: Exception) {
+                android.widget.Toast.makeText(
+                    context,
+                    "安装失败：请在系统设置 → 应用 → 特殊权限 → 安装未知应用中开启",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         } catch (e: Exception) {
+            Log.e(TAG, "installAndCleanup: 启动安装失败", e)
             android.widget.Toast.makeText(
                 context, "启动安装失败: ${e.message}", android.widget.Toast.LENGTH_SHORT
             ).show()
         }
-        // 安装后延迟清理
-        scope.launch {
-            delay(CLEANUP_DELAY_MS)
-            apkFile.delete()
-        }
+        // APK 保留在磁盘不自动删除，避免 Android VerifyApps 扫描时因文件消失导致安装失败
+        // (ALLOW_LIST_DOWNLOAD_FILE_NOT_FOUND_EXCEPTION)
+        // 用户可在设置页手动清理缓存 APK
     }
 
     // ── 内部实现 ────────────────────────────────────────────────────────────
@@ -159,8 +199,9 @@ object DownloadManager {
                     if (!withContext(Dispatchers.IO) {
                             file.createNewFile()
                         }) throw IllegalStateException("无法创建下载文件")
-                    totalBytes = response.body?.contentLength() ?: -1L
-                    streamChunks(response.body!!, file, 0L) { _, bytesRead ->
+                    val responseBody = response.body ?: throw IllegalStateException("下载响应无内容")
+                    totalBytes = responseBody.contentLength()
+                    streamChunks(responseBody, file, 0L) { _, bytesRead ->
                         downloaded += bytesRead
                         val now = System.currentTimeMillis()
                         val dt = max((now - lastTs) / 1000.0, 0.001)
@@ -173,8 +214,9 @@ object DownloadManager {
                 }
                 206 -> {
                     // 续传：追加到已有文件
-                    totalBytes = (resumeFrom + (response.body?.contentLength() ?: 0L)).coerceAtLeast(-1L)
-                    streamChunks(response.body!!, file, resumeFrom) { _, bytesRead ->
+                    val responseBody = response.body ?: throw IllegalStateException("下载响应无内容")
+                    totalBytes = (resumeFrom + responseBody.contentLength()).coerceAtLeast(-1L)
+                    streamChunks(responseBody, file, resumeFrom) { _, bytesRead ->
                         downloaded += bytesRead
                         val now = System.currentTimeMillis()
                         val dt = max((now - lastTs) / 1000.0, 0.001)

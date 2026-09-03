@@ -125,10 +125,13 @@ private fun Response<*>.readErrorBody(): String? {
         val obj = JsonParser.parseString(raw).asJsonObject
         val details = obj.getAsJsonArray("errors")
             ?.takeIf { it.size() > 0 }
-            ?.joinToString("; ") { it.asJsonObject.get("message")?.asString.orEmpty() }
+            ?.joinToString("; ") { elem ->
+                if (!elem.isJsonObject) return@joinToString ""
+                elem.asJsonObject.get("message")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            }
             ?.takeIf { it.isNotBlank() }
 
-        listOfNotNull(obj.get("message")?.asString, obj.get("msg")?.asString, details)
+        listOfNotNull(obj.get("message")?.takeIf { !it.isJsonNull }?.asString, obj.get("msg")?.takeIf { !it.isJsonNull }?.asString, details)
             .firstOrNull { it.isNotBlank() }
             ?.trim()
     } catch (_: Exception) {

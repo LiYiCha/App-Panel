@@ -37,22 +37,23 @@ fun MainFlowScreen(
     onOpenDashboardScreen: () -> Unit = {},
     onOpenBackupScreen: () -> Unit = {},
     onOpenDevConsoleScreen: () -> Unit = {},
-    onOpenExecutionHistoryScreen: () -> Unit = {},
+    onOpenLogHistoryScreen: () -> Unit = {},
     onOpenSystemSettingsScreen: () -> Unit = {},
+    onOpenPermissionsScreen: () -> Unit = {},
+    onOpenSubscriptionsScreen: () -> Unit = {},
     onNavigateToCreateScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val selectedTab = uiState.currentTab
 
-    // 调度子分段 Tab (0: 定时任务, 1: 订阅管理)
+    // 调度子分段 Tab (0: 定时任务)
     var tasksSubTab by rememberSaveable { mutableIntStateOf(0) }
     // 配置与脚本子分段 Tab (0: 脚本文件, 1: 配置文件)
     var scriptsSubTab by rememberSaveable { mutableIntStateOf(0) }
 
     // 顶部右上角统一动作触发状态（不占用页面主体垂直空间）
     var showCreateTaskDialog by remember { mutableStateOf(false) }
-    var showCreateSubDialog by remember { mutableStateOf(false) }
     var showCreateEnvDialog by remember { mutableStateOf(false) }
     var showImportEnvDialog by remember { mutableStateOf(false) }
     var showCreateScriptDialog by remember { mutableStateOf(false) }
@@ -76,16 +77,7 @@ fun MainFlowScreen(
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
-                navigationIcon = {
-                    IconButton(onClick = onOpenPanelManager) {
-                        Icon(
-                            imageVector = Icons.Default.Dns,
-                            contentDescription = "面板管理",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                },
+                navigationIcon = {},
                 title = {
                     Column(modifier = Modifier.padding(start = 4.dp)) {
                         Text(
@@ -93,13 +85,6 @@ fun MainFlowScreen(
                             fontSize = 17.sp,
                             style = MaterialTheme.typography.titleMedium
                         )
-                        if (currentPanel != null) {
-                            Text(
-                                text = "${currentPanel.name} (${if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙"})",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 },
                 actions = {
@@ -116,14 +101,8 @@ fun MainFlowScreen(
                                     color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            if (tasksSubTab == 0) {
-                                IconButton(onClick = { showCreateTaskDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "新建任务")
-                                }
-                            } else {
-                                IconButton(onClick = { showCreateSubDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "新建订阅")
-                                }
+                            IconButton(onClick = { showCreateTaskDialog = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "新建任务")
                             }
                         }
                         BottomNavScreen.Envs -> {
@@ -209,32 +188,15 @@ fun MainFlowScreen(
                             onClick = { tasksSubTab = 0 },
                             text = { Text("定时任务 (${uiState.tasks.size})", fontSize = 12.sp) }
                         )
-                        Tab(
-                            selected = tasksSubTab == 1,
-                            onClick = { tasksSubTab = 1 },
-                            text = {
-                                val isBaihu = currentPanel?.type == PanelType.BAIHU
-                                Text(if (isBaihu) "仓库同步 (${uiState.subscriptions.size})" else "订阅管理 (${uiState.subscriptions.size})", fontSize = 12.sp)
-                            }
-                        )
                     }
 
-                    if (tasksSubTab == 0) {
-                        TasksScreen(
-                            viewModel = viewModel,
-                            showCreateDialog = showCreateTaskDialog,
-                            onDismissCreateDialog = { showCreateTaskDialog = false },
-                            onOpenTaskDetail = onOpenTaskDetail,
-                            onOpenLog = onOpenLogScreen
-                        )
-                    } else {
-                        SubscriptionsScreen(
-                            viewModel = viewModel,
-                            showCreateDialog = showCreateSubDialog,
-                            onDismissCreateDialog = { showCreateSubDialog = false },
-                            onCreateClick = { showCreateSubDialog = true }
-                        )
-                    }
+                    TasksScreen(
+                        viewModel = viewModel,
+                        showCreateDialog = showCreateTaskDialog,
+                        onDismissCreateDialog = { showCreateTaskDialog = false },
+                        onOpenTaskDetail = onOpenTaskDetail,
+                        onOpenLog = onOpenLogScreen
+                    )
                 }
 
                 BottomNavScreen.Envs -> {
@@ -289,8 +251,10 @@ fun MainFlowScreen(
                         onOpenDashboard = onOpenDashboardScreen,
                         onOpenBackup = onOpenBackupScreen,
                         onOpenDevConsole = onOpenDevConsoleScreen,
-                        onOpenExecutionHistory = onOpenExecutionHistoryScreen,
-                        onOpenSystemSettings = onOpenSystemSettingsScreen
+                        onOpenLogHistory = onOpenLogHistoryScreen,
+                        onOpenSystemSettings = onOpenSystemSettingsScreen,
+                        onOpenPermissions = onOpenPermissionsScreen,
+                        onOpenSubscriptionsScreen = onOpenSubscriptionsScreen
                     )
                 }
             }

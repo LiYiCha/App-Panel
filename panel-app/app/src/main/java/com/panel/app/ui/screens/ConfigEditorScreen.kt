@@ -1,13 +1,13 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,10 +18,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -52,6 +55,11 @@ fun ConfigEditorScreen(
     if (activeEditingFile != null) {
         val editingFile = activeEditingFile!!
         val lineCount = remember(editorContent) { editorContent.lines().size }
+        // 行号整体作为一个 Text 渲染，避免为数千行配置（config.sh 常达数千行）逐个组合 Text
+        val lineNumbersText = remember(lineCount) { (1..maxOf(lineCount, 1)).joinToString("\n") }
+        // 行号与正文必须使用完全一致的 lineHeight，否则行号会与内容逐行错位
+        val editorLineHeight = 15.sp
+        val editorScrollState = rememberScrollState()
 
         Column(
             modifier = Modifier
@@ -132,43 +140,46 @@ fun ConfigEditorScreen(
                 shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    Column(
+                // 行号与正文共用同一个滚动容器：滚动天然同步，行号严格对齐，
+                // 同时为输入区提供"内容高度自适应"的测量环境
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(editorScrollState)
+                ) {
+                    Row(
                         modifier = Modifier
-                            .width(36.dp)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
                     ) {
-                        for (i in 1..maxOf(lineCount, 1)) {
-                            Text(
-                                text = "$i",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-
-                    TextField(
-                        value = editorContent,
-                        onValueChange = { if (isEditable) editorContent = it },
-                        readOnly = !isEditable,
-                        modifier = Modifier.fillMaxSize(),
-                        textStyle = LocalTextStyle.current.copy(
-                            fontFamily = FontFamily.Monospace,
+                        Text(
+                            text = lineNumbersText,
                             fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
+                            lineHeight = editorLineHeight,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            textAlign = TextAlign.End,
+                            modifier = Modifier
+                                .width(36.dp)
+                                .padding(horizontal = 6.dp)
                         )
-                    )
+
+                        BasicTextField(
+                            value = editorContent,
+                            onValueChange = { if (isEditable) editorContent = it },
+                            readOnly = !isEditable,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            textStyle = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = editorLineHeight,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                        )
+                    }
                 }
             }
         }
@@ -236,8 +247,11 @@ fun ConfigEditorScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        viewModel.readConfigFile(file)
-                                        editorContent = uiState.configContent
+                                        // readConfigFile 是异步的，必须走回调取内容，
+                                        // 直接读 uiState.configContent 拿到的还是上一次的旧值
+                                        viewModel.readConfigFile(file) { content ->
+                                            editorContent = content
+                                        }
                                         activeEditingFile = file
                                     },
                                 shape = RoundedCornerShape(10.dp)
@@ -312,8 +326,10 @@ fun ConfigEditorScreen(
                                         }
                                         IconButton(
                                             onClick = {
-                                                viewModel.readConfigFile(file)
-                                                editorContent = uiState.configContent
+                                                // 异步读取，必须走回调，否则打开的是上一次的旧内容
+                                                viewModel.readConfigFile(file) { content ->
+                                                    editorContent = content
+                                                }
                                                 activeEditingFile = file
                                             },
                                             modifier = Modifier.size(30.dp)

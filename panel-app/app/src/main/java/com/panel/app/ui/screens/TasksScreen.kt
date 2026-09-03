@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.data.model.extractScriptFiles
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,7 +79,7 @@ fun TasksScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
 
         // 2. 全宽搜索框
@@ -179,7 +180,7 @@ fun TasksScreen(
         }
 
         // 4. 任务卡片列表 (支持下拉刷新)
-        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+        Box(modifier = Modifier.weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isLoading,
                 onRefresh = { viewModel.refreshCurrentPanel() },
@@ -392,7 +393,7 @@ fun TaskCard(
                         )
                     }
 
-                    Spacer(Modifier.height(4.dp))
+                    // cron + 操作按钮行
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -400,47 +401,56 @@ fun TaskCard(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Icon(
                                 Icons.Default.Schedule,
                                 contentDescription = null,
-                                modifier = Modifier.size(11.dp),
+                                modifier = Modifier.size(10.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
                             )
                             Text(
-                                text = task.schedule,
+                                text = task.schedule ?: "",
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
                             )
                         }
 
-
-                    if (!isBatchMode) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            IconButton(onClick = onTogglePin, modifier = Modifier.size(24.dp)) {
-                                Icon(
-                                    imageVector = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
-                                    contentDescription = "置顶",
+                        if (!isBatchMode) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ActionButtonSmall(
+                                    icon = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
+                                    label = if (task.isPinned) "已置顶" else "置顶",
                                     tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(14.dp)
+                                    onClick = onTogglePin
                                 )
-                            }
-                            IconButton(onClick = onRunOrStop, modifier = Modifier.size(24.dp)) {
-                                if (task.isRunning) {
-                                    Icon(Icons.Default.Stop, contentDescription = "停止任务", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(15.dp))
-                                } else {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "立即执行", tint = Color(0xFF10B981), modifier = Modifier.size(15.dp))
-                                }
-                            }
-                            IconButton(onClick = onOpenLog, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = "查看日志", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                            }
-                            IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.Edit, contentDescription = "编辑属性", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                            }
-                            IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.Delete, contentDescription = "删除任务", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                ActionButtonSmall(
+                                    icon = if (task.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    label = if (task.isRunning) "停止" else "运行",
+                                    tint = if (task.isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
+                                    onClick = onRunOrStop
+                                )
+                                ActionButtonSmall(
+                                    icon = Icons.AutoMirrored.Filled.Notes,
+                                    label = "日志",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    onClick = onOpenLog
+                                )
+                                ActionButtonSmall(
+                                    icon = Icons.Default.Edit,
+                                    label = "编辑",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    onClick = onEdit
+                                )
+                                ActionButtonSmall(
+                                    icon = Icons.Default.Delete,
+                                    label = "删除",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    onClick = onDelete
+                                )
                             }
                         }
                     }
@@ -448,7 +458,6 @@ fun TaskCard(
             }
         }
     }
-}
 
 private enum class TaskVisualState { Running, Queued, Disabled, Ready }
 

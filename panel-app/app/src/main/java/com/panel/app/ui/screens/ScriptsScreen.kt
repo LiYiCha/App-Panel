@@ -94,7 +94,7 @@ fun ScriptsScreen(
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = uiState.isLoading,
             onRefresh = { viewModel.refreshCurrentPanel() },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.weight(1f)
         ) {
             if (filteredTree.isEmpty()) {
                 // 空状态必须自己可滚动：PullToRefreshBox 依赖嵌套滚动分发，
@@ -118,7 +118,7 @@ fun ScriptsScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {

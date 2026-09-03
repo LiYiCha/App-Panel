@@ -265,18 +265,18 @@ fun BackupRestoreScreen(
                 }
 
                 // 定时任务选择
-                if (previewData?.tasks?.isNotEmpty() == true) {
+                previewData?.takeIf { it.tasks.isNotEmpty() }?.let { pd ->
                     item {
                         SelectableItemList(
-                            items = previewData!!.tasks,
+                            items = pd.tasks,
                             selectedItems = selectedTasks,
-                            onSelectAll = { selectedTasks = previewData!!.tasks },
+                            onSelectAll = { selectedTasks = pd.tasks },
                             onDeselectAll = { selectedTasks = emptyList() },
                             onToggleItem = { item, checked ->
                                 selectedTasks = if (checked) selectedTasks + item
                                 else selectedTasks - item
                             },
-                            itemCount = previewData!!.tasks.size,
+                            itemCount = pd.tasks.size,
                             selectedItemCount = selectedTasks.size
                         ) { task ->
                             TaskItemRow(task)
@@ -285,18 +285,18 @@ fun BackupRestoreScreen(
                 }
 
                 // 环境变量选择
-                if (previewData?.envs?.isNotEmpty() == true) {
+                previewData?.takeIf { it.envs.isNotEmpty() }?.let { pd ->
                     item {
                         SelectableItemList(
-                            items = previewData!!.envs,
+                            items = pd.envs,
                             selectedItems = selectedEnvs,
-                            onSelectAll = { selectedEnvs = previewData!!.envs },
+                            onSelectAll = { selectedEnvs = pd.envs },
                             onDeselectAll = { selectedEnvs = emptyList() },
                             onToggleItem = { item, checked ->
                                 selectedEnvs = if (checked) selectedEnvs + item
                                 else selectedEnvs - item
                             },
-                            itemCount = previewData!!.envs.size,
+                            itemCount = pd.envs.size,
                             selectedItemCount = selectedEnvs.size
                         ) { env ->
                             EnvItemRow(env)
@@ -305,18 +305,18 @@ fun BackupRestoreScreen(
                 }
 
                 // 脚本选择
-                if (previewData?.scripts?.isNotEmpty() == true) {
+                previewData?.takeIf { it.scripts.isNotEmpty() }?.let { pd ->
                     item {
                         SelectableItemList(
-                            items = previewData!!.scripts,
+                            items = pd.scripts,
                             selectedItems = selectedScripts,
-                            onSelectAll = { selectedScripts = previewData!!.scripts },
+                            onSelectAll = { selectedScripts = pd.scripts },
                             onDeselectAll = { selectedScripts = emptyList() },
                             onToggleItem = { item, checked ->
                                 selectedScripts = if (checked) selectedScripts + item
                                 else selectedScripts - item
                             },
-                            itemCount = previewData!!.scripts.size,
+                            itemCount = pd.scripts.size,
                             selectedItemCount = selectedScripts.size
                         ) { script ->
                             ScriptItemRow(script)
@@ -325,18 +325,18 @@ fun BackupRestoreScreen(
                 }
 
                 // 配置文件选择
-                if (previewData?.configFiles?.isNotEmpty() == true) {
+                previewData?.takeIf { it.configFiles.isNotEmpty() }?.let { pd ->
                     item {
                         SelectableItemList(
-                            items = previewData!!.configFiles,
+                            items = pd.configFiles,
                             selectedItems = selectedConfigs,
-                            onSelectAll = { selectedConfigs = previewData!!.configFiles },
+                            onSelectAll = { selectedConfigs = pd.configFiles },
                             onDeselectAll = { selectedConfigs = emptyList() },
                             onToggleItem = { item, checked ->
                                 selectedConfigs = if (checked) selectedConfigs + item
                                 else selectedConfigs - item
                             },
-                            itemCount = previewData!!.configFiles.size,
+                            itemCount = pd.configFiles.size,
                             selectedItemCount = selectedConfigs.size
                         ) { config ->
                             ConfigItemRow(config)
@@ -368,9 +368,11 @@ fun BackupRestoreScreen(
                                     }
                                     return@Button
                                 }
+                                val pd = previewData
+                                if (pd == null) return@Button
                                 isWorking = true
                                 viewModel.restorePreview(
-                                    data = previewData!!,
+                                    data = pd,
                                     selectedTasks = selectedTasks,
                                     selectedEnvs = selectedEnvs,
                                     selectedScripts = selectedScripts,

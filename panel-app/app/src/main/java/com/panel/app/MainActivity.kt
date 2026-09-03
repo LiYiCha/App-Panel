@@ -120,11 +120,17 @@ class MainActivity : ComponentActivity() {
                                 onOpenDevConsoleScreen = {
                                     navController.navigate("developer_console")
                                 },
-                                onOpenExecutionHistoryScreen = {
-                                    navController.navigate("execution_history")
+                                onOpenLogHistoryScreen = {
+                                    navController.navigate("server_logs")
                                 },
                                 onOpenSystemSettingsScreen = {
                                     navController.navigate("system_settings")
+                                },
+                                onOpenPermissionsScreen = {
+                                    navController.navigate("app_permissions")
+                                },
+                                onOpenSubscriptionsScreen = {
+                                    navController.navigate("subscriptions")
                                 },
                                 onNavigateToCreateScript = {
                                     navController.navigate("create_script")
@@ -159,18 +165,6 @@ class MainActivity : ComponentActivity() {
                                 logPath = path ?: "",
                                 viewModel = viewModel,
                                 onBack = { navController.popBackStack() }
-                            )
-                        }
-
-                        composable("execution_history") {
-                            ExecutionHistoryScreen(
-                                viewModel = viewModel,
-                                onBack = { navController.popBackStack() },
-                                onOpenLogViewer = { title, taskId ->
-                                    val encTitle = Uri.encode(title)
-                                    val encId = Uri.encode(taskId)
-                                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
-                                }
                             )
                         }
 
@@ -250,6 +244,10 @@ class MainActivity : ComponentActivity() {
                                         val encId = Uri.encode(tId)
                                         navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
                                     }
+                                },
+                                onOpenScriptEditorScreen = { scriptPath ->
+                                    val encoded = Uri.encode(scriptPath)
+                                    navController.navigate("standalone_editor/$encoded")
                                 }
                             )
                         }
@@ -281,15 +279,24 @@ class MainActivity : ComponentActivity() {
                         ) { backStackEntry ->
                             val rawArg = backStackEntry.arguments?.getString("scriptName") ?: ""
                             val scriptName = Uri.decode(rawArg)
-                            var scriptContent by remember(scriptName) { mutableStateOf("") }
+                            val uiState = viewModel.uiState.collectAsState()
+                            // 优先使用 ViewModel 缓存，避免重复请求
+                            var scriptContent by remember(scriptName) {
+                                mutableStateOf(uiState.value.scriptViewerCache[scriptName] ?: "")
+                            }
                             LaunchedEffect(scriptName) {
-                                viewModel.readScript(scriptName) { content ->
-                                    scriptContent = content
+                                if (uiState.value.scriptViewerCache[scriptName].isNullOrBlank()) {
+                                    viewModel.readScript(scriptName) { content ->
+                                        scriptContent = content
+                                    }
+                                } else {
+                                    scriptContent = uiState.value.scriptViewerCache[scriptName] ?: ""
                                 }
                             }
                             StandaloneScriptEditorScreen(
                                 scriptName = scriptName,
                                 initialContent = scriptContent,
+                                viewModel = viewModel,
                                 onSave = { updatedContent ->
                                     viewModel.saveScript(scriptName, updatedContent)
                                 },
@@ -310,6 +317,19 @@ class MainActivity : ComponentActivity() {
                                 viewModel = viewModel,
                                 panelType = currentPanel?.type ?: PanelType.BAIHU,
                                 dashboard = viewModel.getCachedDashboard(),
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("app_permissions") {
+                            AppPermissionsScreen(
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("subscriptions") {
+                            SubscriptionsScreen(
+                                viewModel = viewModel,
                                 onBack = { navController.popBackStack() }
                             )
                         }
