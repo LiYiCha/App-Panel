@@ -37,6 +37,7 @@ temp
 *.keystore
 panel-app/key/
 keystore.properties
+KEYSTORE_BASE64_FOR_GITHUB.txt
 .DS_Store
 
 # Google Services (e.g. APIs or Firebase)
