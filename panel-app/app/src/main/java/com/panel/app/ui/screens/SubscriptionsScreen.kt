@@ -4,11 +4,10 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -23,14 +22,17 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedSubscription
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionsScreen(
     viewModel: MainViewModel,
+    onBack: () -> Unit = {},
     showCreateDialog: Boolean = false,
-    onDismissCreateDialog: () -> Unit = {}
+    onDismissCreateDialog: () -> Unit = {},
+    onCreateClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -58,12 +60,25 @@ fun SubscriptionsScreen(
     val selectedSubs = remember(uiState.subscriptions) { uiState.subscriptions.filter { it.selected } }
     val allSelected = remember(filteredSubs, selectedSubs) { filteredSubs.isNotEmpty() && filteredSubs.all { it.selected } }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("仓库订阅", fontSize = 15.sp) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
         // 1. 全宽搜索框
         OutlinedTextField(
             value = searchQuery,
@@ -135,7 +150,7 @@ fun SubscriptionsScreen(
                 }
 
                 Button(
-                    onClick = { onDismissCreateDialog() /* toggle create handled by parent */ },
+                    onClick = onCreateClick,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     modifier = Modifier.height(30.dp),
                     shape = RoundedCornerShape(8.dp)
@@ -147,30 +162,36 @@ fun SubscriptionsScreen(
             }
         }
 
-        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+        Box(modifier = Modifier.weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isLoading,
                 onRefresh = { viewModel.refreshSubscriptions() },
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredSubs.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = 40.dp),
-                        contentAlignment = Alignment.Center
+                    // PullToRefreshBox 完全依赖 nested scroll 手势，空态必须是可滚动容器，否则下拉无响应
+                    LazyColumn(
+                        modifier = Modifier.fillMaxHeight(),
+                        contentPadding = PaddingValues(top = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text("暂无匹配的仓库同步任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        item {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = if (uiState.isLoading) "正在刷新仓库同步任务..." else "暂无匹配的仓库同步任务",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(bottom = 16.dp)
+                        contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
                     ) {
                         items(filteredSubs, key = { it.id }) { sub ->
                             RepoSyncCard(
@@ -200,6 +221,7 @@ fun SubscriptionsScreen(
                 }
             }
         }
+    }
     }
 
     // 新建仓库弹窗
@@ -231,7 +253,7 @@ fun SubscriptionsScreen(
         AlertDialog(
             onDismissRequest = { deletingSub = null },
             title = { Text("确认删除仓库任务", fontSize = 15.sp) },
-            text = { Text("确定要删除仓库同步任务 [${deletingSub!!.name}] 吗？删除后将不再自动同步该仓库。", fontSize = 12.sp) },
+            text = { Text("确定要删除仓库同步任务 [${deletingSub?.name}] 吗？删除后将不再自动同步该仓库。", fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -402,22 +424,30 @@ fun RepoSyncCard(
                         }
                     }
 
-                    IconButton(onClick = onRunOrStop, modifier = Modifier.size(28.dp)) {
-                        if (sub.isRunning) {
-                            Icon(Icons.Default.Stop, contentDescription = "停止", tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
-                        } else {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "立即同步", tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    IconButton(onClick = onViewLog, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Notes, contentDescription = "日志", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                    }
+                    ActionButtonSmall(
+                        icon = if (sub.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        label = if (sub.isRunning) "停止" else "同步",
+                        tint = if (sub.isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
+                        onClick = onRunOrStop
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.AutoMirrored.Filled.Note,
+                        label = "日志",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = onViewLog
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.Default.Edit,
+                        label = "编辑",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = onEdit
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.Default.Delete,
+                        label = "删除",
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = onDelete
+                    )
                 }
             }
 

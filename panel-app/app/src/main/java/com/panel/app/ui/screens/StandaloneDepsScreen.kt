@@ -18,7 +18,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -207,18 +206,6 @@ fun StandaloneDepsScreen(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    val ids = selectedDeps.map { it.id }
-                                    viewModel.forceDeleteDeps(ids)
-                                },
-                                enabled = selectedDeps.isNotEmpty(),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Text("强制清除", fontSize = 11.sp)
-                            }
                             Button(
                                 onClick = {
                                     val ids = selectedDeps.map { it.id }
@@ -238,7 +225,7 @@ fun StandaloneDepsScreen(
                 }
             }
 
-            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+            Box(modifier = Modifier.weight(1f)) {
                 PullToRefreshBox(
                     isRefreshing = uiState.isLoading,
                     onRefresh = { viewModel.refreshCurrentPanel() },
@@ -315,7 +302,7 @@ fun StandaloneDepsScreen(
                                                     2 -> Triple("安装失败", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
                                                     3 -> Triple("卸载中", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
                                                     4 -> Triple("卸载失败", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
-                                                    else -> Triple("已安装", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+                                                    else -> Triple("未安装", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
                                                 }
                                                 Surface(
                                                     color = statusBg,
@@ -418,25 +405,14 @@ fun StandaloneDepsScreen(
                 )
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.forceDeleteDeps(listOf(deletingDep!!.id))
-                            deletingDep = null
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("强制清除", fontSize = 12.sp)
-                    }
-                    Button(
-                        onClick = {
-                            viewModel.deleteDep(deletingDep!!.id, deletingDep!!.type)
-                            deletingDep = null
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("常规卸载", fontSize = 12.sp)
-                    }
+                Button(
+                    onClick = {
+                        viewModel.deleteDep(deletingDep!!.id, deletingDep!!.type, deletingDep!!.name)
+                        deletingDep = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("卸载", fontSize = 12.sp)
                 }
             },
             dismissButton = {

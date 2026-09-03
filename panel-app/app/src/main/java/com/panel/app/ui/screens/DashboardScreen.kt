@@ -1,5 +1,6 @@
 package com.panel.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -39,13 +40,18 @@ fun DashboardScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
+    // 拦截系统返回键：不注册 BackHandler 时返回事件会被 Activity 兜底消费，
+    // 表现就是"在二级页面按返回直接回到桌面"
+    BackHandler { onBack() }
+
     var dashboard by remember { mutableStateOf(viewModel.getCachedDashboard()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
     fun load() {
         isLoading = true
-        viewModel.loadDashboard { result ->
+        // 进入页面与用户主动刷新都强制走网络，不受 TTL 节流影响
+        viewModel.loadDashboard(force = true) { result ->
             dashboard = result.getOrNull()
             errorMessage = result.exceptionOrNull()?.message
             isLoading = false

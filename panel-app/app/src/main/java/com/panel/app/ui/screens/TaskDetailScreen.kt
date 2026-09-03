@@ -33,7 +33,8 @@ fun TaskDetailScreen(
     taskId: String,
     viewModel: MainViewModel,
     onBack: () -> Unit,
-    onOpenLogViewer: (title: String, taskId: String, logPath: String) -> Unit = { _, _, _ -> }
+    onOpenLogViewer: (title: String, taskId: String, logPath: String) -> Unit = { _, _, _ -> },
+    onOpenScriptEditorScreen: (scriptPath: String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current

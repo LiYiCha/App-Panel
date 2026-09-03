@@ -9,7 +9,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -32,8 +34,7 @@ fun ScriptsScreen(
     showCreateDialog: Boolean = false,
     onDismissCreateDialog: () -> Unit = {},
     onNavigateToCreateScript: () -> Unit,
-    onOpenScriptEditor: (String) -> Unit,
-    onUploadScript: () -> Unit = {}
+    onOpenScriptEditor: (String) -> Unit
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -107,6 +108,7 @@ fun ScriptsScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(top = 40.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -210,7 +212,7 @@ fun ScriptsScreen(
         )
     }
 
-    // 4. 新建文件夹弹窗 (满足用户：点击文件夹是弹窗，显示新增的文件夹和所在目录，可以选择)
+    // 4. 新建文件夹弹窗
     if (showFolderDialog) {
         CreateFolderStandaloneDialog(
             existingDirs = extractAllDirectories(uiState.scriptTree),
@@ -563,193 +565,6 @@ fun parseScriptCommentInfo(content: String, fileName: String): Pair<String, Stri
     return Pair(parsedName, parsedCron)
 }
 
-// 新建模态框：支持【新建文件】、【新建文件夹】、【上传脚本】并自动解析 Cron 规则
-@Composable
-fun CreateScriptOrFolderDialog(
-    existingDirs: List<String>,
-    onDismiss: () -> Unit,
-    onConfirmFile: (path: String, content: String, taskInfo: Triple<String, String, String>?) -> Unit,
-    onConfirmDirectory: (String) -> Unit
-) {
-    val context = LocalContext.current
-    var selectedType by remember { mutableStateOf(0) } // 0: 新建文件, 1: 新建文件夹, 2: 上传脚本
-    var name by remember { mutableStateOf("") }
-    var parentDir by remember { mutableStateOf("") }
-    var content by remember { mutableStateOf("") }
-
-    var alsoAddTask by remember { mutableStateOf(false) }
-    var taskName by remember { mutableStateOf("") }
-    var taskCommand by remember { mutableStateOf("") }
-    var taskCron by remember { mutableStateOf("0 8 * * *") }
-
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            try {
-                val input = context.contentResolver.openInputStream(it)
-                val text = input?.bufferedReader()?.use { reader -> reader.readText() } ?: ""
-                val pickedName = it.lastPathSegment?.substringAfterLast('/') ?: "uploaded.js"
-                name = pickedName
-                content = text
-
-                val (pName, pCron) = parseScriptCommentInfo(text, pickedName)
-                taskName = pName
-                taskCron = pCron
-                taskCommand = "task $pickedName"
-                alsoAddTask = true
-                Toast.makeText(context, "脚本文件读取成功，已自动解析定时规则", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "读取脚本文件失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    LaunchedEffect(content, name) {
-        if (content.isNotBlank() && selectedType != 1) {
-            val (pName, pCron) = parseScriptCommentInfo(content, name.ifEmpty { "task.js" })
-            if (taskName.isEmpty()) taskName = pName
-            if (taskCron == "0 8 * * *") taskCron = pCron
-            taskCommand = "task ${if (parentDir.isNotBlank()) "$parentDir/$name" else name}"
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                when (selectedType) {
-                    0 -> "新建脚本文件"
-                    1 -> "新建文件夹"
-                    else -> "上传本地脚本"
-                },
-                fontSize = 15.sp
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                TabRow(selectedTabIndex = selectedType, modifier = Modifier.fillMaxWidth()) {
-                    Tab(
-                        selected = selectedType == 0,
-                        onClick = { selectedType = 0 },
-                        text = { Text("新建文件", fontSize = 11.sp) }
-                    )
-                    Tab(
-                        selected = selectedType == 1,
-                        onClick = { selectedType = 1 },
-                        text = { Text("新建文件夹", fontSize = 11.sp) }
-                    )
-                    Tab(
-                        selected = selectedType == 2,
-                        onClick = {
-                            selectedType = 2
-                            filePickerLauncher.launch("*/*")
-                        },
-                        text = { Text("上传脚本", fontSize = 11.sp) }
-                    )
-                }
-
-                if (selectedType == 0 || selectedType == 2) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("文件名称 (如 test.js / daily.py)", fontSize = 11.sp) },
-                        placeholder = { Text("main.py") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = parentDir,
-                        onValueChange = { parentDir = it },
-                        label = { Text("所属父级目录 (可选)", fontSize = 11.sp) },
-                        placeholder = { Text("留空为根目录") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (selectedType == 0) {
-                        OutlinedTextField(
-                            value = content,
-                            onValueChange = { content = it },
-                            label = { Text("初始文件内容 (可选)", fontSize = 11.sp) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp, max = 100.dp)
-                        )
-                    }
-
-                    // 自动解析与添加为定时任务开关
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { alsoAddTask = !alsoAddTask }
-                    ) {
-                        Checkbox(checked = alsoAddTask, onCheckedChange = { alsoAddTask = it })
-                        Text("同时添加为定时任务 (自动解析 Cron)", fontSize = 11.sp)
-                    }
-
-                    if (alsoAddTask) {
-                        OutlinedTextField(
-                            value = taskName,
-                            onValueChange = { taskName = it },
-                            label = { Text("任务名称", fontSize = 10.sp) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = taskCron,
-                            onValueChange = { taskCron = it },
-                            label = { Text("Cron 定时规则", fontSize = 10.sp) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                } else {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("文件夹名称 (如 utils / jd_task)", fontSize = 11.sp) },
-                        placeholder = { Text("my_folder") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = parentDir,
-                        onValueChange = { parentDir = it },
-                        label = { Text("父级目录路径 (可选)", fontSize = 11.sp) },
-                        placeholder = { Text("留空为根目录") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                if (name.isNotEmpty()) {
-                    val fullPath = if (parentDir.trim().isNotEmpty()) "${parentDir.trim().trimEnd('/')}/${name.trim().trimStart('/')}" else name.trim()
-                    if (selectedType == 0 || selectedType == 2) {
-                        val taskInfo = if (alsoAddTask) {
-                            Triple(
-                                taskName.ifEmpty { name.substringBeforeLast('.') },
-                                taskCommand.ifEmpty { "task $fullPath" },
-                                taskCron.ifEmpty { "0 8 * * *" }
-                            )
-                        } else null
-                        onConfirmFile(fullPath, content, taskInfo)
-                    } else {
-                        onConfirmDirectory(fullPath)
-                    }
-                }
-            }) {
-                Text(if (selectedType == 1) "创建文件夹" else "确认提交")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        }
-    )
-}
-
 // 递归提取所有已有目录供选择
 fun extractAllDirectories(nodes: List<ScriptNode>): List<String> {
     val dirs = mutableListOf<String>()
@@ -803,7 +618,7 @@ fun CreateFolderStandaloneDialog(
                         readOnly = true,
                         label = { Text("所在父级目录 (选择已有目录)", fontSize = 12.sp) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(
                         expanded = isExpanded,

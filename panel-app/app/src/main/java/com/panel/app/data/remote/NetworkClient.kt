@@ -89,7 +89,7 @@ object NetworkClient {
                             )
                         }
                         resp
-                    } catch (e: Exception) {
+                    } catch (t: Throwable) {
                         val duration = System.currentTimeMillis() - start
                         com.panel.app.data.logger.AppLogger.httpDetailed(
                             method = req.method,
@@ -97,43 +97,34 @@ object NetworkClient {
                             code = 0,
                             durationMs = duration,
                             requestBody = reqBodyStr,
-                            error = e.message ?: e.javaClass.simpleName
+                            error = t.message ?: t.javaClass.simpleName
                         )
-                        throw e
+                        throw t
                     }
                 }
+                // 只补 keep-alive 头，**绝不在拦截器里重放请求**。
+                //
+                // 这里原来有一段"连接断开自动重试"逻辑：在 catch 里对同一个 chain
+                // 再次调用 proceed()。问题在于 java.net.ConnectException 继承自
+                // java.net.SocketException，会被那段判定命中并触发重放，于是出现
+                // 控制台里那条 "失败去连接 /118.x.x.x" 之后立刻闪退的现象：
+                //  1. OkHttp 的拦截器链不允许对同一个 chain 多次 proceed()；
+                //  2. 重放抛出的 IllegalStateException 不是 IOException，
+                //     AsyncCall 会先回调 onFailure（UI 侧只看到一次"请求失败"），
+                //     再把该异常原样抛到 OkHttp 的调度线程 —— 那里没有 catch，
+                //     直接走 Thread 的 UncaughtExceptionHandler，进程崩溃。
+                // 断网时抛的是 UnknownHostException（不是 SocketException），
+                // 不会触发重放，所以"断网不闪退、连不上就闪退"完全对得上。
+                //
+                // 连接复用池里的陈旧连接由 OkHttp 自己的 RetryAndFollowUpInterceptor
+                // 处理，下面 retryOnConnectionFailure(true) 已开启，无需手写重试。
                 .addInterceptor { chain ->
                     val originalReq = chain.request()
-                    var response: okhttp3.Response? = null
-                    var lastException: java.io.IOException? = null
-                    for (attempt in 0..2) {
-                        try {
-                            val requestBuilder = originalReq.newBuilder()
-                            if (originalReq.header("Connection") == null) {
-                                requestBuilder.header("Connection", "keep-alive")
-                            }
-                            response = chain.proceed(requestBuilder.build())
-                            break
-                        } catch (e: java.io.IOException) {
-                            lastException = e
-                            val msg = e.message?.lowercase() ?: ""
-                            val isStaleConnection = msg.contains("unexpected end of stream") ||
-                                    msg.contains("connection reset") ||
-                                    msg.contains("broken pipe") ||
-                                    e is java.net.SocketException
-                            if (isStaleConnection && attempt < 2) {
-                                com.panel.app.data.logger.AppLogger.log(
-                                    level = com.panel.app.data.logger.LogLevel.WARN,
-                                    tag = "NET_RETRY",
-                                    message = "检测到连接断开 [${e.message}]，正在自动重试 (${attempt + 1}/2)... [${originalReq.method} ${originalReq.url.encodedPath}]"
-                                )
-                                try { Thread.sleep(150) } catch (_: InterruptedException) {}
-                                continue
-                            }
-                            throw e
-                        }
+                    val requestBuilder = originalReq.newBuilder()
+                    if (originalReq.header("Connection") == null) {
+                        requestBuilder.header("Connection", "keep-alive")
                     }
-                    response ?: throw (lastException ?: java.io.IOException("Request failed"))
+                    chain.proceed(requestBuilder.build())
                 }
                 .addInterceptor { chain ->
                     val req = chain.request()
@@ -184,13 +175,32 @@ object NetworkClient {
         .setLenient()
         .create()
 
+    /**
+     * Retrofit 实例缓存（key = baseUrl）。
+     *
+     * `Retrofit.create()` 会为接口生成动态代理，并**反射解析该接口的全部方法**
+     * （解析注解、参数处理器、构造 ServiceMethod 缓存）。QinglongV15Api / BaihuApi
+     * 都有几十个方法，这个开销相当可观。
+     *
+     * 之前每次调用都新建实例，而适配器又是在每次 `getAdapter()` 时重建的，
+     * 于是每点一次按钮、每轮询一次日志，都要把整条 Retrofit + 动态代理链路
+     * 重建一遍再丢弃 —— 大量一次性对象把 GC 顶起来，表现为主线程停顿、界面闪烁/花屏。
+     *
+     * baseUrl 的数量等于面板数量，缓存条目天然有界。
+     */
+    private val retrofitCache = ConcurrentHashMap<String, Retrofit>()
+
     fun buildRetrofit(baseUrl: String): Retrofit {
         val cleanUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        return Retrofit.Builder()
-            .baseUrl(cleanUrl)
-            .client(unsafeOkHttpClient)
-            .addConverterFactory(GsonConverterFactory.create(gson))
-            .build()
+        return retrofitCache.getOrPut(cleanUrl) {
+            Retrofit.Builder()
+                .baseUrl(cleanUrl)
+                .client(unsafeOkHttpClient)
+                // 必须放在转换器之前：把所有网络/解析异常收敛成失败响应，避免异常冒到主线程闪退
+                .addCallAdapterFactory(SafeCallAdapterFactory())
+                .addConverterFactory(GsonConverterFactory.create(gson))
+                .build()
+        }
     }
 
     fun injectCookie(host: String, name: String, value: String) {

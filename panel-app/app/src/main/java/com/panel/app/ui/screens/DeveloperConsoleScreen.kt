@@ -4,10 +4,12 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,12 +23,15 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.logger.AppLogger
 import com.panel.app.data.logger.LogLevel
-import com.panel.app.data.logger.LogEntry
+import com.panel.app.data.logger.LogStorage
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.LogDirOpener
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +49,8 @@ fun DeveloperConsoleScreen(
     var selectedLevel by remember { mutableStateOf("ALL") }
     var searchQuery by remember { mutableStateOf("") }
     var expandedLogId by remember { mutableStateOf<Long?>(null) }
+    var retentionDays by remember { mutableStateOf(LogStorage.retentionDays()) }
+    var showClearAllConfirm by remember { mutableStateOf(false) }
 
     val filteredLogs = remember(logs.size, selectedLevel, searchQuery) {
         logs.filter { entry ->
@@ -90,9 +97,9 @@ fun DeveloperConsoleScreen(
                     }
                     IconButton(onClick = {
                         AppLogger.clear()
-                        Toast.makeText(context, "日志已清空", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "已清空界面记录（文件日志保留）", Toast.LENGTH_SHORT).show()
                     }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "清空日志")
+                        Icon(Icons.Default.DeleteSweep, contentDescription = "清空界面记录")
                     }
                 }
             )
@@ -141,7 +148,110 @@ fun DeveloperConsoleScreen(
                 }
             }
 
-            // 2. 搜索框
+            // 2. 日志落盘控制条（保留时长 / 清除当前与全部 / 用文件管理器打开）
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("日志目录（按天归档，可长期留存分析）", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(LogStorage.logDirPath()))
+                                Toast.makeText(context, "日志目录路径已复制", Toast.LENGTH_SHORT).show()
+                            },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Text("复制路径", fontSize = 10.sp)
+                        }
+                    }
+
+                    Text(
+                        text = LogStorage.logDirPath(),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        text = "日志保留时长（启动时自动清理更早的日志文件）",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(7 to "7 天", 30 to "30 天", 90 to "90 天", LogStorage.KEEP_FOREVER to "永久").forEach { (days, label) ->
+                            FilterChip(
+                                selected = retentionDays == days,
+                                onClick = {
+                                    LogStorage.setRetentionDays(days)
+                                    retentionDays = days
+                                    Toast.makeText(context, "日志保留时长已设为 $label", Toast.LENGTH_SHORT).show()
+                                },
+                                label = { Text(label, fontSize = 10.sp) },
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                LogStorage.clearCurrent()
+                                AppLogger.clear()
+                                Toast.makeText(context, "已清除当前日志（今天 + 界面记录）", Toast.LENGTH_SHORT).show()
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("清除当前日志", fontSize = 10.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = { showClearAllConfirm = true },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("清除全部日志", fontSize = 10.sp)
+                        }
+
+                        Button(
+                            onClick = { LogDirOpener.open(context) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("打开日志目录", fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+
+            // 3. 搜索框
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -159,7 +269,7 @@ fun DeveloperConsoleScreen(
                 singleLine = true
             )
 
-            // 3. 类别筛选 Chips
+            // 4. 类别筛选 Chips
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -180,7 +290,7 @@ fun DeveloperConsoleScreen(
                 }
             }
 
-            // 4. 详细日志列表
+            // 5. 详细日志列表
             if (filteredLogs.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -385,5 +495,37 @@ fun DeveloperConsoleScreen(
                 }
             }
         }
+    }
+
+    // 清除全部日志二次确认（删除所有归档文件，不可恢复）
+    if (showClearAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearAllConfirm = false },
+            title = { Text("清除全部日志", fontSize = 15.sp) },
+            text = {
+                Text(
+                    text = "将删除本地全部按天归档的日志文件，并清空当前界面记录，删除后无法恢复。确定继续吗？",
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        LogStorage.clearAll()
+                        AppLogger.clear()
+                        showClearAllConfirm = false
+                        Toast.makeText(context, "全部日志已清除", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("全部清除", fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllConfirm = false }) {
+                    Text("取消", fontSize = 12.sp)
+                }
+            }
+        )
     }
 }

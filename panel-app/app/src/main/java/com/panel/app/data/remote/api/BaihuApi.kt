@@ -1,6 +1,7 @@
 package com.panel.app.data.remote.api
 
 import com.panel.app.data.remote.ApiEnvelope
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -110,22 +111,22 @@ data class BaihuCreateTaskReq(
     val name: String,
     val remark: String? = null,
     val command: String? = null,
-    val pre_command: String? = null,
-    val post_command: String? = null,
+    val preCommand: String? = null,
+    val postCommand: String? = null,
     val tags: String? = null,
     val type: String = "task",
     val config: String? = null,
     val schedule: String,
     val timeout: Int = 30,
-    val work_dir: String? = null,
+    val workDir: String? = null,
     val envs: String? = null,
     val languages: com.google.gson.JsonElement? = null,
-    val agent_id: String? = null,
-    val trigger_type: String? = null,
-    val retry_count: Int? = null,
-    val retry_interval: Int? = null,
-    val random_range: Int? = null,
-    val pin_type: String? = null
+    val agentId: String? = null,
+    val triggerType: String? = null,
+    val retryCount: Int? = null,
+    val retryInterval: Int? = null,
+    val randomRange: Int? = null,
+    val pinType: String? = null
 )
 
 /** 字段对齐 `vo.TaskUpdateReq` */
@@ -153,6 +154,13 @@ data class BaihuUpdateTaskReq(
 )
 
 data class BaihuBatchDeleteTasksReq(val ids: List<String>)
+
+data class BaihuBatchDeleteTasksByQueryReq(
+    val name: String? = null,
+    val agent_id: String? = null,
+    val tags: String? = null,
+    val type: String? = null
+)
 
 data class BaihuEnvItem(
     val id: String,
@@ -209,7 +217,7 @@ data class BaihuCreateDepReq(
     val name: String,
     val version: String? = null,
     val language: String,
-    val lang_version: String? = null,
+    val langVersion: String? = null,
     val remark: String? = null
 )
 
@@ -435,6 +443,15 @@ interface BaihuApi {
     @POST("api/v1/tasks/batch-delete")
     suspend fun batchDeleteTasks(@Body req: BaihuBatchDeleteTasksReq): Response<BaihuCommonResp>
 
+    /** 按查询条件批量删除任务（name/agent_id/tags/type 均可选，至少传一个） */
+    @DELETE("api/v1/tasks/batch-by-query")
+    suspend fun batchDeleteTaskByQuery(
+        @Query("name") name: String? = null,
+        @Query("agent_id") agentId: String? = null,
+        @Query("tags") tags: String? = null,
+        @Query("type") type: String? = null
+    ): Response<BaihuCommonResp>
+
     @GET("api/v1/tasks/tags")
     suspend fun getTaskTags(): Response<BaihuTagsResp>
 
@@ -563,6 +580,17 @@ interface BaihuApi {
     @GET("api/v1/logs/{id}")
     suspend fun getLogDetail(@Path("id") id: String): Response<BaihuLogDetailResp>
 
+    /**
+     * SSE 流式实时日志接口。
+     * 返回 application/x-ndjson 流，每行是一条 JSON 事件。
+     * UI 层通过 OkHttp EventSource 消费此流。
+     */
+    @GET("api/v1/logs/sse")
+    suspend fun getLogSSE(
+        @Query("log_id") logId: String,
+        @Query("tail") tail: Int = 0
+    ): Response<ResponseBody>
+
     @DELETE("api/v1/logs/{id}")
     suspend fun deleteLog(@Path("id") id: String): Response<BaihuCommonResp>
 
@@ -587,7 +615,7 @@ interface BaihuApi {
 
     // ---------------- 7. 脚本管理 ----------------
     @GET("api/v1/scripts")
-    suspend fun getScripts(): Response<com.panel.app.data.remote.api.BaihuScriptsResp>
+    suspend fun getScripts(): Response<BaihuScriptsResp>
 
     @POST("api/v1/scripts")
     suspend fun createScript(@Body req: BaihuScriptReq): Response<BaihuCommonResp>
@@ -610,7 +638,7 @@ interface BaihuApi {
     ): Response<BaihuLoginLogsResp>
 }
 
-data class BaihuClearLogsReq(val task_id: String? = null)
+data class BaihuClearLogsReq(val taskId: String? = null)
 
 data class BaihuScriptItem(
     val id: String,

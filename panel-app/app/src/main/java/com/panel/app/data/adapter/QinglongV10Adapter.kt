@@ -21,6 +21,11 @@ class QinglongV10Adapter(
     override val instance: PanelInstance
 ) : IPanelAdapter {
 
+    companion object {
+        /** 日志流最长持续 10 分钟，避免任务卡死时无限轮询服务端 */
+        private const val MAX_LOG_STREAM_DURATION_MS = 10 * 60 * 1000L
+    }
+
     private val api: QinglongV10Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV10Api::class.java)
     private var currentToken: String? = instance.token
 
@@ -116,8 +121,8 @@ class QinglongV10Adapter(
     }
 
     private fun cleanId(raw: Any?): String = when (raw) {
-        is Number -> raw.toLong().toString()
-        is String -> raw.toDoubleOrNull()?.toLong()?.toString() ?: raw.substringBefore('.')
+        is Number -> raw.toString()
+        is String -> raw.toDoubleOrNull()?.let { runCatching { it.toLong() }.getOrNull() }?.toString() ?: raw.substringBefore('.')
         else -> raw?.toString()?.substringBefore('.') ?: ""
     }
 
@@ -163,8 +168,13 @@ class QinglongV10Adapter(
         return api.deleteCrons(getAuthHeader(), ids).unwrap("删除任务失败").map { true }
     }
 
-    override suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean> =
-        Result.failure(Exception("青龙 2.10 不支持置顶接口"))
+    override suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean> {
+        ensureAuth()
+        val ids = toIds(taskIds)
+        if (ids.isEmpty()) return Result.failure(Exception("任务 ID 无效"))
+        return (if (pin) api.pinCrons(getAuthHeader(), ids) else api.unpinCrons(getAuthHeader(), ids))
+            .unwrap("置顶操作失败").map { true }
+    }
 
     override suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>> =
         Result.failure(Exception("青龙 2.10 无运行实例接口，请升级到 2.15+"))
@@ -359,7 +369,7 @@ class QinglongV10Adapter(
     )
 
     private fun depTypeToString(raw: Any?): String = when (raw) {
-        is Number -> when (raw.toInt()) { 0 -> "nodejs"; 1 -> "python3"; 2 -> "linux"; else -> "nodejs" }
+        is Number -> when (raw.toLong()) { 0L -> "nodejs"; 1L -> "python3"; 2L -> "linux"; else -> "nodejs" }
         is String -> when (raw.lowercase()) {
             "0", "nodejs", "node" -> "nodejs"
             "1", "python3", "python" -> "python3"
@@ -393,14 +403,30 @@ class QinglongV10Adapter(
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> = batchDeleteDeps(depIds)
 
-    override suspend fun getDepLog(depId: String): Result<String> =
-        Result.failure(Exception("青龙 2.10 无依赖日志接口，请升级到 2.15+"))
+    override suspend fun getDepLog(depId: String): Result<String> {
+        ensureAuth()
+        return api.getDependencies(getAuthHeader(), null)
+            .unwrapTo("获取依赖日志失败") { env ->
+                val items = parseDepArray(env.data)
+                items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }
+                    ?.log?.joinToString("\n")?.takeIf { it.isNotBlank() }
+                    ?: "暂无日志输出"
+            }
+    }
 
     // ---------------------------------------------------------------- 7. 日志流
 
     override fun streamLog(logId: String): Flow<String> = flow {
         var last = ""
+        val startAt = System.currentTimeMillis()
+        // V10 无 offset 参数，每轮都是全量拉取，代价更高，因此空闲时退避得更激进
+        val backoffSteps = longArrayOf(2000L, 4000L, 8000L, 10000L, 15000L)
+        var idleStep = 0
         while (currentCoroutineContext().isActive) {
+            if (System.currentTimeMillis() - startAt > MAX_LOG_STREAM_DURATION_MS) {
+                emit("$last\n[INFO] 日志流已达 10 分钟上限，已自动停止。")
+                return@flow
+            }
             val res = api.getCronLog(getAuthHeader(), logId).unwrap("读取日志失败")
             if (res.isFailure) {
                 emit("[ERROR] ${res.exceptionOrNull()?.message}")
@@ -408,28 +434,78 @@ class QinglongV10Adapter(
             }
             val chunk = res.getOrNull()
             val content = chunk?.data ?: ""
+            idleStep = if (content != last) 0 else minOf(idleStep + 1, backoffSteps.lastIndex)
             if (content != last) {
                 last = content
                 emit(content)
             }
             if (chunk?.logStatus != "running") return@flow
-            delay(2000)
+            delay(backoffSteps[idleStep])
         }
     }
 
     // ---------------------------------------------------------------- 8. 监控 / 审计
 
-    override suspend fun getMetrics(): Result<Pair<String, String>> =
-        Result.failure(Exception("青龙 2.10 无监控接口，请升级到 2.15+"))
+    override suspend fun getMetrics(): Result<Pair<String, String>> {
+        ensureAuth()
+        return try {
+            api.getDashboardSystem(getAuthHeader())
+                .unwrapTo("获取监控数据失败") { env ->
+                    val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
+                    if (obj == null) {
+                        "--" to "--"
+                    } else {
+                        val ram = obj.takeIf { it.has("memUsagePercent") }?.get("memUsagePercent")?.takeIf { it.isJsonPrimitive }?.asString ?: "--"
+                        val load1 = obj.takeIf { it.has("loadAvg") }
+                            ?.get("loadAvg")?.takeIf { it.isJsonArray }?.asJsonArray
+                            ?.firstOrNull { it.isJsonPrimitive }
+                            ?.takeIf { it.isJsonPrimitive }?.asDouble ?: 0.0
+                        val cpus = obj.takeIf { it.has("cpus") }?.get("cpus")?.takeIf { it.isJsonPrimitive }?.asInt ?: 1
+                        val cpu = String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
+                        cpu to ram
+                    }
+                }
+        } catch (e: Exception) {
+            Result.success("--" to "--")
+        }
+    }
 
-    override suspend fun getLoginLogs(): Result<List<Map<String, Any>>> =
-        Result.failure(Exception("青龙 2.10 无登录日志接口"))
+    override suspend fun getLoginLogs(): Result<List<Map<String, Any>>> {
+        ensureAuth()
+        return api.getLoginLogs(getAuthHeader())
+            .unwrapTo("获取登录日志失败") { env ->
+                QinglongApiHelpers.parseJsonArray(env.data).mapNotNull { elem ->
+                    if (!elem.isJsonObject) return@mapNotNull null
+                    elem.asJsonObject.entrySet().associate { (k, v) ->
+                        k to (if (v.isJsonPrimitive) v.asString else v.toString())
+                    }
+                }
+            }
+    }
 
-    override suspend fun getLogsTree(): Result<com.google.gson.JsonElement> =
-        Result.failure(Exception("青龙 2.10 无日志文件树接口"))
+    override suspend fun getLogsTree(): Result<com.google.gson.JsonElement> {
+        ensureAuth()
+        return try {
+            api.getLogsTree(getAuthHeader())
+                .unwrapTo("获取日志文件列表失败") { env ->
+                    env.data?.takeIf { it.isJsonArray || it.isJsonObject } ?: com.google.gson.JsonArray()
+                }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
-    override suspend fun getLogDetail(path: String, file: String): Result<String> =
-        Result.failure(Exception("青龙 2.10 无日志详情接口"))
+    override suspend fun getLogDetail(path: String, file: String): Result<String> {
+        ensureAuth()
+        return api.getLogDetail(
+            auth = getAuthHeader(),
+            file = file,
+            path = path.ifEmpty { null },
+            tail = true
+        ).unwrapTo("读取日志失败") { chunk ->
+            chunk.data ?: ""
+        }
+    }
 
     suspend fun fetchSystemSettings(): Result<Map<String, String>> =
         QinglongV15Adapter(instance).fetchSystemSettings()

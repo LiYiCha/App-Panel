@@ -1,7 +1,6 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,7 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,20 +17,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.BuildConfig
 import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.AppUpdateInfo
+import com.panel.app.util.AppUpdateManager
+import com.panel.app.util.DownloadManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+
+// 下载状态持有类（顶层定义，避免前向引用问题）
+data class DownloadStateHolder(
+    var downloadUrl: String? = null,
+    var dlState: DownloadManager.State? = null,
+    var dlDownloaded: Long = 0L,
+    var dlTotal: Long = 0L,
+    var dlPercent: Int = 0,
+    var dlSpeed: Long = 0L,
+    var dlRetries: Int = 0,
+    var dlError: String? = null,
+    var dlDone: Boolean = false,
+    var dlDownloading: Boolean = false,
+)
 
 /**
  * 现代化紧凑型控制台/设置主页。
@@ -49,10 +66,12 @@ fun SettingsScreen(
     onOpenDashboard: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
-    onOpenExecutionHistory: () -> Unit = {},
+    onOpenLogHistory: () -> Unit = {},
+    onOpenSystemSettings: () -> Unit = {},
+    onOpenPermissions: () -> Unit = {},
+    onOpenSubscriptionsScreen: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
     val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
@@ -60,20 +79,21 @@ fun SettingsScreen(
 
     var showAboutDialog by remember { mutableStateOf(false) }
     var pingLatency by remember { mutableStateOf<String?>(null) }
-    var isTestingPing by remember { mutableStateOf(false) }
     var isReachable by remember { mutableStateOf<Boolean?>(null) }
     var remoteDashboard by remember { mutableStateOf<com.panel.app.data.model.PanelDashboard?>(null) }
-    var selectedTimeout by remember { mutableStateOf(15) }
+    var selectedTimeout by remember { mutableIntStateOf(15) }
     var showTimeoutDialog by remember { mutableStateOf(false) }
-    var showSystemSettingsPage by remember { mutableStateOf(false) }
 
     var isCheckingUpdate by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<com.panel.app.util.AppUpdateInfo?>(null) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+
+    // 下载状态（单个 Compose State，所有回调在主线程更新以触发 recompose）
+    val dlHolder = remember { mutableStateOf(DownloadStateHolder()) }
+    var dlJob by remember { mutableStateOf<Job?>(null) }
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
-        isTestingPing = true
         val latency = withContext(Dispatchers.IO) {
             try {
                 val start = System.currentTimeMillis()
@@ -93,56 +113,10 @@ fun SettingsScreen(
         }
         pingLatency = latency
         isReachable = latency.endsWith("ms")
-        isTestingPing = false
 
         viewModel.loadDashboard { res ->
             remoteDashboard = res.getOrNull()
         }
-    }
-
-    if (showSystemSettingsPage) {
-        androidx.activity.compose.BackHandler { showSystemSettingsPage = false }
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                if (currentPanel.type == PanelType.BAIHU) "白虎系统状态与配置" else "青龙系统高级配置",
-                                fontSize = 15.sp,
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                "${currentPanel.name} (${currentPanel.baseUrl})",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { showSystemSettingsPage = false }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                        }
-                    }
-                )
-            }
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (currentPanel.type == PanelType.QINGLONG_V15 || currentPanel.type == PanelType.QINGLONG_V10) {
-                    QinglongSystemSettingsCard(viewModel = viewModel)
-                } else {
-                    BaihuSystemSettingsCard(dashboard = remoteDashboard)
-                }
-            }
-        }
-        return
     }
 
     Column(
@@ -191,17 +165,6 @@ fun SettingsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Surface(
-                                    color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFFF9800).copy(alpha = 0.15f) else Color(0xFF2196F3).copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙",
-                                        fontSize = 9.sp,
-                                        color = if (currentPanel.type == PanelType.BAIHU) Color(0xFFE65100) else Color(0xFF1565C0),
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
                             }
                             Text(
                                 text = currentPanel.baseUrl,
@@ -285,28 +248,25 @@ fun SettingsScreen(
                         Text("面板管理", fontSize = 11.sp)
                     }
 
-                    OutlinedButton(
+                    IconButton(
                         onClick = {
                             viewModel.refreshPanelRemoteData(currentPanel)
                             Toast.makeText(context, "正在刷新面板数据...", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(32.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                     }
+                    Text("刷新", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     var showLogoutConfirm by remember { mutableStateOf(false) }
-                    OutlinedButton(
+                    IconButton(
                         onClick = { showLogoutConfirm = true },
-                        modifier = Modifier.size(32.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "退出", modifier = Modifier.size(16.dp))
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "退出", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                     }
+                    Text("退出", fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
 
                     if (showLogoutConfirm) {
                         AlertDialog(
@@ -355,12 +315,12 @@ fun SettingsScreen(
             )
             ModernNavTile(
                 icon = Icons.Default.History,
-                title = "执行历史中心",
-                desc = "流水记录与终端",
+                title = "历史日志",
+                desc = "任务执行流水记录",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenExecutionHistory
+                onClick = onOpenLogHistory
             )
         }
 
@@ -376,13 +336,13 @@ fun SettingsScreen(
                 onClick = onOpenDeps
             )
             ModernNavTile(
-                icon = Icons.Default.Article,
-                title = "服务端日志",
-                desc = "脚本文件日志",
+                icon = Icons.Default.SyncAlt,
+                title = "仓库订阅",
+                desc = "自动同步代码仓库",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = onOpenServerLogs
+                onClick = onOpenSubscriptionsScreen
             )
         }
 
@@ -408,8 +368,17 @@ fun SettingsScreen(
             )
         }
 
-        // Row 4
+        // Row 4: 订阅管理 + 系统高级配置
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ModernNavTile(
+                icon = Icons.Default.Sync,
+                title = "订阅仓库管理",
+                desc = "添加/同步定时仓库源",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenSubscriptionsScreen
+            )
             ModernNavTile(
                 icon = Icons.Default.Tune,
                 title = "系统高级配置",
@@ -417,7 +386,18 @@ fun SettingsScreen(
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
-                onClick = { showSystemSettingsPage = true }
+                onClick = onOpenSystemSettings
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ModernNavTile(
+                icon = Icons.Default.Shield,
+                title = "账户权限管理",
+                desc = "用户与权限设置",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenPermissions
             )
             ModernNavTile(
                 icon = Icons.Default.Terminal,
@@ -463,7 +443,7 @@ fun SettingsScreen(
                             if (!isCheckingUpdate) {
                                 coroutineScope.launch {
                                     isCheckingUpdate = true
-                                    val res = com.panel.app.util.AppUpdateManager.checkForUpdate()
+                                    val res = AppUpdateManager.checkForUpdate()
                                     isCheckingUpdate = false
                                     res.onSuccess { info ->
                                         updateInfo = info
@@ -482,8 +462,22 @@ fun SettingsScreen(
                     if (isCheckingUpdate) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("v${com.panel.app.BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("v${BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 应用权限管理入口
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenPermissions() }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("应用权限管理", fontSize = 12.sp)
+                    Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
@@ -512,7 +506,7 @@ fun SettingsScreen(
             title = { Text("关于 Panel Hub", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("版本: v${com.panel.app.BuildConfig.VERSION_NAME} (正式版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
+                    Text("版本: v${BuildConfig.VERSION_NAME} (正式版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
                     Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板。支持定时任务多状态联动、代码语法高亮与行号、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
                 }
             },
@@ -543,7 +537,7 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             RadioButton(selected = selectedTimeout == seconds, onClick = null)
-                            Text("${seconds} 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
+                            Text("$seconds 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
                         }
                     }
                 }
@@ -554,23 +548,48 @@ fun SettingsScreen(
         )
     }
 
-    // 版本更新弹窗
+    // 版本更新弹窗（含下载进度 / 失败 / 完成安装）
     if (showUpdateDialog && updateInfo != null) {
         val info = updateInfo!!
+        // 检查缓存目录是否已有已下载的 APK，允许直接安装无需重新下载
+        val cachedApk = File(context.cacheDir, "Panel-App-download.apk").takeIf { it.exists() && it.length() > 0 }
         AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
+            onDismissRequest = {
+                dlJob?.cancel()
+                if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                    DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
+                }
+                showUpdateDialog = false
+            },
             title = {
-                Text(if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本", fontSize = 15.sp)
+                Text(
+                    when {
+                        cachedApk != null && !dlHolder.value.dlDone -> "APK 已就绪"
+                        dlHolder.value.dlState != null && dlHolder.value.dlState!!.status == DownloadManager.State.Status.DONE -> "下载完成"
+                        dlHolder.value.dlError != null -> "下载失败"
+                        else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
+                    },
+                    fontSize = 15.sp
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // 版本信息（始终显示）
                     Text("当前: ${info.currentVersion}  |  最新: ${info.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (info.publishedAt.isNotBlank() && info.publishedAt != "--") {
                         Text("发布: ${info.publishedAt}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                     }
+                    if (cachedApk != null) {
+                        val sizeStr = when {
+                            cachedApk.length() >= 1024 * 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024 / 1024)} MB"
+                            cachedApk.length() >= 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024)} KB"
+                            else -> "${cachedApk.length()} B"
+                        }
+                        Text("缓存 APK: ${cachedApk.name} ($sizeStr)", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text("更新说明:", fontSize = 11.sp, style = MaterialTheme.typography.titleSmall)
                     Surface(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
@@ -578,48 +597,263 @@ fun SettingsScreen(
                             text = info.releaseNotes,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(8.dp)
+                            modifier = Modifier.padding(8.dp).verticalScroll(rememberScrollState())
+                        )
+                    }
+
+                    // 下载进度卡（仅在有效状态下显示）
+                    if (dlHolder.value.dlDownloading || dlHolder.value.dlState != null || dlHolder.value.dlPercent > 0 || dlHolder.value.dlError != null || dlHolder.value.dlDone) {
+                        DownloadProgressCard(
+                            downloaded = dlHolder.value.dlDownloaded,
+                            total = dlHolder.value.dlTotal,
+                            percent = dlHolder.value.dlPercent,
+                            speed = dlHolder.value.dlSpeed,
+                            retries = dlHolder.value.dlRetries,
+                            isError = dlHolder.value.dlError != null,
+                            isDone = dlHolder.value.dlDone,
+                            isDownloading = dlHolder.value.dlDownloading
                         )
                     }
                 }
             },
             confirmButton = {
-                if (info.hasUpdate && !info.downloadUrl.isNullOrEmpty()) {
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(info.downloadUrl))
-                                context.startActivity(intent)
-                            } catch (_: Exception) {
-                                clipboardManager.setText(AnnotatedString(info.downloadUrl))
-                                Toast.makeText(context, "已复制下载链接到剪贴板", Toast.LENGTH_SHORT).show()
-                            }
-                            showUpdateDialog = false
+                when {
+                    cachedApk != null && !dlHolder.value.dlDone -> {
+                        // 已有缓存 APK，直接安装
+                        Button(
+                            onClick = {
+                                DownloadManager.installAndCleanup(context, cachedApk)
+                                dlHolder.value = dlHolder.value.copy(dlDone = true)
+                                showUpdateDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即安装", fontSize = 12.sp)
                         }
-                    ) {
-                        Text("立即下载 APK", fontSize = 12.sp)
                     }
-                } else {
-                    Button(onClick = { showUpdateDialog = false }) { Text("我知道了", fontSize = 12.sp) }
+                    dlHolder.value.dlError != null -> {
+                        Button(
+                            onClick = {
+                                dlHolder.value = dlHolder.value.copy(dlError = null, dlRetries = 0)
+                                dlHolder.value.downloadUrl?.let { url ->
+                                    dlJob?.cancel()
+                                    dlJob = coroutineScope.launch(Dispatchers.IO) {
+                                        runDownload(context, url, dlHolder)
+                                    }
+                                }
+                            }
+                        ) { Text("重新下载", fontSize = 12.sp) }
+                    }
+                    dlHolder.value.dlDone -> {
+                        Button(
+                            onClick = {
+                                val apkFile = dlHolder.value.dlState?.file ?: return@Button
+                                DownloadManager.installAndCleanup(context, apkFile)
+                                dlHolder.value = dlHolder.value.copy(dlDone = false, dlState = null)
+                                showUpdateDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即安装", fontSize = 12.sp)
+                        }
+                    }
+                    !info.downloadUrl.isNullOrEmpty() -> {
+                        Button(
+                            onClick = {
+                                dlJob?.cancel()
+                                dlJob = coroutineScope.launch(Dispatchers.IO) {
+                                    runDownload(context, info.downloadUrl, dlHolder)
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即下载 APK", fontSize = 12.sp)
+                        }
+                    }
+                    else -> {
+                        Button(onClick = { showUpdateDialog = false }) { Text("我知道了", fontSize = 12.sp) }
+                    }
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        try {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(info.releasePageUrl))
-                            context.startActivity(intent)
-                        } catch (_: Exception) {
-                            clipboardManager.setText(AnnotatedString(info.releasePageUrl))
-                            Toast.makeText(context, "已复制 Release 地址", Toast.LENGTH_SHORT).show()
+                        dlJob?.cancel()
+                        if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
+                            DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
                         }
+                        resetDownloadState(dlHolder.value)
+                        showUpdateDialog = false
                     }
-                ) {
-                    Text("在 GitHub 查看", fontSize = 12.sp)
-                }
+                ) { Text("取消", fontSize = 12.sp) }
             }
         )
     }
+}
+
+// ── 下载辅助函数 ────────────────────────────────
+/**
+ * 启动下载；回调使用 Handler 切回主线程更新 holder，确保 Compose MutableState 在主线程写入。
+ */
+fun runDownload(
+    context: android.content.Context,
+    url: String,
+    holder: MutableState<DownloadStateHolder>,
+) {
+    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+
+    // 重置状态并开始下载（主线程）
+    mainHandler.post {
+        holder.value = holder.value.copy(
+            downloadUrl = url, dlDone = false, dlError = null, dlRetries = 0,
+            dlPercent = 0, dlSpeed = 0L, dlDownloading = true
+        )
+    }
+
+    DownloadManager.download(
+        url = url,
+        outputFile = apkFile,
+        onProgress = { bytes, total, percent, speed ->
+            mainHandler.post {
+                holder.value = holder.value.copy(dlDownloaded = bytes, dlTotal = total, dlPercent = percent, dlSpeed = speed)
+            }
+        },
+        onSuccess = { file ->
+            mainHandler.post {
+                holder.value = holder.value.copy(
+                    dlDownloading = false, dlDone = true,
+                    dlState = DownloadManager.State(
+                        url = url, file = file, downloaded = file.length(),
+                        total = file.length(), percent = 100, retries = 0,
+                        status = DownloadManager.State.Status.DONE
+                    )
+                )
+                Toast.makeText(context, "APK 下载完成，可以安装了", Toast.LENGTH_SHORT).show()
+            }
+        },
+        onFailure = { msg ->
+            mainHandler.post {
+                holder.value = holder.value.copy(dlDownloading = false, dlError = msg, dlState = null)
+                Toast.makeText(context, "下载失败: $msg", Toast.LENGTH_LONG).show()
+            }
+        },
+        onRetry = {
+            mainHandler.post {
+                holder.value = holder.value.copy(dlRetries = holder.value.dlRetries + 1, dlError = null)
+                Toast.makeText(
+                    context,
+                    "自动重试中... (${holder.value.dlRetries}/${DownloadManager.MAX_RETRIES})",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    )
+}
+
+fun resetDownloadState(stateHolder: DownloadStateHolder) {
+    DownloadManager.cancel(stateHolder.downloadUrl ?: "")
+}
+
+@Composable
+private fun DownloadProgressCard(
+    downloaded: Long,
+    total: Long,
+    percent: Int,
+    speed: Long,
+    retries: Int,
+    isError: Boolean,
+    isDone: Boolean,
+    isDownloading: Boolean = false,
+) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = when {
+                isError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                isDone -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // 头部：状态文字 + 百分比
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (isError) {
+                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        } else if (isDone) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
+                        Text(
+                            text = when {
+                                isError -> "下载失败"
+                                isDone -> "下载完成"
+                                else -> "下载中 ${percent}%"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = if (isDone) FontWeight.Bold else FontWeight.Medium,
+                            color = when {
+                                isError -> MaterialTheme.colorScheme.error
+                                isDone -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
+                    if (speed > 0L) {
+                        Text(formatSpeed(speed), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                // 进度条
+                LinearProgressIndicator(
+                    progress = { if (total > 0) downloaded.toFloat() / total else (percent / 100f) },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    color = when {
+                        isError -> MaterialTheme.colorScheme.error
+                        isDone -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+                // 字节数 + 重试
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (total > 0) "${formatBytes(downloaded)} / ${formatBytes(total)}" else formatBytes(downloaded),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (retries > 0 && !isDone) {
+                        Text("重试 $retries 次", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+
+fun formatBytes(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
+    else -> "${"%.2f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+fun formatSpeed(bytesPerSec: Long): String = when {
+    bytesPerSec < 1024 -> "$bytesPerSec B/s"
+    bytesPerSec < 1024 * 1024 -> "${"%.1f".format(bytesPerSec / 1024.0)} KB/s"
+    else -> "${"%.2f".format(bytesPerSec / (1024.0 * 1024.0))} MB/s"
 }
 
 /**
@@ -713,7 +947,7 @@ private fun CompactMetricChip(label: String, value: String, color: Color, modifi
  * 青龙面板系统设置二级内容。
  */
 @Composable
-private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
+fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf<Map<String, String>?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
@@ -766,7 +1000,7 @@ private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
                             onClick = {
                                 val v = logDays.toIntOrNull()
                                 viewModel.saveLogRemoveFrequency(v)
-                                Toast.makeText(context, if (v == null) "已清除日志自动清理限制" else "日志保留天数已设置为 ${v} 天", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (v == null) "已清除日志自动清理限制" else "日志保留天数已设置为 $v 天", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.height(52.dp),
                             shape = RoundedCornerShape(8.dp)
@@ -855,7 +1089,7 @@ private fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
  * 白虎面板系统概览二级内容。
  */
 @Composable
-private fun BaihuSystemSettingsCard(dashboard: com.panel.app.data.model.PanelDashboard?) {
+fun BaihuSystemSettingsCard(dashboard: com.panel.app.data.model.PanelDashboard?) {
     Column(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (dashboard == null) {
             Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {

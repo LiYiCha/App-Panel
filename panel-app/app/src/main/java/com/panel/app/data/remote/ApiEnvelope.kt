@@ -83,12 +83,9 @@ fun <E : ApiEnvelope> Response<E>.unwrap(fallbackMessage: String): Result<E> {
         )
     }
 
-    val body = body()
+    val body = body() ?: return Result.failure(ApiError(httpCode, "$fallbackMessage: 响应为空"))
 
     // 2. HTTP 成功但空响应体
-    if (body == null) {
-        return Result.failure(ApiError(httpCode, "$fallbackMessage: 响应为空"))
-    }
 
     // 3. 业务层失败：HTTP 200 但 code != 200（白虎全部错误、青龙大部分错误走这里）
     val bizCode = body.code ?: CODE_OK
@@ -128,10 +125,13 @@ private fun Response<*>.readErrorBody(): String? {
         val obj = JsonParser.parseString(raw).asJsonObject
         val details = obj.getAsJsonArray("errors")
             ?.takeIf { it.size() > 0 }
-            ?.joinToString("; ") { it.asJsonObject.get("message")?.asString.orEmpty() }
+            ?.joinToString("; ") { elem ->
+                if (!elem.isJsonObject) return@joinToString ""
+                elem.asJsonObject.get("message")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            }
             ?.takeIf { it.isNotBlank() }
 
-        listOfNotNull(obj.get("message")?.asString, obj.get("msg")?.asString, details)
+        listOfNotNull(obj.get("message")?.takeIf { !it.isJsonNull }?.asString, obj.get("msg")?.takeIf { !it.isJsonNull }?.asString, details)
             .firstOrNull { it.isNotBlank() }
             ?.trim()
     } catch (_: Exception) {

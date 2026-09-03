@@ -32,4 +32,5 @@ jobs:
 
       - name: Run Build Check
         working-directory: panel-app
-        run: ./gradlew assembleDebug --no-daemon
+        # --info：失败时能看到每个仓库的真实报错（超时 / 403 / 404），便于定位
+        run: ./gradlew assembleDebug --no-daemon --info

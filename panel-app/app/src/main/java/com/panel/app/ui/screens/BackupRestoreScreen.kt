@@ -1,8 +1,8 @@
 package com.panel.app.ui.screens
 
-import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -21,6 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.data.backup.BackupConfigFile
+import com.panel.app.data.backup.BackupEnv
+import com.panel.app.data.backup.BackupScript
+import com.panel.app.data.backup.BackupTask
+import com.panel.app.data.backup.PreviewRestoreData
 import com.panel.app.data.backup.RestoreReport
 import com.panel.app.ui.viewmodel.MainViewModel
 
@@ -29,7 +34,7 @@ import com.panel.app.ui.viewmodel.MainViewModel
  *
  * - 备份内容：任务 / 环境变量 / 脚本 / 配置文件，可任意勾选
  * - 输出：统一 JSON 文件，通过系统文档接口保存（无需存储权限）
- * - 恢复：可跨手机、跨面板（配置文件除外，仅同类型面板）
+ * - 恢复：解析后先展示清单供用户选择性勾选，再执行恢复
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +42,8 @@ fun BackupRestoreScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
+    BackHandler { onBack() }
+
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
 
@@ -47,13 +54,24 @@ fun BackupRestoreScreen(
     var isWorking by remember { mutableStateOf(false) }
     var reports by remember { mutableStateOf<List<RestoreReport>>(emptyList()) }
 
+    // 导入预览状态
+    var previewData by remember { mutableStateOf<PreviewRestoreData?>(null) }
+    var selectedTasks by remember { mutableStateOf<List<BackupTask>>(emptyList()) }
+    var selectedEnvs by remember { mutableStateOf<List<BackupEnv>>(emptyList()) }
+    var selectedScripts by remember { mutableStateOf<List<BackupScript>>(emptyList()) }
+    var selectedConfigs by remember { mutableStateOf<List<BackupConfigFile>>(emptyList()) }
+
     fun writeToUri(uri: Uri, text: String) {
         runCatching {
             context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
         }.onSuccess {
-            Toast.makeText(context, "备份文件已保存", Toast.LENGTH_SHORT).show()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "备份文件已保存", Toast.LENGTH_SHORT).show()
+            }
         }.onFailure {
-            Toast.makeText(context, "保存失败: ${it.message}", Toast.LENGTH_SHORT).show()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "保存失败: ${it.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -61,15 +79,35 @@ fun BackupRestoreScreen(
         context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
     }.getOrNull()
 
+    fun handleImportSuccess(data: PreviewRestoreData?) {
+        isWorking = false
+        previewData = data
+        if (data == null) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "读取备份文件失败", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            // 初始化选中状态为全选
+            selectedTasks = data.tasks
+            selectedEnvs = data.envs
+            selectedScripts = data.scripts
+            selectedConfigs = data.configFiles
+        }
+    }
+
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null && !isWorking) {
             isWorking = true
             viewModel.buildBackup(includeTasks, includeEnvs, includeScripts, includeConfigs) { json ->
+                writeToUri(uri, json ?: "")
                 isWorking = false
-                if (json != null) writeToUri(uri, json)
-                else Toast.makeText(context, "备份内容收集失败，请检查面板连接", Toast.LENGTH_SHORT).show()
+                if (json == null) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        Toast.makeText(context, "备份内容收集失败，请检查面板连接", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }
@@ -80,19 +118,16 @@ fun BackupRestoreScreen(
         if (uri != null) {
             val json = readFromUri(uri)
             if (json == null) {
-                Toast.makeText(context, "读取备份文件失败", Toast.LENGTH_SHORT).show()
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, "读取备份文件失败", Toast.LENGTH_SHORT).show()
+                }
                 return@rememberLauncherForActivityResult
             }
             isWorking = true
-            viewModel.restoreBackup(json) { result, error ->
-                isWorking = false
-                if (error != null) {
-                    reports = emptyList()
-                    Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-                } else {
-                    reports = result
-                }
-            }
+            // 重置状态
+            previewData = null
+            val parsed = viewModel.previewRestore(json)
+            handleImportSuccess(parsed)
         }
     }
 
@@ -123,84 +158,246 @@ fun BackupRestoreScreen(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item {
-                Text(
-                    "选择要备份的内容（恢复时也会按同样范围导入）：",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            // ========== 未导入时显示备份选项 ==========
+            if (previewData == null) {
+                item {
+                    Text(
+                        "选择要备份的内容（恢复时也会按同样范围导入）：",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-            item {
-                ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        BackupCategoryRow(
-                            checked = includeTasks,
-                            onCheckedChange = { includeTasks = it },
-                            icon = Icons.Default.Task,
-                            title = "定时任务",
-                            subtitle = "名称 / 命令 / 定时规则 / 标签 / 启停状态",
-                            count = uiState.tasks.size
-                        )
-                        HorizontalDivider()
-                        BackupCategoryRow(
-                            checked = includeEnvs,
-                            onCheckedChange = { includeEnvs = it },
-                            icon = Icons.Default.Tune,
-                            title = "环境变量",
-                            subtitle = "名称 / 值 / 备注 / 启用状态",
-                            count = uiState.envs.size
-                        )
-                        HorizontalDivider()
-                        BackupCategoryRow(
-                            checked = includeScripts,
-                            onCheckedChange = { includeScripts = it },
-                            icon = Icons.Default.Code,
-                            title = "脚本文件",
-                            subtitle = "脚本内容与目录结构",
-                            count = scriptCount
-                        )
-                        HorizontalDivider()
-                        BackupCategoryRow(
-                            checked = includeConfigs,
-                            onCheckedChange = { includeConfigs = it },
-                            icon = Icons.Default.Settings,
-                            title = "面板配置文件",
-                            subtitle = "config.sh 等（仅同类型面板可恢复）",
-                            count = configCount
-                        )
+                item {
+                    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            BackupCategoryRow(
+                                checked = includeTasks,
+                                onCheckedChange = { includeTasks = it },
+                                icon = Icons.Default.Task,
+                                title = "定时任务",
+                                subtitle = "名称 / 命令 / 定时规则 / 标签 / 启停状态",
+                                count = uiState.tasks.size
+                            )
+                            HorizontalDivider()
+                            BackupCategoryRow(
+                                checked = includeEnvs,
+                                onCheckedChange = { includeEnvs = it },
+                                icon = Icons.Default.Tune,
+                                title = "环境变量",
+                                subtitle = "名称 / 值 / 备注 / 启用状态",
+                                count = uiState.envs.size
+                            )
+                            HorizontalDivider()
+                            BackupCategoryRow(
+                                checked = includeScripts,
+                                onCheckedChange = { includeScripts = it },
+                                icon = Icons.Default.Code,
+                                title = "脚本文件",
+                                subtitle = "脚本内容与目录结构",
+                                count = scriptCount
+                            )
+                            HorizontalDivider()
+                            BackupCategoryRow(
+                                checked = includeConfigs,
+                                onCheckedChange = { includeConfigs = it },
+                                icon = Icons.Default.Settings,
+                                title = "面板配置文件",
+                                subtitle = "config.sh 等（仅同类型面板可恢复）",
+                                count = configCount
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                val anyChecked = includeTasks || includeEnvs || includeScripts || includeConfigs
+                                if (!anyChecked) {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        Toast.makeText(context, "请至少勾选一项备份内容", Toast.LENGTH_SHORT).show()
+                                    }
+                                    return@Button
+                                }
+                                exportLauncher.launch("panel-backup-${System.currentTimeMillis()}.json")
+                            },
+                            enabled = !isWorking,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("立即备份")
+                        }
+                        OutlinedButton(
+                            onClick = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*")) },
+                            enabled = !isWorking,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("从文件恢复")
+                        }
                     }
                 }
             }
 
-            item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            val anyChecked = includeTasks || includeEnvs || includeScripts || includeConfigs
-                            if (!anyChecked) {
-                                Toast.makeText(context, "请至少勾选一项备份内容", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            exportLauncher.launch("panel-backup-${System.currentTimeMillis()}.json")
-                        },
-                        enabled = !isWorking,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("立即备份")
+            // ========== 已导入时显示选择界面 ==========
+            if (previewData != null) {
+                item {
+                    Column {
+                        Text(
+                            "已读取备份文件，请选择要恢复的内容：",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (previewData?.sourcePanelName != null) {
+                            Text(
+                                "来源: ${previewData?.sourcePanelName}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                    OutlinedButton(
-                        onClick = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*")) },
-                        enabled = !isWorking,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("从文件恢复")
+                }
+
+                // 定时任务选择
+                previewData?.takeIf { it.tasks.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.tasks,
+                            selectedItems = selectedTasks,
+                            onSelectAll = { selectedTasks = pd.tasks },
+                            onDeselectAll = { selectedTasks = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedTasks = if (checked) selectedTasks + item
+                                else selectedTasks - item
+                            },
+                            itemCount = pd.tasks.size,
+                            selectedItemCount = selectedTasks.size
+                        ) { task ->
+                            TaskItemRow(task)
+                        }
+                    }
+                }
+
+                // 环境变量选择
+                previewData?.takeIf { it.envs.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.envs,
+                            selectedItems = selectedEnvs,
+                            onSelectAll = { selectedEnvs = pd.envs },
+                            onDeselectAll = { selectedEnvs = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedEnvs = if (checked) selectedEnvs + item
+                                else selectedEnvs - item
+                            },
+                            itemCount = pd.envs.size,
+                            selectedItemCount = selectedEnvs.size
+                        ) { env ->
+                            EnvItemRow(env)
+                        }
+                    }
+                }
+
+                // 脚本选择
+                previewData?.takeIf { it.scripts.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.scripts,
+                            selectedItems = selectedScripts,
+                            onSelectAll = { selectedScripts = pd.scripts },
+                            onDeselectAll = { selectedScripts = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedScripts = if (checked) selectedScripts + item
+                                else selectedScripts - item
+                            },
+                            itemCount = pd.scripts.size,
+                            selectedItemCount = selectedScripts.size
+                        ) { script ->
+                            ScriptItemRow(script)
+                        }
+                    }
+                }
+
+                // 配置文件选择
+                previewData?.takeIf { it.configFiles.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.configFiles,
+                            selectedItems = selectedConfigs,
+                            onSelectAll = { selectedConfigs = pd.configFiles },
+                            onDeselectAll = { selectedConfigs = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedConfigs = if (checked) selectedConfigs + item
+                                else selectedConfigs - item
+                            },
+                            itemCount = pd.configFiles.size,
+                            selectedItemCount = selectedConfigs.size
+                        ) { config ->
+                            ConfigItemRow(config)
+                        }
+                    }
+                }
+
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                previewData = null
+                            },
+                            enabled = !isWorking,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("取消")
+                        }
+                        Button(
+                            onClick = {
+                                val hasSelection = selectedTasks.isNotEmpty() || selectedEnvs.isNotEmpty() ||
+                                    selectedScripts.isNotEmpty() || selectedConfigs.isNotEmpty()
+                                if (!hasSelection) {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        Toast.makeText(context, "请至少选择一项要恢复的内容", Toast.LENGTH_SHORT).show()
+                                    }
+                                    return@Button
+                                }
+                                val pd = previewData
+                                if (pd == null) return@Button
+                                isWorking = true
+                                viewModel.restorePreview(
+                                    data = pd,
+                                    selectedTasks = selectedTasks,
+                                    selectedEnvs = selectedEnvs,
+                                    selectedScripts = selectedScripts,
+                                    selectedConfigs = selectedConfigs,
+                                    onResult = { result, error ->
+                                        isWorking = false
+                                        if (error != null) {
+                                            reports = emptyList()
+                                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            reports = result
+                                        }
+                                    }
+                                )
+                            },
+                            enabled = !isWorking,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("确认恢复")
+                        }
                     }
                 }
             }
@@ -229,6 +426,141 @@ fun BackupRestoreScreen(
 
 private fun countFiles(node: com.panel.app.data.model.ScriptNode): Int =
     if (node.isDir) (node.children?.sumOf { countFiles(it) } ?: 0) else 1
+
+/** 可逐项勾选的列表卡片 */
+@Composable
+private fun <T> SelectableItemList(
+    items: List<T>,
+    selectedItems: List<T>,
+    onSelectAll: () -> Unit,
+    onDeselectAll: () -> Unit,
+    onToggleItem: (T, Boolean) -> Unit,
+    itemCount: Int,
+    selectedItemCount: Int,
+    itemContent: @Composable (T) -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            // 标题栏
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "选择 $itemCount 项中已选 $selectedItemCount",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Text("全选", fontSize = 11.sp)
+                    }
+                    TextButton(onClick = onDeselectAll, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Text("清空", fontSize = 11.sp)
+                    }
+                }
+            }
+            HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(items, key = { it.hashCode() }) { item ->
+                    SelectableItemRow(
+                        selected = selectedItems.contains(item),
+                        onSelectedChange = { checked -> onToggleItem(item, checked) }
+                    ) {
+                        itemContent(item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectableItemRow(
+    selected: Boolean,
+    onSelectedChange: (Boolean) -> Unit,
+    content: @Composable () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = selected,
+            onCheckedChange = onSelectedChange,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        content()
+    }
+}
+
+@Composable
+private fun TaskItemRow(task: BackupTask) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            task.name.ifEmpty { "未命名任务" },
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            task.schedule.takeIf { it.isNotBlank() }?.let { "定时: $it" }
+                ?: task.command.takeIf { it.isNotBlank() }?.let { "命令: ${it.take(40)}${if (it.length > 40) "..." else ""}" }
+                ?: "无命令",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun EnvItemRow(env: BackupEnv) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(env.name, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            env.value.takeIf { it.isNotBlank() }?.let { "值: ${it.take(50)}${if (it.length > 50) "..." else ""}" }
+                ?: "空值",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ScriptItemRow(script: BackupScript) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            script.path.substringAfterLast("/"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            "${script.content.length} 字符",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ConfigItemRow(config: BackupConfigFile) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(config.path, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            "${config.content.length} 字符",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
 
 @Composable
 private fun BackupCategoryRow(

@@ -44,7 +44,7 @@ fun StandaloneLogScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
-    var fontSizeSp by remember { mutableStateOf(11) }
+    var fontSizeSp by remember { mutableIntStateOf(11) }
 
     // 纯动态日志列表：无任何硬编码 Mock 假数据
     val rawLines = remember {

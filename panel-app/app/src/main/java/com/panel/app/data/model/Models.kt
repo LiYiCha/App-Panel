@@ -33,8 +33,12 @@ data class UnifiedTask(
     val isDisabled: Boolean = false,
     val isPinned: Boolean = false,
     val labels: List<String> = emptyList(),
-    val lastRunningTime: Long? = null,
-    val lastExecutionTime: Long? = null,
+    val lastRunningTime: Long? = null,        // 上次执行耗时（秒），用于显示"运行时长"
+    val lastExecutionTime: Long? = null,      // 上次执行时间戳（秒）
+    val nextRunTime: String? = null,          // 下次计划运行时间（格式化字符串）
+    val extraSchedules: List<String> = emptyList(), // 额外定时规则（青龙 extra_schedules）
+    val workDir: String? = null,              // 工作目录
+    val allowMultipleInstances: Boolean = false, // 是否允许多实例
     val timeout: Int = 30,
     val createdAt: String? = null,
     val updatedAt: String? = null,
@@ -42,14 +46,12 @@ data class UnifiedTask(
     val selected: Boolean = false,
     val preCommand: String? = null,
     val postCommand: String? = null,
-    val workDir: String? = null,
     val agentId: String? = null,
     val retryCount: Int = 0,
     val retryInterval: Int = 0,
     val randomRange: Int = 0,
     val languages: List<String> = emptyList(),
     val lastRunTime: String? = null,
-    val nextRunTime: String? = null,
     val cleanConfig: String? = null,
     val taskType: String? = null
 )
@@ -87,7 +89,7 @@ data class UnifiedSubscription(
     val commentToTask: Boolean = false
 )
 
-// 任务历次执行历史实例模型
+// 任务历次执行历史实例模型（对齐前端 RunningInstanceAttributes）
 data class TaskInstanceRecord(
     val id: String,
     val taskName: String = "",
@@ -97,7 +99,8 @@ data class TaskInstanceRecord(
     val exitCode: Int = 0,
     val statusText: String = "成功",
     val logSnippet: String = "",
-    val logPath: String? = null
+    val logPath: String? = null,
+    val pid: Int? = null  // 进程 PID，运行中实例需要展示和停止
 )
 
 data class UnifiedEnv(
@@ -106,7 +109,11 @@ data class UnifiedEnv(
     val value: String, // 完整明文展示，不使用 ******** 遮挡
     val remarks: String? = null,
     val enabled: Boolean = true,
-    val selected: Boolean = false
+    val labels: List<String> = emptyList(),
+    val selected: Boolean = false,
+    val isPinned: Boolean = false,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
 data class UnifiedDep(
@@ -115,7 +122,7 @@ data class UnifiedDep(
     val version: String,
     val type: String, // "python3", "nodejs", "linux"
     val remarks: String? = null,
-    val status: Int = 1, // 0: 安装中, 1: 已安装, 2: 安装失败, 3: 卸载中
+    val status: Int? = null, // null=未知, 0: 安装中, 1: 已安装, 2: 安装失败, 3: 卸载中, 4: 已卸载, 5: 卸载失败, 6: 排队中, 7: 已取消
     val log: String? = null,
     val selected: Boolean = false
 )

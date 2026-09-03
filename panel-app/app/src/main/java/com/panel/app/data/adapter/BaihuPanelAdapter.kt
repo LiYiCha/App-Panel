@@ -7,11 +7,16 @@ import com.panel.app.data.remote.OtpRequiredException
 import com.panel.app.data.remote.api.*
 import com.panel.app.data.remote.unwrap
 import com.panel.app.data.remote.unwrapTo
+import com.google.gson.JsonParser
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
+import java.io.BufferedReader
+import java.io.IOException
+import java.io.InputStreamReader
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 /**
  * 白虎面板适配器。
@@ -112,7 +117,7 @@ class BaihuPanelAdapter(
         }
 
         return resp.unwrap("验证码校验失败").let {
-            if (it.isFailure) return Result.failure(it.exceptionOrNull()!!)
+            if (it.isFailure) return Result.failure(it.exceptionOrNull() ?: Exception("未知失败"))
             captureToken(resp, "验证码校验失败").also { otpPendingToken = null }
         }
     }
@@ -263,7 +268,7 @@ class BaihuPanelAdapter(
             api.runTask(id).unwrap("运行任务失败")
                 .onFailure { errors.add(it.message ?: "运行任务失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     /**
@@ -283,7 +288,7 @@ class BaihuPanelAdapter(
             api.stopTask(logId).unwrap("停止任务失败")
                 .onFailure { errors.add(it.message ?: "停止任务失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     /** 任务日志状态取值：running / success / failed */
@@ -331,6 +336,29 @@ class BaihuPanelAdapter(
         }
     }
 
+    /**
+     * 按查询条件批量删除任务。
+     * 对齐前端 API：DELETE /api/v1/tasks/batch-by-query?name=&agent_id=&tags=&type=
+     */
+    suspend fun batchDeleteTaskByQuery(
+        name: String? = null,
+        agentId: String? = null,
+        tags: String? = null,
+        type: String? = null
+    ): Result<Boolean> {
+        ensureAuth()
+        return try {
+            api.batchDeleteTaskByQuery(
+                name = name,
+                agentId = agentId,
+                tags = tags,
+                type = type
+            ).unwrap("批量按条件删除任务失败").map { true }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     override suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean> {
         ensureAuth()
         val errors = mutableListOf<String>()
@@ -339,7 +367,7 @@ class BaihuPanelAdapter(
                 .unwrap("置顶操作失败")
                 .onFailure { errors.add(it.message ?: "置顶操作失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     override suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>> {
@@ -353,7 +381,7 @@ class BaihuPanelAdapter(
                             taskName = log.task_name ?: "任务 #${log.id}",
                             startTime = log.start_time ?: "--",
                             endTime = log.end_time,
-                            duration = log.duration?.let { formatDuration(it) } ?: "--",
+                            duration = log.duration?.let { BaihuApiHelpers.formatDuration(it) } ?: "--",
                             exitCode = log.exit_code ?: 0,
                             statusText = when (log.status) {
                                 "running" -> "运行中"
@@ -375,7 +403,8 @@ class BaihuPanelAdapter(
             // 参数可能是日志 ID，也可能是任务 ID
             val direct = api.getLogDetail(taskNameOrId).unwrap("获取日志详情失败")
             if (direct.isSuccess) {
-                return Result.success(extractLogOutput(direct.getOrNull()?.data))
+                val d = direct.getOrNull()?.data
+                return Result.success(if (d != null) { val out = d.output; val err = d.error; if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容" } else "暂无日志内容")
             }
             val latest = api.getLogs(taskId = taskNameOrId, pageSize = 1)
                 .unwrap("获取任务日志失败").getOrNull()
@@ -383,20 +412,11 @@ class BaihuPanelAdapter(
                 ?: return Result.success("暂无任务执行日志记录")
 
             api.getLogDetail(latest.id)
-                .unwrapTo("获取日志详情失败") { extractLogOutput(it.data) }
+                .unwrapTo("获取日志详情失败") { d ->
+                    if (d != null) { val out = d.data?.output ?: ""; val err = d.data?.error ?: ""; if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容" } else "暂无日志内容"
+                }
         } catch (e: Exception) {
             Result.failure(e)
-        }
-    }
-
-    private fun extractLogOutput(detail: BaihuLogDetail?): String {
-        if (detail == null) return "暂无日志内容"
-        val output = detail.output
-        val error = detail.error
-        return when {
-            !output.isNullOrBlank() -> output
-            !error.isNullOrBlank() -> error
-            else -> "暂无日志内容"
         }
     }
 
@@ -435,19 +455,19 @@ class BaihuPanelAdapter(
                     com.google.gson.JsonParser.parseString(raw).asJsonObject
                 } else null
                 obj?.let {
-                    repoUrl = it.get("repo_url")?.asString ?: it.get("repourl")?.asString ?: it.get("source_url")?.asString ?: ""
-                    branch = it.get("branch")?.asString ?: "main"
-                    whitelist = it.get("whitelist_paths")?.asString ?: it.get("whitelist")?.asString ?: ""
-                    blacklist = it.get("blacklist")?.asString ?: ""
-                    autoAddCron = it.get("auto_add_cron")?.asBoolean ?: true
-                    targetPath = it.get("target_path")?.asString ?: ""
-                    sparsePath = it.get("sparse_path")?.asString ?: it.get("path")?.asString ?: ""
-                    singleFile = it.get("single_file")?.asBoolean ?: false
-                    proxy = it.get("proxy")?.asString ?: "none"
-                    proxyUrl = it.get("proxy_url")?.asString ?: ""
-                    authToken = it.get("auth_token")?.asString ?: ""
-                    repoDirName = it.get("repo_dir_name")?.asString ?: it.get("repo_name")?.asString ?: ""
-                    commentToTask = it.get("commenttotask")?.asString == "true" || it.get("auto_add_cron")?.asBoolean == true
+                    repoUrl = it.get("repo_url")?.takeIf { !it.isJsonNull }?.asString ?: it.get("repourl")?.takeIf { !it.isJsonNull }?.asString ?: it.get("source_url")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    branch = it.get("branch")?.takeIf { !it.isJsonNull }?.asString ?: "main"
+                    whitelist = it.get("whitelist_paths")?.takeIf { !it.isJsonNull }?.asString ?: it.get("whitelist")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    blacklist = it.get("blacklist")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    autoAddCron = it.get("auto_add_cron")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
+                    targetPath = it.get("target_path")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    sparsePath = it.get("sparse_path")?.takeIf { !it.isJsonNull }?.asString ?: it.get("path")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    singleFile = it.get("single_file")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                    proxy = it.get("proxy")?.takeIf { !it.isJsonNull }?.asString ?: "none"
+                    proxyUrl = it.get("proxy_url")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    authToken = it.get("auth_token")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    repoDirName = it.get("repo_dir_name")?.takeIf { !it.isJsonNull }?.asString ?: it.get("repo_name")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    commentToTask = it.get("commenttotask")?.takeIf { !it.isJsonNull }?.asString == "true" || it.get("auto_add_cron")?.takeIf { !it.isJsonNull }?.asBoolean == true
                 }
             }
         }
@@ -466,8 +486,8 @@ class BaihuPanelAdapter(
                         when {
                             item.isJsonPrimitive -> langList.add(item.asString)
                             item.isJsonObject -> {
-                                val n = item.asJsonObject.get("name")?.asString ?: ""
-                                val v = item.asJsonObject.get("version")?.asString ?: ""
+                                val n = item.asJsonObject.get("name")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val v = item.asJsonObject.get("version")?.takeIf { !it.isJsonNull }?.asString ?: ""
                                 if (n.isNotEmpty()) langList.add(if (v.isNotEmpty()) "$n:$v" else n)
                             }
                         }
@@ -601,7 +621,9 @@ class BaihuPanelAdapter(
                             name = item.name,
                             value = item.value,
                             remarks = item.remark,
-                            enabled = item.enabled ?: true
+                            enabled = item.enabled ?: true,
+                            labels = item.tags?.split(",").orEmpty().filter { it.isNotBlank() },
+                            isPinned = false
                         )
                     }
                 }
@@ -652,7 +674,55 @@ class BaihuPanelAdapter(
             api.deleteEnv(id).unwrap("删除环境变量失败")
                 .onFailure { errors.add(it.message ?: "删除环境变量失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
+    }
+
+    // ---------------------------------------------------------------- 环境变量辅助方法
+
+    override suspend fun batchEnableEnvs(envIds: List<String>): Result<Boolean> {
+        return batchToggleEnvs(envIds, enable = true)
+    }
+
+    override suspend fun batchDisableEnvs(envIds: List<String>): Result<Boolean> {
+        return batchToggleEnvs(envIds, enable = false)
+    }
+
+    /** 逐条调用 PUT /env/{id} 更新 enabled 状态（保留原 name/value 不覆盖） */
+    private suspend fun batchToggleEnvs(envIds: List<String>, enable: Boolean): Result<Boolean> {
+        ensureAuth()
+        // 先拉取全量 env 列表，保留每条 env 的 name/value，只替换 enabled
+        val all = getEnvs(null).getOrNull() ?: return Result.failure(Exception("无法获取环境变量列表，批量操作取消"))
+        val errors = mutableListOf<String>()
+        for (id in envIds) {
+            val existing = all.find { it.id == id }
+            if (existing == null) {
+                errors.add("$id: 未找到该变量")
+                continue
+            }
+            api.updateEnv(id, BaihuCreateEnvReq(
+                name = existing.name,
+                value = existing.value,
+                remark = existing.remarks,
+                enabled = enable
+            ))
+                .unwrap("切换变量状态失败")
+                .onFailure { errors.add("$id: ${it.message}") }
+        }
+        return if (errors.isEmpty()) Result.success(true)
+        else Result.failure(Exception("部分失败（${errors.size}/${envIds.size}）：${errors.take(2).joinToString("; ")}"))
+    }
+
+    override suspend fun exportEnvsJson(envIds: List<String>): Result<String> {
+        val all = getEnvs(null).getOrNull() ?: return Result.failure(Exception("导出失败：无法获取变量列表"))
+        val subset = all.filter { it.id in envIds }
+        if (subset.isEmpty()) return Result.failure(Exception("未选中任何变量"))
+        val json = subset.joinToString(",\n") { e ->
+            """  {"name": "${e.name.replace("\"", "\\\"")}",
+               "value": "${e.value.replace("\"", "\\\"")}",
+               "remarks": "${(e.remarks ?: "").replace("\"", "\\\"")}",
+               "enabled": ${e.enabled}}"""
+        }
+        return Result.success("[$json\n]")
     }
 
     /** 批量导入：白虎的 /env/bulk_save 按 name 做 upsert，一次请求 */
@@ -902,7 +972,7 @@ class BaihuPanelAdapter(
             api.deleteDependency(id).unwrap("清除依赖记录失败")
                 .onFailure { errors.add(it.message ?: "清除依赖记录失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     override suspend fun forceDeleteDeps(depIds: List<String>): Result<Boolean> {
@@ -912,7 +982,7 @@ class BaihuPanelAdapter(
             api.deleteDependency(id).unwrap("强制清除依赖记录失败")
                 .onFailure { errors.add(it.message ?: "强制清除依赖记录失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     /** 重新安装依赖：POST /deps/reinstall/{id} */
@@ -923,7 +993,7 @@ class BaihuPanelAdapter(
             api.reinstallDependency(id).unwrap("重新安装依赖失败")
                 .onFailure { errors.add(it.message ?: "重新安装依赖失败") }
         }
-        return summarize(errors)
+        return BaihuApiHelpers.summarize(errors)
     }
 
     /** 白虎没有「取消安装」接口，明确告知而不是静默返回成功 */
@@ -940,6 +1010,26 @@ class BaihuPanelAdapter(
         ensureAuth()
         if (envs.isEmpty()) return Result.failure(Exception("没有可导入的环境变量"))
         return api.bulkSaveEnvs(envs).unwrap("批量保存环境变量失败").map { true }
+    }
+
+    override suspend fun deleteTaskInstance(instanceId: String): Result<Boolean> {
+        ensureAuth()
+        return api.deleteLog(instanceId)
+            .unwrap("删除实例失败").map { true }
+    }
+
+    override suspend fun batchDeleteTaskInstances(instanceIds: List<String>): Result<Boolean> {
+        ensureAuth()
+        if (instanceIds.isEmpty()) return Result.success(true)
+        // 白虎 API 暂无批量删除接口，逐条调用 DELETE /api/v1/logs/{id}
+        val errors = mutableListOf<String>()
+        for (id in instanceIds) {
+            api.deleteLog(id)
+                .unwrap("删除实例失败")
+                .onFailure { errors.add("$id: ${it.message}") }
+        }
+        return if (errors.isEmpty()) Result.success(true)
+        else Result.failure(Exception("部分删除失败（${errors.size}/${instanceIds.size}）：${errors.take(3).joinToString("; ")}"))
     }
 
     // ---------------------------------------------------------------- 备份恢复
@@ -965,6 +1055,13 @@ class BaihuPanelAdapter(
                 )
             ).unwrap("创建任务失败")
             if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                // 任务已存在时跳过，而不是报错
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
                 errors.add("${t.name}: ${res.exceptionOrNull()?.message}")
                 continue
             }
@@ -991,7 +1088,7 @@ class BaihuPanelAdapter(
         return Result.success(RestoreReport("任务", tasks.size, ok, skipped, errors))
     }
 
-    /** 白虎的 bulk_save 直接支持 enabled，一次请求即可完成高保真恢复 */
+    /** 白虎的 bulk_save 直接支持 enabled，一次请求即可完成高保真恢复。重复变量自动跳过 */
     override suspend fun restoreEnvs(envs: List<BackupEnv>): Result<RestoreReport> {
         ensureAuth()
         val valid = envs.filter { it.name.isNotBlank() }
@@ -1007,11 +1104,34 @@ class BaihuPanelAdapter(
                 )
             }
         ).unwrap("导入环境变量失败")
-        return if (res.isSuccess) {
-            Result.success(RestoreReport("环境变量", envs.size, valid.size, skipped, emptyList()))
-        } else {
-            Result.failure(res.exceptionOrNull() ?: Exception("导入失败"))
+        if (res.isSuccess) {
+            return Result.success(RestoreReport("环境变量", envs.size, valid.size, skipped, emptyList()))
         }
+        val errMsg = res.exceptionOrNull()?.message ?: ""
+        // 部分变量已存在时，降级为逐条创建
+        if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+            "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+            var ok = 0
+            var dupSkipped = 0
+            val errors = mutableListOf<String>()
+            for (e in valid) {
+                val singleRes = api.bulkSaveEnvs(listOf(BaihuBulkEnvReq(name = e.name, value = e.value, remark = e.remarks, enabled = e.enabled)))
+                    .unwrap("导入环境变量失败")
+                if (singleRes.isSuccess) {
+                    ok++
+                } else {
+                    val eMsg = singleRes.exceptionOrNull()?.message ?: ""
+                    if ("已存在".contains(eMsg) || "exist".equals(eMsg, ignoreCase = true) ||
+                        "duplicate".equals(eMsg, ignoreCase = true) || eMsg.contains("重复")) {
+                        dupSkipped++
+                    } else {
+                        errors.add("${e.name}: ${singleRes.exceptionOrNull()?.message}")
+                    }
+                }
+            }
+            return Result.success(RestoreReport("环境变量", envs.size, ok, skipped + dupSkipped, errors))
+        }
+        return Result.failure(res.exceptionOrNull() ?: Exception("导入失败"))
     }
 
     override suspend fun getDepLog(depId: String): Result<String> {
@@ -1032,27 +1152,62 @@ class BaihuPanelAdapter(
     // ---------------------------------------------------------------- 7. 日志流
 
     /**
-     * 轮询真实的日志详情。
-     * 白虎提供 `/logs/sse` 流式接口，但需要额外引入 okhttp-sse；
-     * 这里先用轮询保证拿到的是**真实数据**（之前是 emit 两行占位文本）。
+     * 通过白虎 SSE 接口流式读取实时日志。
+     * 端点：GET /api/v1/logs/sse?log_id=xxx
+     * 响应类型：application/x-ndjson，每行是一条 JSON，含 timestamp/type/message 字段。
+     * 使用 OkHttp Call.enqueue() 异步流式读取，避免阻塞协程调度线程。
      */
-    override fun streamLog(logId: String): Flow<String> = flow {
-        var last = ""
-        while (currentCoroutineContext().isActive) {
-            val result = api.getLogDetail(logId).unwrap("读取日志失败")
-            if (result.isFailure) {
-                emit("[ERROR] ${result.exceptionOrNull()?.message}")
-                return@flow
-            }
-            val detail = result.getOrNull()?.data
-            val content = extractLogOutput(detail)
-            if (content != last) {
-                last = content
-                emit(content)
-            }
-            // 任务结束后停止轮询
-            if (detail?.status != null && detail.status != "running") return@flow
-            delay(2000)
+    override fun streamLog(logId: String): Flow<String> = callbackFlow {
+        val ctx = currentCoroutineContext()
+        val baseUrl = instance.baseUrl.removeSuffix("/")
+        val url = "$baseUrl/api/v1/logs/sse?log_id=${URLEncoder.encode(logId, StandardCharsets.UTF_8.toString())}"
+        val request = okhttp3.Request.Builder()
+            .url(url)
+            .header("Accept", "application/x-ndjson")
+            .build()
+
+        var reader: BufferedReader? = null
+        try {
+            NetworkClient.unsafeOkHttpClient.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: IOException) {
+                    trySend("[ERROR] ${e.message ?: "连接失败"}")
+                    close()
+                }
+
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    if (!ctx.isActive) { response.close(); return }
+                    if (!response.isSuccessful) {
+                        val errBody = response.body?.string()?.trim()
+                        trySend("[ERROR] HTTP ${response.code}: $errBody")
+                        close()
+                        return
+                    }
+                    val body = response.body
+                        ?: run { trySend("[ERROR] 空响应体"); close(); return }
+                    reader = BufferedReader(InputStreamReader(body.byteStream(), StandardCharsets.UTF_8))
+
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        if (!ctx.isActive) break
+                        line?.trim()?.takeIf { it.isNotEmpty() }?.let { rawLine ->
+                            try {
+                                val json = JsonParser.parseString(rawLine).asJsonObject
+                                val msg = json["message"]?.takeIf { !it.isJsonNull }?.asString?.trim()
+                                    ?: json["content"]?.takeIf { !it.isJsonNull }?.asString?.trim()
+                                    ?: rawLine
+                                if (msg.isNotEmpty()) trySend(msg)
+                            } catch (_: Exception) {
+                                // 非 JSON 行直接透传
+                                trySend(rawLine)
+                            }
+                        }
+                    }
+                    close()
+                }
+            })
+        } catch (e: Exception) {
+            trySend("[ERROR] ${e.message}")
+            close()
         }
     }
 
@@ -1091,7 +1246,7 @@ class BaihuPanelAdapter(
                     ?.filter { it.status == "running" && !it.task_id.isNullOrEmpty() }
                     ?.map { w ->
                         RunningTaskInfo(
-                            taskId = w.task_id!!,
+                            taskId = w.task_id ?: "",
                             name = w.task_name ?: "任务 #${w.task_id}",
                             instanceId = null,
                             pid = null,
@@ -1103,9 +1258,17 @@ class BaihuPanelAdapter(
             }
     }
 
-    /** 白虎停止需要的是日志 ID，这里复用 findRunningLogId 做解析 */
+    /**
+     * 白虎停止需要的是日志 ID（非任务 ID）。
+     * 优先使用 instanceId 作为 logID 直接停止；否则调用 findRunningLogId 解析。
+     */
     override suspend fun stopRunningTask(taskId: String, instanceId: String?): Result<Boolean> {
         ensureAuth()
+        if (!instanceId.isNullOrBlank()) {
+            // 有明确实例 ID，直接传日志 ID 停止（白虎的 logID = 日志记录 ID）
+            return api.stopTask(instanceId)
+                .unwrap("停止运行实例失败").map { true }
+        }
         return stopTask(listOf(taskId))
     }
 
@@ -1141,7 +1304,7 @@ class BaihuPanelAdapter(
 
             Result.success(
                 PanelDashboard(
-                    totalTasks = stats?.tasks?.toInt(),
+                    totalTasks = stats?.tasks?.let { if (it > Int.MAX_VALUE) null else it.toInt() },
                     todayRuns = stats?.today_execs,
                     totalEnvs = stats?.envs,
                     totalLogs = stats?.logs,
@@ -1182,7 +1345,7 @@ class BaihuPanelAdapter(
                     memUsage = fmtPct(host?.mem_percent),
                     resourceDetail = buildMap {
                         host?.platform?.let { put("系统", it) }
-                        host?.uptime?.let { put("运行时长", formatUptime(it)) }
+                        host?.uptime?.let { put("运行时长", BaihuDashboardHelpers.formatUptime(it)) }
                         fmtPct(host?.disk_percent)?.let { put("磁盘占用", it) }
                         sched?.worker_count?.let { put("Worker 数", "$it") }
                     }
@@ -1193,29 +1356,12 @@ class BaihuPanelAdapter(
         }
     }
 
-    private fun formatUptime(seconds: Long): String = when {
-        seconds < 3600 -> "${seconds / 60} 分钟"
-        seconds < 86400 -> "${seconds / 3600} 小时 ${(seconds % 3600) / 60} 分"
-        else -> "${seconds / 86400} 天 ${(seconds % 86400) / 3600} 小时"
-    }
-
     // ---------------------------------------------------------------- 9. 审计日志
 
     override suspend fun getLoginLogs(): Result<List<Map<String, Any>>> {
         ensureAuth()
         return try {
-            api.getLoginLogs(pageSize = 50)
-                .unwrapTo("获取登录日志失败") { env ->
-                    env.data?.data.orEmpty().map { item ->
-                        mapOf(
-                            "ip" to (item.ip ?: "127.0.0.1"),
-                            "username" to (item.username ?: "--"),
-                            "status" to (item.status ?: "success"),
-                            "address" to (item.message ?: ""),
-                            "createdAt" to (item.created_at ?: "--")
-                        )
-                    }
-                }
+            api.getLoginLogsHelper()
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -1224,31 +1370,7 @@ class BaihuPanelAdapter(
     override suspend fun getLogsTree(): Result<com.google.gson.JsonElement> {
         ensureAuth()
         return try {
-            api.getLogs(pageSize = 100)
-                .unwrapTo("获取日志列表失败") { env ->
-                    val groups = mutableMapOf<String, com.google.gson.JsonArray>()
-                    env.data?.data.orEmpty().forEach { log ->
-                        val groupName = log.task_name?.ifBlank { "通用任务" } ?: "通用任务"
-                        val children = groups.computeIfAbsent(groupName) { com.google.gson.JsonArray() }
-                        val timeStr = log.start_time?.replace(' ', '_')?.replace(':', '-')
-                            ?: log.created_at?.replace(' ', '_')?.replace(':', '-')
-                            ?: log.id
-                        children.add(com.google.gson.JsonObject().apply {
-                            addProperty("title", "$timeStr.log")
-                            addProperty("type", "file")
-                            addProperty("id", log.id)
-                        })
-                    }
-                    com.google.gson.JsonArray().apply {
-                        groups.forEach { (groupName, children) ->
-                            add(com.google.gson.JsonObject().apply {
-                                addProperty("title", groupName)
-                                addProperty("type", "directory")
-                                add("children", children)
-                            })
-                        }
-                    }
-                }
+            api.getLogsTreeHelper()
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -1260,7 +1382,11 @@ class BaihuPanelAdapter(
         if (logId.isEmpty()) return Result.failure(Exception("日志 ID 为空"))
         return try {
             api.getLogDetail(logId)
-                .unwrapTo("获取日志详情失败") { extractLogOutput(it.data) }
+                .unwrapTo("获取日志详情失败") { d: BaihuLogDetailResp ->
+                    val out = d.data?.output ?: ""
+                    val err = d.data?.error ?: ""
+                    if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容"
+                }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -1268,19 +1394,4 @@ class BaihuPanelAdapter(
 
     // ---------------------------------------------------------------- 工具
 
-    private fun summarize(errors: List<String>): Result<Boolean> {
-        val distinct = errors.distinct()
-        return if (distinct.isEmpty()) Result.success(true)
-        else Result.failure(Exception(distinct.joinToString("; ")))
-    }
-
-    private fun formatDuration(duration: Long): String {
-        // 后端 duration 单位为秒；若数值异常大则按毫秒处理
-        val seconds = if (duration > 100_000) duration / 1000 else duration
-        return when {
-            seconds < 60 -> "${seconds}s"
-            seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
-            else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
-        }
-    }
 }

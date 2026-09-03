@@ -27,6 +27,10 @@ interface IPanelAdapter {
     suspend fun pinTask(taskIds: List<String>, pin: Boolean): Result<Boolean>
     suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>>
     suspend fun getTaskLog(taskNameOrId: String): Result<String>
+    suspend fun deleteTaskInstance(instanceId: String): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持删除任务实例"))
+    suspend fun batchDeleteTaskInstances(instanceIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量删除任务实例"))
 
     // 3. 订阅管理 (Subscriptions)
     suspend fun getSubscriptions(query: String? = null): Result<List<UnifiedSubscription>>
@@ -62,7 +66,7 @@ interface IPanelAdapter {
         return Result.success(RestoreReport("任务", tasks.size, ok, skipped, errors))
     }
 
-    /** 恢复环境变量列表，返回逐项报告 */
+    /** 恢复环境变量列表，返回逐项报告。重复项自动跳过 */
     suspend fun restoreEnvs(envs: List<BackupEnv>): Result<RestoreReport> {
         val errors = mutableListOf<String>()
         var ok = 0
@@ -72,14 +76,23 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            saveEnv(UnifiedEnv(id = "", name = e.name, value = e.value, remarks = e.remarks, enabled = e.enabled))
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${e.name}: ${it.message}") }
+            val res = saveEnv(UnifiedEnv(id = "", name = e.name, value = e.value, remarks = e.remarks, enabled = e.enabled))
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${e.name}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("环境变量", envs.size, ok, skipped, errors))
     }
 
-    /** 恢复脚本列表（逐条创建），返回逐项报告 */
+    /** 恢复脚本列表（逐条创建），返回逐项报告。重复项自动跳过 */
     suspend fun restoreScripts(scripts: List<BackupScript>): Result<RestoreReport> {
         val errors = mutableListOf<String>()
         var ok = 0
@@ -89,9 +102,18 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            createScript(s.path, s.content)
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${s.path}: ${it.message}") }
+            val res = createScript(s.path, s.content)
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${s.path}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("脚本", scripts.size, ok, skipped, errors))
     }
@@ -99,6 +121,7 @@ interface IPanelAdapter {
     /**
      * 恢复配置文件。配置文件结构因面板而异，
      * 只有来源面板与目标面板类型一致时才允许恢复，否则整类跳过。
+     * 重复项自动跳过。
      */
     suspend fun restoreConfigFiles(
         files: List<BackupConfigFile>,
@@ -118,9 +141,18 @@ interface IPanelAdapter {
                 skipped++
                 continue
             }
-            saveConfig(f.path, f.content)
-                .onSuccess { ok++ }
-                .onFailure { errors.add("${f.path}: ${it.message}") }
+            val res = saveConfig(f.path, f.content)
+            if (res.isFailure) {
+                val errMsg = res.exceptionOrNull()?.message ?: ""
+                if ("已存在".contains(errMsg) || "exist".equals(errMsg, ignoreCase = true) ||
+                    "duplicate".equals(errMsg, ignoreCase = true) || errMsg.contains("重复")) {
+                    skipped++
+                    continue
+                }
+                errors.add("${f.path}: ${res.exceptionOrNull()?.message}")
+            } else {
+                ok++
+            }
         }
         return Result.success(RestoreReport("配置文件", files.size, ok, skipped, errors))
     }
@@ -141,6 +173,40 @@ interface IPanelAdapter {
         }
         return if (errors.isEmpty()) Result.success(ok)
         else Result.failure(Exception("成功 $ok 条；失败 ${errors.size} 条 — ${errors.take(3).joinToString("; ")}"))
+    }
+
+    /** 置顶环境变量（id 列表） */
+    suspend fun pinEnv(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持置顶环境变量"))
+
+    /** 取消置顶 */
+    suspend fun unpinEnv(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持取消置顶环境变量"))
+
+    /** 移动环境变量位置（fromIndex → toIndex，0-based） */
+    suspend fun moveEnv(envId: String, fromIndex: Int, toIndex: Int): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持移动环境变量位置"))
+
+    /** 批量启用环境变量 */
+    suspend fun batchEnableEnvs(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量启用环境变量"))
+
+    /** 批量禁用环境变量 */
+    suspend fun batchDisableEnvs(envIds: List<String>): Result<Boolean> =
+        Result.failure(Exception("当前面板不支持批量禁用环境变量"))
+
+    /** 导出选中环境变量为 JSON 字符串（供分享/保存用） */
+    suspend fun exportEnvsJson(envIds: List<String>): Result<String> {
+        val all = getEnvs(null).getOrNull() ?: return Result.failure(Exception("导出失败：无法获取变量列表"))
+        val subset = all.filter { it.id in envIds }
+        if (subset.isEmpty()) return Result.failure(Exception("未选中任何变量"))
+        val json = subset.joinToString(",\n") { e ->
+            """  {"name": "${e.name.replace("\"", "\\\"")}",
+               "value": "${e.value.replace("\"", "\\\"")}",
+               "remarks": "${(e.remarks ?: "").replace("\"", "\\\"")}",
+               "enabled": ${e.enabled}}"""
+        }
+        return Result.success("[$json\n]")
     }
 
     // 5. 配置文件 (Configs: config.sh / config.json / extra.sh)

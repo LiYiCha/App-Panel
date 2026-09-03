@@ -2,5 +2,8 @@
 <resources>
     <style name="Theme.PanelApp" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 启动页背景跟随深浅色模式：浅色白、深色黑 -->
+        <item name="android:windowBackground">@android:color/background_light</item>
     </style>
 </resources>

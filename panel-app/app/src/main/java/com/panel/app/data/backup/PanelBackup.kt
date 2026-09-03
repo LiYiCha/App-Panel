@@ -88,3 +88,15 @@ fun parseBackupJson(json: String): PanelBackup? {
         null
     }
 }
+
+/** 解析后的预览数据，供用户勾选后选择性恢复 */
+data class PreviewRestoreData(
+    val sourcePanelType: String? = null,
+    val sourcePanelName: String? = null,
+    val tasks: List<BackupTask> = emptyList(),
+    val envs: List<BackupEnv> = emptyList(),
+    val scripts: List<BackupScript> = emptyList(),
+    val configFiles: List<BackupConfigFile> = emptyList()
+) {
+    val hasData get() = tasks.isNotEmpty() || envs.isNotEmpty() || scripts.isNotEmpty() || configFiles.isNotEmpty()
+}

@@ -255,7 +255,8 @@ data class QlEnvItem(
     val value: String,
     val remarks: String?,
     val status: Int?,
-    val labels: List<String>? = null
+    val labels: List<String>? = null,
+    val isPinned: Int? = null  // 1=pinned, 0=normal
 )
 
 /**
@@ -307,24 +308,9 @@ data class QlDepsResp(
     override val msg: String? get() = null
 }
 
-data class QlDepDetailResp(
-    override val code: Int?,
-    override val message: String?,
-    val data: QlDepItem?
-) : ApiEnvelope {
-    override val msg: String? get() = null
-}
-
 data class QlCreateDepReq(
     val name: String,
     val type: Int, // 0: nodejs, 1: python3, 2: linux
-    val remark: String? = null
-)
-
-data class QlUpdateDepReq(
-    val id: Any,
-    val name: String,
-    val type: Int,
     val remark: String? = null
 )
 
@@ -741,22 +727,10 @@ interface QinglongV15Api {
         @Query("status") status: String? = null
     ): Response<QlDepsResp>
 
-    @GET("api/dependencies/{id}")
-    suspend fun getDependencyDetail(
-        @Header("Authorization") auth: String,
-        @Path("id") id: String
-    ): Response<QlDepDetailResp>
-
     @POST("api/dependencies")
     suspend fun installDependencies(
         @Header("Authorization") auth: String,
         @Body req: List<QlCreateDepReq>
-    ): Response<QlCommonResp>
-
-    @PUT("api/dependencies")
-    suspend fun updateDependency(
-        @Header("Authorization") auth: String,
-        @Body req: QlUpdateDepReq
     ): Response<QlCommonResp>
 
     @HTTP(method = "DELETE", path = "api/dependencies", hasBody = true)
@@ -787,9 +761,6 @@ interface QinglongV15Api {
 
     @GET("api/configs/files")
     suspend fun getConfigFiles(@Header("Authorization") auth: String): Response<QlConfigFilesResp>
-
-    @GET("api/configs/samples")
-    suspend fun getConfigSamples(@Header("Authorization") auth: String): Response<QlConfigFilesResp>
 
     @GET("api/configs/detail")
     suspend fun getConfigDetail(
@@ -907,6 +878,15 @@ interface QinglongV15Api {
 
     @DELETE("api/system/log")
     suspend fun deleteSystemLog(@Header("Authorization") auth: String): Response<QlCommonResp>
+
+    // ================= 8.5 存储清理 (Storage Retention) =================
+
+    /** POST /api/system/storage-retention/cleanup，需 body.confirmation == "CLEAN" */
+    @POST("api/system/storage-retention/cleanup")
+    suspend fun cleanupStorageRetention(
+        @Header("Authorization") auth: String,
+        @Body body: @JvmSuppressWildcards Map<String, Any?>
+    ): Response<QlRawResp>
 
     @PUT("api/system/notify")
     suspend fun testNotify(

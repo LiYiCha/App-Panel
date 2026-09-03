@@ -32,7 +32,7 @@ android {
         }
     }
 
-    // 签名配置：优先从环境变量或本地 local.properties 读取，避免在公开代码库硬编码密码与密钥路径
+    // 签名配置：优先从环境变量或本地 local.properties 读取
     val localProps = Properties()
     val localPropsFile = rootProject.file("local.properties")
     if (localPropsFile.exists()) {
@@ -73,6 +73,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+    }
+
+    applicationVariants.all {
+        if (name == "release") {
+            outputs.forEach { output ->
+                (output as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
+                    "Panel-App-v${versionName}.apk"
+            }
         }
     }
 
@@ -125,9 +134,6 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     implementation(libs.kotlinx.coroutines.android)
-
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.ui.tooling)

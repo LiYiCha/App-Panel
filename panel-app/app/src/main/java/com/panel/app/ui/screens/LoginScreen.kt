@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.PanelUrl
 
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
@@ -39,6 +41,10 @@ fun LoginScreen(
     onBack: (() -> Unit)? = null,
     onLoginSuccess: () -> Unit
 ) {
+    // 从面板管理等上级页面进入时，返回键应回到上一页；
+    // 作为根页面（没有上级回退栈）时不拦截，交给系统退出应用
+    onBack?.let { back -> BackHandler { back() } }
+
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val uiState by viewModel.uiState.collectAsState()
@@ -62,6 +68,13 @@ fun LoginScreen(
             errorMessage = "请输入登录账号与密码"
             return
         }
+        // 地址在提交前先校验并规范化：漏写 http:// 会自动补全并回显给用户；
+        // 确实非法（如 ftp://x、缺主机名）则就地提示，不让脏地址流到网络层
+        val normalizedUrl = PanelUrl.normalize(baseUrl).getOrElse {
+            errorMessage = it.message ?: "面板地址格式不正确，示例：http://192.168.1.100:5700"
+            return
+        }
+        baseUrl = normalizedUrl
         errorMessage = null
         focusManager.clearFocus()
 
@@ -69,7 +82,7 @@ fun LoginScreen(
             existingId = editPanel?.id,
             name = panelName.ifBlank { if (panelType == PanelType.BAIHU) "白虎面板" else "青龙面板" },
             type = panelType,
-            baseUrl = baseUrl.trim().trimEnd('/'),
+            baseUrl = normalizedUrl,
             username = username.trim(),
             password = password
         ) { success, msg ->

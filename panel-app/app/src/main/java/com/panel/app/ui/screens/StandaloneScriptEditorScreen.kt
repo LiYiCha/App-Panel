@@ -24,6 +24,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.components.CodeSyntaxVisualTransformation
+import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.CronExpressionDescriber
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,6 +32,7 @@ import com.panel.app.util.CronExpressionDescriber
 fun StandaloneScriptEditorScreen(
     scriptName: String,
     initialContent: String = "",
+    viewModel: MainViewModel? = null,
     onSave: ((String) -> Unit)? = null,
     onAddToTask: ((name: String, command: String, schedule: String) -> Unit)? = null,
     onBack: () -> Unit

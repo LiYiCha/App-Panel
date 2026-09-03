@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -31,6 +31,8 @@ import com.panel.app.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
+private const val MAX_LOG_CHARS = 1024 * 1024  // 与前端 MAX_LOG_VIEW_CHARS 一致（1MB）
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogViewerScreen(
@@ -39,8 +41,11 @@ fun LogViewerScreen(
     taskId: String = "",
     initialContent: String = "",
     viewModel: MainViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    taskRunning: Boolean = false
 ) {
+    BackHandler { onBack() }
+
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -49,7 +54,7 @@ fun LogViewerScreen(
     var isLoading by remember { mutableStateOf(initialContent.isBlank()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchOpen by remember { mutableStateOf(false) }
-    var fontSizeSp by remember { mutableStateOf(11f) }
+    var fontSizeSp by remember { mutableFloatStateOf(11f) }
 
     fun fetchLog() {
         isLoading = true
@@ -77,18 +82,33 @@ fun LogViewerScreen(
         }
     }
 
-    // 跟随模式：订阅真实日志流，任务结束前持续刷新内容
-    var isFollowing by remember { mutableStateOf(false) }
+    // 跟随模式：taskId 存在时默认开启，流结束后自动停止；用户可手动切换
+    var isFollowing by remember { mutableStateOf(taskId.isNotBlank()) }
+    var isStreamActive by remember { mutableStateOf(false) }
+
+    // 注意：isStreamActive 不能放进 key —— 在 effect 内部写它会使 key 立即变化，
+    // 导致协程被取消后重新执行一遍，日志流被重复启动。
     LaunchedEffect(isFollowing, taskId) {
-        if (!isFollowing || taskId.isBlank()) return@LaunchedEffect
-        viewModel.streamTaskLog(taskId)
-            .catch { e -> logContent = "日志流中断: ${e.message}" }
-            .collect { latest ->
-                logContent = latest
-                isLoading = false
-            }
-        // 流结束 = 任务已结束，退出跟随
-        isFollowing = false
+        if (!isFollowing || taskId.isBlank()) {
+            isStreamActive = false
+            return@LaunchedEffect
+        }
+        isStreamActive = true
+        try {
+            viewModel.streamTaskLog(taskId)
+                .catch { e ->
+                    logContent = "日志流中断: ${e.message}"
+                }
+                .collect { latest ->
+                    // 与前端一致：超 1MB 时截取末尾部分，避免内存溢出
+                    logContent = if (latest.length > MAX_LOG_CHARS) latest.takeLast(MAX_LOG_CHARS) else latest
+                    isLoading = false
+                }
+        } finally {
+            // 流结束 = 任务已结束，退出跟随
+            isStreamActive = false
+            isFollowing = false
+        }
     }
 
     val lines = remember(logContent) {
@@ -129,7 +149,7 @@ fun LogViewerScreen(
                         )
                         if (logPath.isNotBlank() || taskId.isNotBlank()) {
                             Text(
-                                text = if (logPath.isNotBlank()) logPath else "Task ID: $taskId",
+                                text = logPath.ifBlank { "Task ID: $taskId" },
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -161,25 +181,23 @@ fun LogViewerScreen(
                     }) {
                         Icon(if (isSearchOpen) Icons.Default.Close else Icons.Default.Search, contentDescription = "搜索")
                     }
-                    // 跟随模式：任务运行中持续刷新，结束后自动停止
+                    // 实时跟随指示器（仅 taskId 有效时显示）
                     if (taskId.isNotBlank()) {
-                        IconButton(onClick = {
-                            isFollowing = !isFollowing
-                            Toast.makeText(
-                                context,
-                                if (isFollowing) "已开启实时跟随" else "已停止跟随",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "实时跟随",
-                                tint = if (isFollowing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        if (isFollowing && isStreamActive) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                VerticalDivider(modifier = Modifier.height(16.dp), color = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Default.PlayArrow, contentDescription = "实时跟随中", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            }
+                        } else if (!isFollowing) {
+                            // 任务已结束，显示手动刷新按钮
+                            IconButton(onClick = { fetchLog() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "刷新日志")
+                            }
                         }
-                    }
-                    IconButton(onClick = { fetchLog() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新日志")
                     }
                     IconButton(onClick = {
                         if (logContent.isNotBlank()) {
@@ -224,7 +242,7 @@ fun LogViewerScreen(
 
                 if (isLoading) {
                     Column(
-                        modifier = Modifier.fillMaxSize().weight(1f),
+                        modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -233,12 +251,12 @@ fun LogViewerScreen(
                         Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     }
                 } else if (lines.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     }
                 } else {
                     androidx.compose.foundation.text.selection.SelectionContainer(
-                        modifier = Modifier.fillMaxSize().weight(1f)
+                        modifier = Modifier.weight(1f)
                     ) {
                         LazyColumn(
                             state = listState,

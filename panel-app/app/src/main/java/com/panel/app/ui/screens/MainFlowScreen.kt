@@ -1,9 +1,6 @@
 package com.panel.app.ui.screens
 
-import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,7 +12,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
 
@@ -41,26 +37,27 @@ fun MainFlowScreen(
     onOpenDashboardScreen: () -> Unit = {},
     onOpenBackupScreen: () -> Unit = {},
     onOpenDevConsoleScreen: () -> Unit = {},
-    onOpenExecutionHistoryScreen: () -> Unit = {},
+    onOpenLogHistoryScreen: () -> Unit = {},
+    onOpenSystemSettingsScreen: () -> Unit = {},
+    onOpenPermissionsScreen: () -> Unit = {},
+    onOpenSubscriptionsScreen: () -> Unit = {},
     onNavigateToCreateScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val selectedTab = uiState.currentTab
 
-    // 调度子分段 Tab (0: 定时任务, 1: 订阅管理)
-    var tasksSubTab by rememberSaveable { mutableStateOf(0) }
+    // 调度子分段 Tab (0: 定时任务)
+    var tasksSubTab by rememberSaveable { mutableIntStateOf(0) }
     // 配置与脚本子分段 Tab (0: 脚本文件, 1: 配置文件)
-    var scriptsSubTab by rememberSaveable { mutableStateOf(0) }
+    var scriptsSubTab by rememberSaveable { mutableIntStateOf(0) }
 
     // 顶部右上角统一动作触发状态（不占用页面主体垂直空间）
     var showCreateTaskDialog by remember { mutableStateOf(false) }
-    var showCreateSubDialog by remember { mutableStateOf(false) }
     var showCreateEnvDialog by remember { mutableStateOf(false) }
     var showImportEnvDialog by remember { mutableStateOf(false) }
     var showCreateScriptDialog by remember { mutableStateOf(false) }
     var showDirectoryDrawer by remember { mutableStateOf(false) }
-    var showAddPanelDialog by remember { mutableStateOf(false) }
 
     val panelList = uiState.panels
     val currentPanel = panelList.getOrNull(uiState.selectedPanelIndex)
@@ -80,16 +77,7 @@ fun MainFlowScreen(
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
-                navigationIcon = {
-                    IconButton(onClick = onOpenPanelManager) {
-                        Icon(
-                            imageVector = Icons.Default.Dns,
-                            contentDescription = "面板管理",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                },
+                navigationIcon = {},
                 title = {
                     Column(modifier = Modifier.padding(start = 4.dp)) {
                         Text(
@@ -97,13 +85,6 @@ fun MainFlowScreen(
                             fontSize = 17.sp,
                             style = MaterialTheme.typography.titleMedium
                         )
-                        if (currentPanel != null) {
-                            Text(
-                                text = "${currentPanel.name} (${if (currentPanel.type == PanelType.BAIHU) "白虎" else "青龙"})",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 },
                 actions = {
@@ -120,14 +101,8 @@ fun MainFlowScreen(
                                     color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            if (tasksSubTab == 0) {
-                                IconButton(onClick = { showCreateTaskDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "新建任务")
-                                }
-                            } else {
-                                IconButton(onClick = { showCreateSubDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "新建订阅")
-                                }
+                            IconButton(onClick = { showCreateTaskDialog = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "新建任务")
                             }
                         }
                         BottomNavScreen.Envs -> {
@@ -182,7 +157,7 @@ fun MainFlowScreen(
         },
         bottomBar = {
             NavigationBar {
-                BottomNavScreen.values().forEach { screen ->
+                BottomNavScreen.entries.forEach { screen ->
                     val isSelected = selectedTab == screen
                     NavigationBarItem(
                         selected = isSelected,
@@ -213,31 +188,15 @@ fun MainFlowScreen(
                             onClick = { tasksSubTab = 0 },
                             text = { Text("定时任务 (${uiState.tasks.size})", fontSize = 12.sp) }
                         )
-                        Tab(
-                            selected = tasksSubTab == 1,
-                            onClick = { tasksSubTab = 1 },
-                            text = {
-                                val isBaihu = currentPanel?.type == com.panel.app.data.model.PanelType.BAIHU
-                                Text(if (isBaihu) "仓库同步 (${uiState.subscriptions.size})" else "订阅管理 (${uiState.subscriptions.size})", fontSize = 12.sp)
-                            }
-                        )
                     }
 
-                    if (tasksSubTab == 0) {
-                        TasksScreen(
-                            viewModel = viewModel,
-                            showCreateDialog = showCreateTaskDialog,
-                            onDismissCreateDialog = { showCreateTaskDialog = false },
-                            onOpenTaskDetail = onOpenTaskDetail,
-                            onOpenLog = onOpenLogScreen
-                        )
-                    } else {
-                        SubscriptionsScreen(
-                            viewModel = viewModel,
-                            showCreateDialog = showCreateSubDialog,
-                            onDismissCreateDialog = { showCreateSubDialog = false }
-                        )
-                    }
+                    TasksScreen(
+                        viewModel = viewModel,
+                        showCreateDialog = showCreateTaskDialog,
+                        onDismissCreateDialog = { showCreateTaskDialog = false },
+                        onOpenTaskDetail = onOpenTaskDetail,
+                        onOpenLog = onOpenLogScreen
+                    )
                 }
 
                 BottomNavScreen.Envs -> {
@@ -292,7 +251,10 @@ fun MainFlowScreen(
                         onOpenDashboard = onOpenDashboardScreen,
                         onOpenBackup = onOpenBackupScreen,
                         onOpenDevConsole = onOpenDevConsoleScreen,
-                        onOpenExecutionHistory = onOpenExecutionHistoryScreen
+                        onOpenLogHistory = onOpenLogHistoryScreen,
+                        onOpenSystemSettings = onOpenSystemSettingsScreen,
+                        onOpenPermissions = onOpenPermissionsScreen,
+                        onOpenSubscriptionsScreen = onOpenSubscriptionsScreen
                     )
                 }
             }

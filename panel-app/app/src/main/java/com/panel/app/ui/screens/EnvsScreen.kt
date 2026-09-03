@@ -3,15 +3,22 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -26,7 +33,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedEnv
 import com.panel.app.data.parser.UniversalEnvParser
+import com.google.gson.Gson
 import com.panel.app.ui.viewmodel.MainViewModel
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +57,11 @@ fun EnvsScreen(
     var editingEnv by remember { mutableStateOf<UnifiedEnv?>(null) }
     var subItemEditingEnv by remember { mutableStateOf<UnifiedEnv?>(null) }
     var deletingEnv by remember { mutableStateOf<UnifiedEnv?>(null) }
+    var exportingEnvIds by remember { mutableStateOf<List<String>?>(null) }
+    var sortedEnvs by remember(envList) { mutableStateOf(envList.toList()) }
+    var dragOverIndex by remember { mutableStateOf<Int?>(null) }
+
+    val fetchScope = rememberCoroutineScope()
 
     LaunchedEffect(showCreateDialog) {
         if (showCreateDialog) {
@@ -120,21 +136,31 @@ fun EnvsScreen(
                         IconButton(onClick = { viewModel.batchDeleteEnvs(ids) }, enabled = ids.isNotEmpty(), modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Delete, contentDescription = "删除", tint = if (ids.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
                         }
+                        IconButton(
+                            onClick = { exportingEnvIds = ids },
+                            enabled = ids.isNotEmpty(),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "导出 JSON", tint = if (ids.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+        Box(modifier = Modifier.weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isLoading,
                 onRefresh = { viewModel.refreshEnvs() },
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredEnvs.isEmpty()) {
+                    // 空状态必须自己可滚动：PullToRefreshBox 依赖嵌套滚动分发，
+                    // 内容不可滚动时下拉手势产生不了滚动增量，列表为空就刷不动
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                             .padding(top = 40.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -148,9 +174,10 @@ fun EnvsScreen(
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(3.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxHeight()
                     ) {
-                        items(filteredEnvs, key = { it.id }) { env ->
+                        items(sortedEnvs, key = { it.id }) { env ->
+                            val currentIndex = sortedEnvs.indexOf(env)
                             EnvCard(
                                 env = env,
                                 isBatchMode = uiState.isEnvBatchMode,
@@ -162,7 +189,27 @@ fun EnvsScreen(
                                 },
                                 onEdit = { editingEnv = env },
                                 onSubEdit = { subItemEditingEnv = env },
-                                onDelete = { deletingEnv = env }
+                                onPin = { viewModel.pinEnv(env.id, !env.isPinned) },
+                                onDelete = { deletingEnv = env },
+                                onDragStart = {
+                                    dragOverIndex = currentIndex
+                                },
+                                onDragOver = {
+                                    dragOverIndex = currentIndex
+                                },
+                                onDragEnd = {
+                                    val fromIdx = sortedEnvs.indexOf(env)
+                                    val toIdx = dragOverIndex ?: run { dragOverIndex = null; return@EnvCard }
+                                    if (fromIdx != toIdx && fromIdx != -1) {
+                                        sortedEnvs = sortedEnvs.toMutableList().apply {
+                                            add(toIdx, removeAt(fromIdx))
+                                        }
+                                        // 同步到服务端
+                                        viewModel.moveEnvToServer(env.id, fromIdx, toIdx)
+                                    }
+                                    dragOverIndex = null
+                                },
+                                isDragging = dragOverIndex == currentIndex
                             )
                         }
                     }
@@ -235,6 +282,80 @@ fun EnvsScreen(
                 } else {
                     Toast.makeText(context, "未识别到有效的 KEY=VALUE 文本！", Toast.LENGTH_SHORT).show()
                 }
+            },
+            onFetchRules = { url ->
+                fetchScope.launch {
+                    runCatching {
+                        val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
+                        val request = Request.Builder().url(url).get().build()
+                        client.newCall(request).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                val body = resp.body?.string() ?: ""
+                                val rules = Gson().fromJson(body, Array<UniversalEnvParser.Rule>::class.java).toList()
+                                UniversalEnvParser.loadCustomRules(rules)
+                                Toast.makeText(context, "解析规则已更新：${rules.size} 条", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "加载规则失败：HTTP ${resp.code}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }.onFailure { e ->
+                        Toast.makeText(context, "加载规则异常：${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+
+    // 5. 导出 JSON Modal
+    exportingEnvIds?.let { ids ->
+        val envs = uiState.envs.filter { it.id in ids }
+        val json = envs.joinToString(",\n") { e ->
+            """  {"name": "${e.name.replace("\"", "\\\"")}",
+               "value": "${e.value.replace("\"", "\\\"")}",
+               "remarks": "${(e.remarks ?: "").replace("\"", "\\\"")}",
+               "enabled": ${e.enabled}}"""
+        }
+        AlertDialog(
+            onDismissRequest = { exportingEnvIds = null },
+            title = { Text("导出环境变量 JSON", fontSize = 15.sp) },
+            text = {
+                Column {
+                    Text("共 ${envs.size} 个变量，已导出为 JSON 格式：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.TopStart
+                    ) {
+                        Text(
+                            text = "[\n$json\n]",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString("[\n$json\n]"))
+                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            exportingEnvIds = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("复制 JSON", fontSize = 12.sp)
+                    }
+                    TextButton(onClick = { exportingEnvIds = null }) { Text("关闭", fontSize = 12.sp) }
+                }
             }
         )
     }
@@ -249,14 +370,23 @@ fun EnvCard(
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onSubEdit: () -> Unit,
-    onDelete: () -> Unit
+    onPin: () -> Unit = {},
+    onDelete: () -> Unit,
+    onDragStart: () -> Unit = {},
+    onDragOver: () -> Unit = {},
+    onDragEnd: () -> Unit = {},
+    isDragging: Boolean = false
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+            .border(
+                width = if (isDragging) 2.dp else 0.8.dp,
+                color = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(8.dp)
+            ),
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
+        color = if (isDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface
     ) {
         Row(
             modifier = Modifier
@@ -264,6 +394,27 @@ fun EnvCard(
                 .padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 拖拽把手：仅把手可水平拖拽触发排序，垂直滚动由LazyColumn处理
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .pointerInput(isBatchMode) {
+                        if (isBatchMode) return@pointerInput
+                        detectHorizontalDragGestures(
+                            onDragStart = { onDragStart() },
+                            onHorizontalDrag = { _, _ -> },
+                            onDragEnd = { onDragEnd() }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DragHandle,
+                    contentDescription = "拖拽排序",
+                    tint = if (isBatchMode) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             if (isBatchMode) {
                 Checkbox(
                     checked = env.selected,
@@ -325,7 +476,7 @@ fun EnvCard(
                     }
                 }
 
-                // 第二行：值（12sp 等宽代码字体、点击复制）+ 紧凑行内微型操作按钮
+                // 第二行：值（12sp 等宽代码字体、点击复制）+ 紧凑行内操作按钮
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -339,7 +490,7 @@ fun EnvCard(
                             .clickable { onCopy() }
                     ) {
                         Text(
-                            text = env.value.ifEmpty { "(空值)" },
+                            text = env.value.trimStart('=').ifEmpty { "(空值)" },
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -352,21 +503,21 @@ fun EnvCard(
                     Spacer(Modifier.width(6.dp))
 
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        horizontalArrangement = Arrangement.spacedBy(1.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onSubEdit, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Tune, contentDescription = "分段修改", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        EnvsActionButton(icon = Icons.Default.Tune, label = "分段", tint = MaterialTheme.colorScheme.primary, onClick = onSubEdit)
+                        EnvsActionButton(icon = Icons.Default.ContentCopy, label = "复制", tint = MaterialTheme.colorScheme.onSurfaceVariant, onClick = onCopy)
+                        EnvsActionButton(icon = Icons.Default.Edit, label = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, onClick = onEdit)
+                        if (!isBatchMode) {
+                            EnvsActionButton(
+                                icon = if (env.isPinned) Icons.Default.Pin else Icons.Default.PushPin,
+                                label = if (env.isPinned) "已置顶" else "置顶",
+                                tint = if (env.isPinned) androidx.compose.ui.graphics.Color(0xFFFFA000) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                onClick = onPin
+                            )
                         }
-                        IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "复制", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                        }
-                        IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                        }
-                        IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                        }
+                        EnvsActionButton(icon = Icons.Default.Delete, label = "删除", tint = MaterialTheme.colorScheme.error, onClick = onDelete)
                     }
                 }
             }
@@ -424,8 +575,11 @@ fun EditEnvDialog(
                     value = value,
                     onValueChange = { value = it },
                     label = { Text("变量值 (Value)", fontSize = 11.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 4
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 160.dp)
+                        .verticalScroll(rememberScrollState()),
+                    maxLines = 8
                 )
                 OutlinedTextField(
                     value = remarks,
@@ -470,15 +624,29 @@ fun SubItemEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text("变量分段子项快捷修改器", fontSize = 15.sp) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text("修改单字段，合成时自动保留其他字段：", fontSize = 11.sp)
-                pairs.forEachIndexed { index, pair ->
-                    OutlinedTextField(
-                        value = pair.second,
-                        onValueChange = { newVal -> pairs[index] = Pair(pair.first, newVal) },
-                        label = { Text("修改单字段: ${pair.first}", fontSize = 11.sp) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 280.dp)
+                ) {
+                    itemsIndexed(pairs) { index, pair ->
+                        OutlinedTextField(
+                            value = pair.second,
+                            onValueChange = { newVal -> pairs[index] = Pair(pair.first, newVal) },
+                            label = { Text("修改单字段: ${pair.first}", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 8,
+                            singleLine = false
+                        )
+                    }
                 }
             }
         },
@@ -496,23 +664,36 @@ fun SubItemEditorDialog(
 @Composable
 fun SmartEnvImportDialog(
     onDismiss: () -> Unit,
-    onImport: (String, Boolean) -> Unit
+    onImport: (String, Boolean) -> Unit,
+    onFetchRules: (String) -> Unit = {}
 ) {
     var rawText by remember { mutableStateOf("") }
     var splitAt by remember { mutableStateOf(true) }
+    var showRulesInput by remember { mutableStateOf(false) }
+    var rulesUrl by remember { mutableStateOf("") }
+    var rulesLoading by remember { mutableStateOf(false) }
+    var rulesError by remember { mutableStateOf<String?>(null) }
+
+    fun handleFetchRules() {
+        if (rulesUrl.isBlank()) return
+        rulesLoading = true
+        rulesError = null
+        onFetchRules(rulesUrl)
+        rulesLoading = false
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("智能多格式环境变量导入", fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("支持 export、多行、@ 多账号、&# 实体与 URL 编码：", fontSize = 11.sp)
+                Text("支持 export、多行、@ 多账号、&# 实体、URL Query 与自定义解析规则：", fontSize = 11.sp)
                 OutlinedTextField(
                     value = rawText,
                     onValueChange = { rawText = it },
-                    placeholder = { Text("粘贴例如：\nexport JD_COOKIE=\"pt_key=AA...;pt_pin=u1;\"\nJD_COOKIE=cookie1@cookie2", fontSize = 11.sp) },
+                    placeholder = { Text("粘贴例如：\nexport JD_COOKIE=\"pt_key=AA...;pt_pin=u1;\"\nJD_COOKIE=cookie1@cookie2\napp=mdwz&dataEncStr=MzA4MUEy", fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
+                    minLines = 4
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -526,15 +707,67 @@ fun SmartEnvImportDialog(
                         modifier = Modifier.scale(0.75f)
                     )
                 }
+                Divider(thickness = 0.5.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showRulesInput = !showRulesInput }, enabled = !rulesLoading) {
+                        Text(if (showRulesInput) "收起规则加载" else "从网络加载解析规则", fontSize = 11.sp)
+                    }
+                    if (rulesLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    }
+                    if (rulesError != null) {
+                        Text(rulesError!!, fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                if (showRulesInput) {
+                    OutlinedTextField(
+                        value = rulesUrl,
+                        onValueChange = { rulesUrl = it },
+                        placeholder = { Text("输入 JSON 规则 URL，格式：[{\"keyRegex\":\".*\",\"splitChar\":\"&\"}]") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        isError = rulesError != null
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onImport(rawText, splitAt) }) {
-                Text("智能解析并导入", fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(
+                    onClick = {
+                        if (rulesUrl.isNotBlank() && rawText.isBlank()) {
+                            handleFetchRules()
+                        } else {
+                            onImport(rawText, splitAt)
+                        }
+                    },
+                    enabled = !rulesLoading
+                ) {
+                    Text(if (rulesLoading) "加载中..." else if (rulesUrl.isNotBlank() && rawText.isBlank()) "加载规则" else "智能解析并导入", fontSize = 12.sp)
+                }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消", fontSize = 12.sp) }
         }
     )
+}
+
+@Composable
+private fun EnvsActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, modifier = Modifier.size(24.dp)) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
+        }
+        Text(label, fontSize = 8.sp, color = tint)
+    }
 }
