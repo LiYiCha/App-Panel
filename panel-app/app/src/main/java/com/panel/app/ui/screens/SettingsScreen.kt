@@ -482,7 +482,7 @@ fun SettingsScreen(
                     if (isCheckingUpdate) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("v1.0.0 (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("v${com.panel.app.BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
@@ -512,7 +512,7 @@ fun SettingsScreen(
             title = { Text("关于 Panel Hub", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("版本: v2.3.0 (高聚合无感流转版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
+                    Text("版本: v${com.panel.app.BuildConfig.VERSION_NAME} (正式版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
                     Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板。支持定时任务多状态联动、代码语法高亮与行号、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
                 }
             },

@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -184,7 +185,7 @@ fun TasksScreen(
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isLoading,
-                onRefresh = { viewModel.refreshCurrentPanel() },
+                onRefresh = { viewModel.refreshTasks() },
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredTasks.isEmpty()) {
@@ -397,9 +398,13 @@ fun TaskCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val cronDesc = remember(task.schedule) {
+                            com.panel.app.util.CronExpressionDescriber.describe(task.schedule)
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.weight(1f, fill = false)
                         ) {
                             Icon(
                                 Icons.Default.Schedule,
@@ -408,8 +413,10 @@ fun TaskCard(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
                             )
                             Text(
-                                text = task.schedule,
+                                text = if (cronDesc.isNotEmpty()) "${task.schedule} ($cronDesc)" else task.schedule,
                                 fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
                             )
                         }
@@ -597,10 +604,51 @@ fun CreateTaskDialog(
                 OutlinedTextField(
                     value = schedule,
                     onValueChange = { schedule = it },
-                    label = { Text("定时 Cron 规则 (分 时 日 月 周)", fontSize = 11.sp) },
+                    label = { Text("定时规则 (Cron)", fontSize = 11.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                val cronDesc = remember(schedule) {
+                    com.panel.app.util.CronExpressionDescriber.describe(schedule)
+                }
+                if (cronDesc.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                val presets = remember {
+                    com.panel.app.util.CronExpressionDescriber.PRESETS_5_PART
+                }
+                Text("常用预设:", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(presets) { p ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (schedule == p.expression) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { schedule = p.expression }
+                        ) {
+                            Text(
+                                text = p.label,
+                                fontSize = 10.sp,
+                                color = if (schedule == p.expression) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -623,6 +671,17 @@ fun EditTaskDialog(
     var name by remember { mutableStateOf(task.name) }
     var command by remember { mutableStateOf(task.command) }
     var schedule by remember { mutableStateOf(task.schedule) }
+
+    val cronDesc = remember(schedule) {
+        com.panel.app.util.CronExpressionDescriber.describe(schedule)
+    }
+
+    val presets = remember(schedule) {
+        if (schedule.trim().split("\\s+".toRegex()).size == 6)
+            com.panel.app.util.CronExpressionDescriber.PRESETS_6_PART
+        else
+            com.panel.app.util.CronExpressionDescriber.PRESETS_5_PART
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -650,6 +709,41 @@ fun EditTaskDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (cronDesc.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                Text("常用预设:", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(presets) { p ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (schedule == p.expression) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { schedule = p.expression }
+                        ) {
+                            Text(
+                                text = p.label,
+                                fontSize = 10.sp,
+                                color = if (schedule == p.expression) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {

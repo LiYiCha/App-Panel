@@ -39,7 +39,19 @@ data class UnifiedTask(
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val pid: Int? = null,
-    val selected: Boolean = false
+    val selected: Boolean = false,
+    val preCommand: String? = null,
+    val postCommand: String? = null,
+    val workDir: String? = null,
+    val agentId: String? = null,
+    val retryCount: Int = 0,
+    val retryInterval: Int = 0,
+    val randomRange: Int = 0,
+    val languages: List<String> = emptyList(),
+    val lastRunTime: String? = null,
+    val nextRunTime: String? = null,
+    val cleanConfig: String? = null,
+    val taskType: String? = null
 )
 
 // 订阅/仓库同步模型 (全对齐青龙订阅与白虎仓库同步)
@@ -64,7 +76,15 @@ data class UnifiedSubscription(
     val nextRunTime: String? = null,
     val languages: List<String> = emptyList(),
     val location: String = "本地",
-    val selected: Boolean = false
+    val selected: Boolean = false,
+    val targetPath: String? = null,
+    val sparsePath: String? = null,
+    val singleFile: Boolean = false,
+    val proxy: String? = null,
+    val proxyUrl: String? = null,
+    val authToken: String? = null,
+    val repoDirName: String? = null,
+    val commentToTask: Boolean = false
 )
 
 // 任务历次执行历史实例模型

@@ -20,7 +20,7 @@ import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
 
 enum class BottomNavScreen(val title: String, val icon: ImageVector) {
-    Tasks("任务调度", Icons.Default.Schedule),
+    Tasks("任务列表", Icons.Default.TaskAlt),
     Envs("环境变量", Icons.Default.DataObject),
     Scripts("配置与脚本", Icons.Default.Folder),
     Settings("系统设置", Icons.Default.Settings)

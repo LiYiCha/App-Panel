@@ -57,35 +57,37 @@ object NetworkClient {
                 .addInterceptor(logging)
                 .addInterceptor { chain ->
                     val req = chain.request()
-                    if (!com.panel.app.data.logger.AppLogger.isDevModeEnabled) {
-                        return@addInterceptor chain.proceed(req)
-                    }
+                    val isDev = com.panel.app.data.logger.AppLogger.isDevModeEnabled
                     val start = System.currentTimeMillis()
                     var reqBodyStr: String? = null
-                    try {
-                        val body = req.body
-                        if (body != null && body.contentLength() in 1..8192) {
-                            val buffer = okio.Buffer()
-                            body.writeTo(buffer)
-                            reqBodyStr = buffer.readUtf8()
-                        }
-                    } catch (_: Exception) {}
+                    if (isDev) {
+                        try {
+                            val body = req.body
+                            if (body != null && body.contentLength() in 1..8192) {
+                                val buffer = okio.Buffer()
+                                body.writeTo(buffer)
+                                reqBodyStr = buffer.readUtf8()
+                            }
+                        } catch (_: Exception) {}
+                    }
 
                     try {
                         val resp = chain.proceed(req)
                         val duration = System.currentTimeMillis() - start
-                        val respSnippet = try {
-                            resp.peekBody(2048).string()
-                        } catch (_: Exception) { null }
+                        if (isDev || !resp.isSuccessful) {
+                            val respSnippet = try {
+                                resp.peekBody(2048).string()
+                            } catch (_: Exception) { null }
 
-                        com.panel.app.data.logger.AppLogger.httpDetailed(
-                            method = req.method,
-                            url = req.url.toString(),
-                            code = resp.code,
-                            durationMs = duration,
-                            requestBody = reqBodyStr,
-                            responseBody = respSnippet
-                        )
+                            com.panel.app.data.logger.AppLogger.httpDetailed(
+                                method = req.method,
+                                url = req.url.toString(),
+                                code = resp.code,
+                                durationMs = duration,
+                                requestBody = reqBodyStr,
+                                responseBody = respSnippet
+                            )
+                        }
                         resp
                     } catch (e: Exception) {
                         val duration = System.currentTimeMillis() - start

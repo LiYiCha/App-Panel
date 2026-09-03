@@ -109,7 +109,7 @@ class QinglongV15Adapter(
     /** /crons 可能返回数组，也可能返回 {data:[...], total} */
     private fun parseCronArray(data: com.google.gson.JsonElement?): List<QlCronItem> {
         if (data == null) return emptyList()
-        val type = object : com.google.gson.reflect.TypeToken<List<QlCronItem>>() {}.type
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlCronItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
@@ -316,7 +316,7 @@ class QinglongV15Adapter(
 
     private fun parseSubscriptionArray(data: com.google.gson.JsonElement?): List<QlSubscriptionItem> {
         if (data == null) return emptyList()
-        val type = object : com.google.gson.reflect.TypeToken<List<QlSubscriptionItem>>() {}.type
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlSubscriptionItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
@@ -691,7 +691,8 @@ class QinglongV15Adapter(
         val fileName = path.substringAfterLast("/")
         val dirPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
         val newFileName = newPath.substringAfterLast("/")
-        if (newPath.substringBeforeLast("/").takeIf { newPath.contains("/") } != dirPath) {
+        val newDirPath = if (newPath.contains("/")) newPath.substringBeforeLast("/") else ""
+        if (newDirPath != dirPath) {
             return Result.failure(Exception("重命名不允许跨目录，请先移动"))
         }
         return api.renameScript(getAuthHeader(), QlRenameScriptReq(fileName, dirPath, newFileName))
@@ -717,7 +718,7 @@ class QinglongV15Adapter(
 
     private fun parseDepArray(data: com.google.gson.JsonElement?): List<QlDepItem> {
         if (data == null) return emptyList()
-        val type = object : com.google.gson.reflect.TypeToken<List<QlDepItem>>() {}.type
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlDepItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
@@ -835,19 +836,33 @@ class QinglongV15Adapter(
 
     override suspend fun getMetrics(): Result<Pair<String, String>> {
         ensureAuth()
-        return api.getDashboardSystem(getAuthHeader())
-            .unwrapTo("获取监控数据失败") { env ->
-                val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
-                if (obj == null) {
-                    "--" to "--"
-                } else {
-                    val ram = obj.get("memUsagePercent")?.asString ?: "--"
-                    val load1 = obj.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
-                    val cpus = obj.get("cpus")?.asInt ?: 1
-                    val cpu = String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
-                    cpu to ram
-                }
+        return runCatching {
+            val dashResp = runCatching { api.getDashboardSystem(getAuthHeader()) }.getOrNull()
+            val dashObj = dashResp?.takeIf { it.isSuccessful }?.body()?.data?.takeIf { it.isJsonObject }?.asJsonObject
+            if (dashObj != null) {
+                val ram = dashObj.get("memUsagePercent")?.asString ?: "--"
+                val load1 = dashObj.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
+                val cpus = dashObj.get("cpus")?.asInt ?: 1
+                val cpu = String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0)
+                return@runCatching cpu to ram
             }
+
+            // 回退到 /api/system
+            val sysResp = runCatching { api.getSystemInfo(getAuthHeader()) }.getOrNull()
+            val sysObj = sysResp?.takeIf { it.isSuccessful }?.body()?.data?.takeIf { it.isJsonObject }?.asJsonObject
+            if (sysObj != null) {
+                val ram = sysObj.get("memUsagePercent")?.asString ?: "--"
+                val load1 = sysObj.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
+                val cpus = sysObj.get("cpus")?.asInt ?: 1
+                val cpu = if (load1 > 0) String.format(java.util.Locale.US, "%.1f%%", (load1 / cpus.coerceAtLeast(1)) * 100.0) else "--"
+                return@runCatching cpu to ram
+            }
+
+            "--" to "--"
+        }.fold(
+            onSuccess = { Result.success(it) },
+            onFailure = { Result.success("--" to "--") }
+        )
     }
 
     /**

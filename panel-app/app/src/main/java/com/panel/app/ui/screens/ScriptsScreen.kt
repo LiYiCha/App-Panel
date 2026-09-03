@@ -43,9 +43,18 @@ fun ScriptsScreen(
     var renamingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var showFolderDialog by remember { mutableStateOf(false) }
 
+    var taskAddingNode by remember { mutableStateOf<ScriptNode?>(null) }
+    var taskAddingName by remember { mutableStateOf("") }
+    var taskAddingCommand by remember { mutableStateOf("") }
+    var taskAddingSchedule by remember { mutableStateOf("0 8 * * *") }
+
     // 搜索过滤与规范排序后的脚本树 (文件夹在上方，最新修改在最前)
     val filteredTree = remember(uiState.scriptTree, searchQuery) {
         sortScriptNodes(filterScriptTree(uiState.scriptTree, searchQuery))
+    }
+
+    val visibleFlatNodes = remember(filteredTree, uiState.expandedScriptFolders, searchQuery) {
+        flattenScriptTree(filteredTree, uiState.expandedScriptFolders, searchQuery)
     }
 
     // 当输入搜索词时，自动展开全部匹配节点所在的层级
@@ -68,14 +77,13 @@ fun ScriptsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        // 1. 顶部满宽搜索框 (实时检索脚本与文件夹)
+        // 顶部极简搜索栏
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索脚本文件或目录名称...", fontSize = 11.sp) },
+            placeholder = { Text("搜索脚本文件或目录名称...", fontSize = 12.sp) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
@@ -89,13 +97,13 @@ fun ScriptsScreen(
             maxLines = 1
         )
 
-        // 2. 脚本与目录树形列表 (带下拉手势刷新，进入二级页面返回进度不丢失)
+        // 2. 脚本与目录虚拟列表 (树形结构扁平化，按需复用视口条目，彻底杜绝大量脚本展开引发的 ANR)
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = uiState.isLoading,
-            onRefresh = { viewModel.refreshCurrentPanel() },
+            onRefresh = { viewModel.refreshScripts() },
             modifier = Modifier.fillMaxSize()
         ) {
-            if (filteredTree.isEmpty()) {
+            if (visibleFlatNodes.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -115,19 +123,25 @@ fun ScriptsScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
-                    items(filteredTree, key = { it.path }) { rootNode ->
-                        ScriptTreeItem(
-                            node = rootNode,
-                            level = 0,
-                            searchQuery = searchQuery,
-                            expandedFolders = uiState.expandedScriptFolders,
+                    items(visibleFlatNodes, key = { it.node.path }) { flatNode ->
+                        FlatScriptRowItem(
+                            flatNode = flatNode,
                             onToggleExpand = { viewModel.toggleScriptFolderExpanded(it) },
                             onOpenEditor = onOpenScriptEditor,
                             onDelete = { deletingNode = it },
-                            onRename = { renamingNode = it }
+                            onRename = { renamingNode = it },
+                            onAddToTask = { node ->
+                                viewModel.readScript(node.path) { content ->
+                                    val (cron, parsedName) = parseScriptCommentInfo(content, node.name)
+                                    taskAddingName = parsedName
+                                    taskAddingCommand = "task ${node.path}"
+                                    taskAddingSchedule = cron
+                                    taskAddingNode = node
+                                }
+                            }
                         )
                     }
                 }
@@ -213,13 +227,14 @@ fun ScriptsScreen(
     // 4.5 重命名弹窗
     if (renamingNode != null) {
         val node = renamingNode!!
+        val parentDir = if (node.path.contains('/')) node.path.substringBeforeLast('/') else ""
         var newName by remember(node.path) { mutableStateOf(node.name) }
         AlertDialog(
             onDismissRequest = { renamingNode = null },
             title = { Text(if (node.isDir) "重命名文件夹" else "重命名脚本", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("所在目录：${node.path.substringBeforeLast('/').ifEmpty { "根目录 (/)" }}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("所在目录：${parentDir.ifEmpty { "根目录 (/)" }}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(
                         value = newName,
                         onValueChange = { newName = it },
@@ -227,7 +242,6 @@ fun ScriptsScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    // 青龙的 rename 接口不允许跨目录，这里只允许改文件名
                     Text(
                         "仅支持同目录内重命名；如需移动到其他目录请先复制后在目标目录重建。",
                         fontSize = 10.sp,
@@ -240,8 +254,8 @@ fun ScriptsScreen(
                     onClick = {
                         val trimmed = newName.trim()
                         if (trimmed.isNotEmpty() && trimmed != node.name) {
-                            val newPath = node.path.substringBeforeLast('/') + "/" + trimmed
-                            viewModel.renameScript(node.path, newPath.removePrefix("/"))
+                            val newPath = if (parentDir.isEmpty()) trimmed else "$parentDir/$trimmed"
+                            viewModel.renameScript(node.path, newPath)
                         }
                         renamingNode = null
                     },
@@ -252,6 +266,77 @@ fun ScriptsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { renamingNode = null }) { Text("取消") }
+            }
+        )
+    }
+
+    // 4.6 从脚本快速添加到定时任务弹窗
+    if (taskAddingNode != null) {
+        val node = taskAddingNode!!
+        val cronDesc = remember(taskAddingSchedule) {
+            com.panel.app.util.CronExpressionDescriber.describe(taskAddingSchedule)
+        }
+        AlertDialog(
+            onDismissRequest = { taskAddingNode = null },
+            title = { Text("添加到定时任务", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("从脚本 [${node.name}] 创建定时任务：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = taskAddingName,
+                        onValueChange = { taskAddingName = it },
+                        label = { Text("任务名称", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = taskAddingCommand,
+                        onValueChange = { taskAddingCommand = it },
+                        label = { Text("执行命令", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = taskAddingSchedule,
+                        onValueChange = { taskAddingSchedule = it },
+                        label = { Text("定时规则 (Cron)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (cronDesc.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (taskAddingName.isNotBlank() && taskAddingCommand.isNotBlank()) {
+                            viewModel.createTask(taskAddingName, taskAddingCommand, taskAddingSchedule)
+                            Toast.makeText(context, "已成功添加任务 [$taskAddingName]", Toast.LENGTH_SHORT).show()
+                            taskAddingNode = null
+                        }
+                    },
+                    enabled = taskAddingName.isNotBlank() && taskAddingCommand.isNotBlank()
+                ) {
+                    Text("确认添加")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { taskAddingNode = null }) { Text("取消") }
             }
         )
     }
@@ -280,19 +365,42 @@ fun ScriptsScreen(
     }
 }
 
+data class FlatScriptNode(
+    val node: ScriptNode,
+    val depth: Int,
+    val isExpanded: Boolean
+)
+
+fun flattenScriptTree(
+    nodes: List<ScriptNode>,
+    expandedFolders: Set<String>,
+    searchQuery: String = "",
+    depth: Int = 0
+): List<FlatScriptNode> {
+    val list = mutableListOf<FlatScriptNode>()
+    for (node in nodes) {
+        val isExpanded = expandedFolders.contains(node.path) || (searchQuery.isNotEmpty() && node.isDir)
+        list.add(FlatScriptNode(node, depth, isExpanded))
+        if (node.isDir && isExpanded && !node.children.isNullOrEmpty()) {
+            list.addAll(flattenScriptTree(node.children, expandedFolders, searchQuery, depth + 1))
+        }
+    }
+    return list
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScriptTreeItem(
-    node: ScriptNode,
-    level: Int,
-    searchQuery: String = "",
-    expandedFolders: Set<String> = emptySet(),
+fun FlatScriptRowItem(
+    flatNode: FlatScriptNode,
     onToggleExpand: (String) -> Unit = {},
     onOpenEditor: (String) -> Unit,
     onDelete: (ScriptNode) -> Unit,
-    onRename: (ScriptNode) -> Unit = {}
+    onRename: (ScriptNode) -> Unit = {},
+    onAddToTask: (ScriptNode) -> Unit = {}
 ) {
-    val isExpanded = expandedFolders.contains(node.path) || (searchQuery.isNotEmpty() && node.isDir)
+    val node = flatNode.node
+    val level = flatNode.depth
+    val isExpanded = flatNode.isExpanded
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -303,104 +411,108 @@ fun ScriptTreeItem(
         }
     )
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        SwipeToDismissBox(
-            state = dismissState,
-            backgroundContent = {
-                val color = if (dismissState.dismissDirection != null) MaterialTheme.colorScheme.errorContainer else Color.Transparent
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(color, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "右滑删除",
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            val color = if (dismissState.dismissDirection != null) MaterialTheme.colorScheme.errorContainer else Color.Transparent
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(color, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "右滑删除",
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(20.dp)
+                )
             }
+        }
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (node.isDir) {
+                        onToggleExpand(node.path)
+                    } else {
+                        onOpenEditor(node.path)
+                    }
+                },
+            shape = RoundedCornerShape(6.dp),
+            color = MaterialTheme.colorScheme.surface
         ) {
-            Surface(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        if (node.isDir) {
-                            onToggleExpand(node.path)
-                        } else {
-                            onOpenEditor(node.path)
-                        }
-                    },
-                color = MaterialTheme.colorScheme.surface
+                    .padding(start = (level * 16 + 8).dp, top = 6.dp, bottom = 6.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = (level * 16 + 8).dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = if (node.isDir) {
-                                if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder
-                            } else {
-                                when {
-                                    node.name.endsWith(".py") -> Icons.Default.Code
-                                    node.name.endsWith(".js") -> Icons.Default.Javascript
-                                    node.name.endsWith(".sh") -> Icons.Default.Terminal
-                                    else -> Icons.Default.Description
-                                }
-                            },
-                            contentDescription = null,
-                            tint = if (node.isDir) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = if (node.isDir) {
+                            if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder
+                        } else {
+                            when {
+                                node.name.endsWith(".py") -> Icons.Default.Code
+                                node.name.endsWith(".js") -> Icons.Default.Javascript
+                                node.name.endsWith(".sh") -> Icons.Default.Terminal
+                                else -> Icons.Default.Description
+                            }
+                        },
+                        contentDescription = null,
+                        tint = if (node.isDir) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = node.name,
+                        fontSize = 13.sp,
+                        fontFamily = if (node.isDir) FontFamily.Default else FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (node.size != null && !node.isDir) {
+                        Spacer(Modifier.width(6.dp))
                         Text(
-                            text = node.name,
-                            fontSize = 13.sp,
-                            fontFamily = if (node.isDir) FontFamily.Default else FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = node.size,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (node.size != null && !node.isDir) {
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = node.size,
-                                fontSize = 9.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!node.isDir) {
+                        IconButton(
+                            onClick = { onAddToTask(node) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AddAlarm,
+                                contentDescription = "添加到定时任务",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
-
                     IconButton(
                         onClick = { onRename(node) },
                         modifier = Modifier.size(24.dp)
                     ) {
-                        Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "重命名", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        Icon(
+                            Icons.Default.DriveFileRenameOutline,
+                            contentDescription = "重命名",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
                     }
                 }
-            }
-        }
-
-        if (node.isDir && isExpanded && node.children != null) {
-            node.children.forEach { child ->
-                ScriptTreeItem(
-                    node = child,
-                    level = level + 1,
-                    searchQuery = searchQuery,
-                    expandedFolders = expandedFolders,
-                    onToggleExpand = onToggleExpand,
-                    onOpenEditor = onOpenEditor,
-                    onDelete = onDelete,
-                    onRename = onRename
-                )
             }
         }
     }

@@ -46,8 +46,14 @@
     @com.google.gson.annotations.SerializedName <fields>;
 }
 
-# Gson 扩展点（当前未使用，预留以防后续接入自定义适配器）
--keep class * extends com.google.gson.reflect.TypeToken
+# Gson 扩展点与泛型令牌（杜绝 R8 擦除泛型实参签名）
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken { *; }
+-keepclassmembers class * extends com.google.gson.reflect.TypeToken {
+    <init>(...);
+    *;
+}
 -keep class * implements com.google.gson.TypeAdapter
 -keep class * implements com.google.gson.TypeAdapterFactory
 -keep class * implements com.google.gson.JsonSerializer

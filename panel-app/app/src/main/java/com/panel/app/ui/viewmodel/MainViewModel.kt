@@ -44,6 +44,7 @@ data class MainUiState(
     val isDepBatchMode: Boolean = false,
     val isDatabaseReady: Boolean = false,
     val expandedScriptFolders: Set<String> = emptySet(),
+    val expandedHistoryScripts: Set<String> = emptySet(),
     val toastMessage: String? = null,
     /** 非空表示该面板开启了两步验证，等待用户输入动态验证码 */
     val otpPendingPanel: PanelInstance? = null
@@ -288,7 +289,16 @@ class MainViewModel @Inject constructor(
                 tasksRes.isFailure -> "任务加载失败: ${tasksRes.exceptionOrNull()?.message}"
                 envsRes.isFailure -> "环境变量加载失败: ${envsRes.exceptionOrNull()?.message}"
                 scriptTreeRes.isFailure -> "脚本文件加载失败: ${scriptTreeRes.exceptionOrNull()?.message}"
+                subsRes.isFailure -> "订阅加载失败: ${subsRes.exceptionOrNull()?.message}"
+                depsRes.isFailure -> "依赖加载失败: ${depsRes.exceptionOrNull()?.message}"
                 else -> null
+            }
+            if (errorMsg != null) {
+                com.panel.app.data.logger.AppLogger.log(
+                    com.panel.app.data.logger.LogLevel.ERROR,
+                    "RemoteSync",
+                    errorMsg
+                )
             }
 
             val metricsRes = metricsDeferred.await()
@@ -328,6 +338,242 @@ class MainViewModel @Inject constructor(
                 scriptTree = finalScriptTree,
                 isLoading = false,
                 toastMessage = errorMsg ?: _uiState.value.toastMessage
+            )
+        }
+    }
+
+    fun toggleHistoryScriptExpanded(scriptName: String) {
+        val current = _uiState.value.expandedHistoryScripts
+        val updated = if (current.contains(scriptName)) current - scriptName else current + scriptName
+        _uiState.value = _uiState.value.copy(expandedHistoryScripts = updated)
+    }
+
+    /** 细粒度局部刷新：仅拉取任务列表，避免下拉刷新触发全局全量 API */
+    fun refreshTasks() {
+        val activePanel = getActivePanel()
+        if (activePanel.token.isNullOrEmpty()) {
+            refreshPanelRemoteData(activePanel)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val adapter = repository.getAdapter(activePanel)
+            val res = adapter.getTasks()
+            if (getActivePanel().id != activePanel.id) return@launch
+
+            res.fold(
+                onSuccess = { newTasks ->
+                    _uiState.value = _uiState.value.copy(
+                        tasks = newTasks,
+                        isLoading = false
+                    )
+                    saveDiskCache(
+                        activePanel.id,
+                        newTasks,
+                        _uiState.value.envs,
+                        _uiState.value.subscriptions,
+                        _uiState.value.deps,
+                        _uiState.value.scriptTree,
+                        _uiState.value.configFiles,
+                        _uiState.value.selectedConfigFile,
+                        _uiState.value.configContent
+                    )
+                },
+                onFailure = { e ->
+                    com.panel.app.data.logger.AppLogger.log(
+                        com.panel.app.data.logger.LogLevel.ERROR,
+                        "Tasks",
+                        "刷新任务列表失败: ${e.message}"
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        toastMessage = "任务列表刷新失败: ${e.message}"
+                    )
+                }
+            )
+        }
+    }
+
+    /** 细粒度局部刷新：仅拉取仓库/订阅同步列表 */
+    fun refreshSubscriptions() {
+        val activePanel = getActivePanel()
+        if (activePanel.token.isNullOrEmpty()) {
+            refreshPanelRemoteData(activePanel)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val adapter = repository.getAdapter(activePanel)
+            val res = adapter.getSubscriptions()
+            if (getActivePanel().id != activePanel.id) return@launch
+
+            res.fold(
+                onSuccess = { newSubs ->
+                    _uiState.value = _uiState.value.copy(
+                        subscriptions = newSubs,
+                        isLoading = false
+                    )
+                    saveDiskCache(
+                        activePanel.id,
+                        _uiState.value.tasks,
+                        _uiState.value.envs,
+                        newSubs,
+                        _uiState.value.deps,
+                        _uiState.value.scriptTree,
+                        _uiState.value.configFiles,
+                        _uiState.value.selectedConfigFile,
+                        _uiState.value.configContent
+                    )
+                },
+                onFailure = { e ->
+                    com.panel.app.data.logger.AppLogger.log(
+                        com.panel.app.data.logger.LogLevel.ERROR,
+                        "Subscriptions",
+                        "刷新订阅列表失败: ${e.message}"
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        toastMessage = "订阅列表刷新失败: ${e.message}"
+                    )
+                }
+            )
+        }
+    }
+
+    /** 细粒度局部刷新：仅拉取环境变量列表 */
+    fun refreshEnvs() {
+        val activePanel = getActivePanel()
+        if (activePanel.token.isNullOrEmpty()) {
+            refreshPanelRemoteData(activePanel)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val adapter = repository.getAdapter(activePanel)
+            val res = adapter.getEnvs()
+            if (getActivePanel().id != activePanel.id) return@launch
+
+            res.fold(
+                onSuccess = { newEnvs ->
+                    _uiState.value = _uiState.value.copy(
+                        envs = newEnvs,
+                        isLoading = false
+                    )
+                    saveDiskCache(
+                        activePanel.id,
+                        _uiState.value.tasks,
+                        newEnvs,
+                        _uiState.value.subscriptions,
+                        _uiState.value.deps,
+                        _uiState.value.scriptTree,
+                        _uiState.value.configFiles,
+                        _uiState.value.selectedConfigFile,
+                        _uiState.value.configContent
+                    )
+                },
+                onFailure = { e ->
+                    com.panel.app.data.logger.AppLogger.log(
+                        com.panel.app.data.logger.LogLevel.ERROR,
+                        "Envs",
+                        "刷新环境变量列表失败: ${e.message}"
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        toastMessage = "环境变量刷新失败: ${e.message}"
+                    )
+                }
+            )
+        }
+    }
+
+    /** 细粒度局部刷新：仅拉取脚本文件树 */
+    fun refreshScripts() {
+        val activePanel = getActivePanel()
+        if (activePanel.token.isNullOrEmpty()) {
+            refreshPanelRemoteData(activePanel)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val adapter = repository.getAdapter(activePanel)
+            val res = adapter.getScriptTree()
+            if (getActivePanel().id != activePanel.id) return@launch
+
+            res.fold(
+                onSuccess = { newTree ->
+                    _uiState.value = _uiState.value.copy(
+                        scriptTree = newTree,
+                        isLoading = false
+                    )
+                    saveDiskCache(
+                        activePanel.id,
+                        _uiState.value.tasks,
+                        _uiState.value.envs,
+                        _uiState.value.subscriptions,
+                        _uiState.value.deps,
+                        newTree,
+                        _uiState.value.configFiles,
+                        _uiState.value.selectedConfigFile,
+                        _uiState.value.configContent
+                    )
+                },
+                onFailure = { e ->
+                    com.panel.app.data.logger.AppLogger.log(
+                        com.panel.app.data.logger.LogLevel.ERROR,
+                        "Scripts",
+                        "刷新脚本文件树失败: ${e.message}"
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        toastMessage = "脚本文件树刷新失败: ${e.message}"
+                    )
+                }
+            )
+        }
+    }
+
+    /** 细粒度局部刷新：仅拉取依赖列表 */
+    fun refreshDeps() {
+        val activePanel = getActivePanel()
+        if (activePanel.token.isNullOrEmpty()) {
+            refreshPanelRemoteData(activePanel)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val adapter = repository.getAdapter(activePanel)
+            val res = adapter.getDeps()
+            if (getActivePanel().id != activePanel.id) return@launch
+
+            res.fold(
+                onSuccess = { newDeps ->
+                    _uiState.value = _uiState.value.copy(
+                        deps = newDeps,
+                        isLoading = false
+                    )
+                    saveDiskCache(
+                        activePanel.id,
+                        _uiState.value.tasks,
+                        _uiState.value.envs,
+                        _uiState.value.subscriptions,
+                        newDeps,
+                        _uiState.value.scriptTree,
+                        _uiState.value.configFiles,
+                        _uiState.value.selectedConfigFile,
+                        _uiState.value.configContent
+                    )
+                },
+                onFailure = { e ->
+                    com.panel.app.data.logger.AppLogger.log(
+                        com.panel.app.data.logger.LogLevel.ERROR,
+                        "Deps",
+                        "刷新依赖列表失败: ${e.message}"
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        toastMessage = "依赖列表刷新失败: ${e.message}"
+                    )
+                }
             )
         }
     }

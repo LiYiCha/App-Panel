@@ -77,14 +77,21 @@ object AppUpdateManager {
     }
 
     /**
-     * 语义化版本号对比，如 1.0.1 > 1.0.0
+     * 语义化版本号对比，如 1.0.1 > 1.0.0。
+     * 支持包含 v 前缀、构建标签等复合格式的稳健提取与比较。
      */
     private fun isVersionNewer(current: String, remote: String): Boolean {
-        if (current == remote) return false
-        val currParts = current.split(".").mapNotNull { it.toIntOrNull() }
-        val remoteParts = remote.split(".").mapNotNull { it.toIntOrNull() }
-        val maxLen = maxOf(currParts.size, remoteParts.size)
+        val semverRegex = Regex("""(\d+(?:\.\d+)+)""")
+        val cleanCurr = semverRegex.find(current)?.value ?: current.trim().removePrefix("v").removePrefix("V")
+        val cleanRemote = semverRegex.find(remote)?.value ?: remote.trim().removePrefix("v").removePrefix("V")
 
+        if (cleanCurr == cleanRemote) return false
+
+        val currParts = cleanCurr.split(".").mapNotNull { it.toIntOrNull() }
+        val remoteParts = cleanRemote.split(".").mapNotNull { it.toIntOrNull() }
+        if (currParts.isEmpty() || remoteParts.isEmpty()) return false
+
+        val maxLen = maxOf(currParts.size, remoteParts.size)
         for (i in 0 until maxLen) {
             val c = currParts.getOrElse(i) { 0 }
             val r = remoteParts.getOrElse(i) { 0 }

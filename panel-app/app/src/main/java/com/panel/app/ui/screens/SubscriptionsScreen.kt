@@ -147,11 +147,10 @@ fun SubscriptionsScreen(
             }
         }
 
-        // 3. 仓库列表
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isLoading,
-                onRefresh = { viewModel.refreshCurrentPanel() },
+                onRefresh = { viewModel.refreshSubscriptions() },
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (filteredSubs.isEmpty()) {

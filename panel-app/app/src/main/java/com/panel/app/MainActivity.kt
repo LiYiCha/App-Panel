@@ -287,6 +287,9 @@ class MainActivity : ComponentActivity() {
                                 onSave = { updatedContent ->
                                     viewModel.saveScript(scriptName, updatedContent)
                                 },
+                                onAddToTask = { name, command, schedule ->
+                                    viewModel.createTask(name, command, schedule)
+                                },
                                 onBack = { navController.popBackStack() }
                             )
                         }

@@ -244,6 +244,12 @@ fun TaskDetailScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("定时规则 (Cron)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text(task.schedule, fontSize = 12.sp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+                                        val cronDesc = remember(task.schedule) {
+                                            com.panel.app.util.CronExpressionDescriber.describe(task.schedule)
+                                        }
+                                        if (cronDesc.isNotBlank()) {
+                                            Text(cronDesc, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                                        }
                                     }
                                 }
 
@@ -325,6 +331,107 @@ fun TaskDetailScreen(
                                             fontSize = 11.sp,
                                             modifier = Modifier.padding(8.dp)
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 高级调度与执行配置卡片 (适配白虎/青龙高级字段：前置/后置命令、工作目录、节点代理、重试与延时等)
+                    if (!task.preCommand.isNullOrBlank() || !task.postCommand.isNullOrBlank() ||
+                        !task.workDir.isNullOrBlank() || !task.agentId.isNullOrBlank() ||
+                        (task.retryCount != null && task.retryCount > 0) ||
+                        (task.randomRange != null && task.randomRange > 0) ||
+                        !task.languages.isNullOrEmpty() || !task.nextRunTime.isNullOrBlank()
+                    ) {
+                        item {
+                            ElevatedCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        Text("高级调度与环境配置", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                    }
+
+                                    if (!task.nextRunTime.isNullOrBlank()) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("下次执行时间", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(task.nextRunTime.take(19).replace("T", " "), fontSize = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                                        }
+                                    }
+
+                                    if (!task.workDir.isNullOrBlank()) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("工作目录 (WorkDir)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(task.workDir, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                        }
+                                    }
+
+                                    if (!task.agentId.isNullOrBlank()) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("执行节点/代理 (Agent)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(task.agentId, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                        }
+                                    }
+
+                                    if (task.retryCount != null && task.retryCount > 0) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("重试策略", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("重试 ${task.retryCount} 次 (间隔 ${task.retryInterval ?: 0} 秒)", fontSize = 11.sp)
+                                        }
+                                    }
+
+                                    if (task.randomRange != null && task.randomRange > 0) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("随机延时 (Random)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("0 ~ ${task.randomRange} 秒", fontSize = 11.sp)
+                                        }
+                                    }
+
+                                    if (!task.languages.isNullOrEmpty()) {
+                                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text("执行环境:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            task.languages.forEach { lang ->
+                                                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(4.dp)) {
+                                                    Text(lang, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (!task.preCommand.isNullOrBlank()) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("前置命令 (Pre-command):", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                                shape = RoundedCornerShape(4.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(task.preCommand, fontFamily = FontFamily.Monospace, fontSize = 10.sp, modifier = Modifier.padding(6.dp))
+                                            }
+                                        }
+                                    }
+
+                                    if (!task.postCommand.isNullOrBlank()) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("后置命令 (Post-command):", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                                shape = RoundedCornerShape(4.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(task.postCommand, fontFamily = FontFamily.Monospace, fontSize = 10.sp, modifier = Modifier.padding(6.dp))
+                                            }
+                                        }
                                     }
                                 }
                             }

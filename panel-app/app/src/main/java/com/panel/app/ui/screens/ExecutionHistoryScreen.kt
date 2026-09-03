@@ -46,7 +46,7 @@ fun ExecutionHistoryScreen(
     var viewMode by remember { mutableStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
     var isLoading by remember { mutableStateOf(false) }
     var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(emptyList()) }
-    val expandedScripts = remember { mutableStateMapOf<String, Boolean>() }
+    val expandedScripts = uiState.expandedHistoryScripts
 
     // 运行中任务：只有拿到真实运行实例才能精确停止
     var runningTasks by remember { mutableStateOf<List<RunningTaskInfo>>(emptyList()) }
@@ -89,11 +89,11 @@ fun ExecutionHistoryScreen(
             .sortedByDescending { it.second.size }
     }
 
-    // 默认展开前 5 个脚本组
+    // 首次进入时若没有任何记忆，默认展开前 3 个脚本组
     LaunchedEffect(groupedByScript) {
-        groupedByScript.take(5).forEach { (scriptName, _) ->
-            if (!expandedScripts.containsKey(scriptName)) {
-                expandedScripts[scriptName] = true
+        if (expandedScripts.isEmpty() && groupedByScript.isNotEmpty()) {
+            groupedByScript.take(3).forEach { (scriptName, _) ->
+                viewModel.toggleHistoryScriptExpanded(scriptName)
             }
         }
     }
@@ -305,7 +305,7 @@ fun ExecutionHistoryScreen(
                             contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
                             items(groupedByScript, key = { it.first }) { (scriptName, records) ->
-                                val isExpanded = expandedScripts[scriptName] ?: false
+                                val isExpanded = expandedScripts.contains(scriptName)
                                 val arrowRotation by animateFloatAsState(
                                     targetValue = if (isExpanded) 180f else 0f,
                                     label = "arrow"
@@ -326,7 +326,7 @@ fun ExecutionHistoryScreen(
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable { expandedScripts[scriptName] = !isExpanded }
+                                                .clickable { viewModel.toggleHistoryScriptExpanded(scriptName) }
                                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically

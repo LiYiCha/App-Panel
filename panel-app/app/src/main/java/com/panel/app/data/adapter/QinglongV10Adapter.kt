@@ -78,7 +78,7 @@ class QinglongV10Adapter(
     /** 青龙 /crons 可能返回数组，也可能返回 {data: [...], total} */
     private fun parseCronArray(data: com.google.gson.JsonElement?): List<QlCronItem> {
         if (data == null) return emptyList()
-        val type = object : com.google.gson.reflect.TypeToken<List<QlCronItem>>() {}.type
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlCronItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
@@ -339,7 +339,7 @@ class QinglongV10Adapter(
 
     private fun parseDepArray(data: com.google.gson.JsonElement?): List<QlDepItem> {
         if (data == null) return emptyList()
-        val type = object : com.google.gson.reflect.TypeToken<List<QlDepItem>>() {}.type
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlDepItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->

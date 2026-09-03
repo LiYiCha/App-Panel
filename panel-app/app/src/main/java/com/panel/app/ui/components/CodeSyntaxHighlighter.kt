@@ -35,7 +35,9 @@ import java.util.regex.Pattern
  */
 class CodeSyntaxVisualTransformation(
     private val extension: String,
-    private val isDark: Boolean = true
+    private val isDark: Boolean = true,
+    private val searchQuery: String = "",
+    private val activeMatchIndex: Int = -1
 ) : VisualTransformation {
 
     // 经典现代化 IDE 代码色彩主题（VS Code 风格）
@@ -150,6 +152,29 @@ class CodeSyntaxVisualTransformation(
                 val end = funcMatcher.end(1)
                 if (!isInsideStringOrComment(start)) {
                     addStyle(SpanStyle(color = decoratorColor), start, end)
+                }
+            }
+
+            // 6. 搜索词实时高亮
+            if (searchQuery.isNotBlank()) {
+                var searchIdx = 0
+                var matchCount = 0
+                while (searchIdx < raw.length) {
+                    val found = raw.indexOf(searchQuery, searchIdx, ignoreCase = true)
+                    if (found == -1) break
+                    val end = found + searchQuery.length
+                    val isCurrent = matchCount == activeMatchIndex
+                    addStyle(
+                        SpanStyle(
+                            background = if (isCurrent) Color(0xFFFF9800) else Color(0xFFFFEB3B),
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        found,
+                        end
+                    )
+                    matchCount++
+                    searchIdx = end
                 }
             }
         }

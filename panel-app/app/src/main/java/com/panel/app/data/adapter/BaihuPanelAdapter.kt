@@ -149,9 +149,8 @@ class BaihuPanelAdapter(
     override suspend fun getTasks(query: String?): Result<List<UnifiedTask>> {
         ensureAuth()
         return try {
-            // 不传 type：默认应展示全部任务（含 repo 仓库任务），
-            // 写死 type=task 会让仓库任务整体消失
-            api.getTasks(name = query?.takeIf { it.isNotBlank() }, pageSize = 200)
+            // 明确传 type="task"：对齐白虎官方 web 的 TASK_TYPE.NORMAL，避免与仓库同步任务重复展示
+            api.getTasks(name = query?.takeIf { it.isNotBlank() }, type = "task", pageSize = 200)
                 .unwrapTo("获取白虎任务失败") { env ->
                     env.data?.data.orEmpty().map { it.toUnifiedTask() }
                 }
@@ -162,7 +161,7 @@ class BaihuPanelAdapter(
 
     private fun BaihuTaskItem.toUnifiedTask(): UnifiedTask {
         val isRunning = running_status == "running"
-        val tags = this.tags?.split(",", "，")
+        val tagsList = this.tags?.split(",", "，")
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             .orEmpty()
@@ -178,6 +177,24 @@ class BaihuPanelAdapter(
             else -> "任务 #${id.take(8)}"
         }
 
+        val langList = mutableListOf<String>()
+        languages?.let { elem ->
+            runCatching {
+                if (elem.isJsonArray) {
+                    elem.asJsonArray.forEach { item ->
+                        when {
+                            item.isJsonPrimitive -> langList.add(item.asString)
+                            item.isJsonObject -> {
+                                val n = item.asJsonObject.get("name")?.asString ?: ""
+                                val v = item.asJsonObject.get("version")?.asString ?: ""
+                                if (n.isNotEmpty()) langList.add(if (v.isNotEmpty()) "$n:$v" else n)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         return UnifiedTask(
             id = id,
             name = resolvedName,
@@ -191,10 +208,22 @@ class BaihuPanelAdapter(
             isRunning = isRunning,
             isDisabled = enabled == false,
             isPinned = pin_type == "top",
-            labels = if (remark.isNullOrBlank()) tags else tags + remark,
+            labels = if (remark.isNullOrBlank()) tagsList else tagsList + remark,
             timeout = timeout ?: 30,
             createdAt = created_at,
-            updatedAt = updated_at
+            updatedAt = updated_at,
+            preCommand = pre_command,
+            postCommand = post_command,
+            workDir = work_dir,
+            agentId = agent_id,
+            retryCount = retry_count ?: 0,
+            retryInterval = retry_interval ?: 0,
+            randomRange = random_range ?: 0,
+            languages = langList,
+            lastRunTime = last_run,
+            nextRunTime = next_run,
+            cleanConfig = clean_config,
+            taskType = type
         )
     }
 
@@ -391,6 +420,14 @@ class BaihuPanelAdapter(
         var whitelist = ""
         var blacklist = ""
         var autoAddCron = true
+        var targetPath = ""
+        var sparsePath = ""
+        var singleFile = false
+        var proxy = "none"
+        var proxyUrl = ""
+        var authToken = ""
+        var repoDirName = ""
+        var commentToTask = false
 
         config?.let { raw ->
             runCatching {
@@ -398,11 +435,19 @@ class BaihuPanelAdapter(
                     com.google.gson.JsonParser.parseString(raw).asJsonObject
                 } else null
                 obj?.let {
-                    repoUrl = it.get("repo_url")?.asString ?: it.get("repourl")?.asString ?: ""
+                    repoUrl = it.get("repo_url")?.asString ?: it.get("repourl")?.asString ?: it.get("source_url")?.asString ?: ""
                     branch = it.get("branch")?.asString ?: "main"
-                    whitelist = it.get("whitelist_paths")?.asString ?: ""
+                    whitelist = it.get("whitelist_paths")?.asString ?: it.get("whitelist")?.asString ?: ""
                     blacklist = it.get("blacklist")?.asString ?: ""
                     autoAddCron = it.get("auto_add_cron")?.asBoolean ?: true
+                    targetPath = it.get("target_path")?.asString ?: ""
+                    sparsePath = it.get("sparse_path")?.asString ?: it.get("path")?.asString ?: ""
+                    singleFile = it.get("single_file")?.asBoolean ?: false
+                    proxy = it.get("proxy")?.asString ?: "none"
+                    proxyUrl = it.get("proxy_url")?.asString ?: ""
+                    authToken = it.get("auth_token")?.asString ?: ""
+                    repoDirName = it.get("repo_dir_name")?.asString ?: it.get("repo_name")?.asString ?: ""
+                    commentToTask = it.get("commenttotask")?.asString == "true" || it.get("auto_add_cron")?.asBoolean == true
                 }
             }
         }
@@ -451,7 +496,15 @@ class BaihuPanelAdapter(
             lastRunTime = last_run,
             nextRunTime = next_run,
             languages = langList,
-            location = if (agent_id.isNullOrEmpty()) "本地" else "节点: $agent_id"
+            location = if (agent_id.isNullOrEmpty()) "本地" else "节点: $agent_id",
+            targetPath = targetPath,
+            sparsePath = sparsePath,
+            singleFile = singleFile,
+            proxy = proxy,
+            proxyUrl = proxyUrl,
+            authToken = authToken,
+            repoDirName = repoDirName,
+            commentToTask = commentToTask
         )
     }
 
@@ -459,16 +512,30 @@ class BaihuPanelAdapter(
         ensureAuth()
         return try {
             val config = com.google.gson.JsonObject().apply {
+                addProperty("source_type", "git")
+                addProperty("source_url", sub.url)
                 addProperty("repo_url", sub.url)
-                addProperty("branch", sub.branch)
+                addProperty("branch", sub.branch.ifEmpty { "main" })
+                addProperty("target_path", sub.targetPath ?: "")
+                addProperty("sparse_path", sub.sparsePath ?: "")
+                addProperty("single_file", sub.singleFile)
+                addProperty("proxy", sub.proxy ?: "none")
+                addProperty("proxy_url", sub.proxyUrl ?: "")
+                addProperty("auth_token", sub.authToken ?: "")
                 addProperty("whitelist_paths", sub.whitelist)
                 addProperty("blacklist", sub.blacklist)
+                addProperty("dependence", sub.dependences)
+                addProperty("extensions", sub.extensions)
                 addProperty("auto_add_cron", sub.autoAddCron)
+                addProperty("commenttotask", if (sub.autoAddCron || sub.commentToTask) "true" else "false")
+                addProperty("repo_dir_name", sub.repoDirName ?: "")
             }
+            val cmd = "[git] ${sub.url}"
             api.createTask(
                 BaihuCreateTaskReq(
                     name = sub.name,
                     type = "repo",
+                    command = cmd,
                     config = config.toString(),
                     schedule = sub.schedule
                 )
@@ -482,16 +549,30 @@ class BaihuPanelAdapter(
         ensureAuth()
         return try {
             val config = com.google.gson.JsonObject().apply {
+                addProperty("source_type", "git")
+                addProperty("source_url", sub.url)
                 addProperty("repo_url", sub.url)
-                addProperty("branch", sub.branch)
+                addProperty("branch", sub.branch.ifEmpty { "main" })
+                addProperty("target_path", sub.targetPath ?: "")
+                addProperty("sparse_path", sub.sparsePath ?: "")
+                addProperty("single_file", sub.singleFile)
+                addProperty("proxy", sub.proxy ?: "none")
+                addProperty("proxy_url", sub.proxyUrl ?: "")
+                addProperty("auth_token", sub.authToken ?: "")
                 addProperty("whitelist_paths", sub.whitelist)
                 addProperty("blacklist", sub.blacklist)
+                addProperty("dependence", sub.dependences)
+                addProperty("extensions", sub.extensions)
                 addProperty("auto_add_cron", sub.autoAddCron)
+                addProperty("commenttotask", if (sub.autoAddCron || sub.commentToTask) "true" else "false")
+                addProperty("repo_dir_name", sub.repoDirName ?: "")
             }
+            val cmd = "[git] ${sub.url}"
             api.updateTask(
                 sub.id,
                 BaihuUpdateTaskReq(
                     name = sub.name,
+                    command = cmd,
                     schedule = sub.schedule,
                     enabled = !sub.isDisabled,
                     config = config.toString()
@@ -707,7 +788,9 @@ class BaihuPanelAdapter(
      */
     override suspend fun renameScript(path: String, newPath: String): Result<Boolean> {
         ensureAuth()
-        val sameDir = path.substringBeforeLast('/') == newPath.substringBeforeLast('/')
+        val oldParent = if (path.contains('/')) path.substringBeforeLast('/') else ""
+        val newParent = if (newPath.contains('/')) newPath.substringBeforeLast('/') else ""
+        val sameDir = oldParent == newParent
         return try {
             if (sameDir) {
                 api.renameFile(BaihuFileRenameReq(path, newPath))
