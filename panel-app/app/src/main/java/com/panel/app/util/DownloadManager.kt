@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -67,8 +68,14 @@ object DownloadManager {
 
     /** 取消指定下载并清理临时文件 */
     fun cancel(url: String) {
-        val s = _states.remove(url) ?: return
-        s.file.delete()
+        synchronized(lock) {
+            if (activeUrl != url) return
+            activeJob?.cancel()
+            activeJob = null
+            activeUrl = null
+            val s = _states.remove(url)
+            s?.file?.delete()
+        }
     }
 
     /**
@@ -89,12 +96,31 @@ object DownloadManager {
         onFailure: (String) -> Unit,
         onRetry: () -> Unit = {},
     ) {
-        val resumedOffset = if (outputFile.exists() && outputFile.length() > 0) outputFile.length() else 0L
-        val initialState = State(url, outputFile, downloaded = resumedOffset)
-        _states[url] = initialState
-
-        scope.launch {
-            doDownload(url, initialState, onProgress, onSuccess, onFailure, onRetry)
+        synchronized(lock) {
+            // 下载器是单任务模型：重复点击只复用当前任务，不再创建并发请求。
+            if (activeJob?.isActive == true) return
+            val resumedOffset = if (outputFile.exists() && outputFile.length() > 0) outputFile.length() else 0L
+            val initialState = State(url, outputFile, downloaded = resumedOffset)
+            _states[url] = initialState
+            activeUrl = url
+            activeJob = scope.launch {
+                try {
+                    doDownload(url, initialState, onProgress, onSuccess, onFailure, onRetry)
+                } catch (t: Throwable) {
+                    if (t !is kotlinx.coroutines.CancellationException) {
+                        _states.remove(url)
+                        runCatching { outputFile.delete() }
+                        runCatching { onFailure(t.message ?: "下载失败") }
+                    }
+                } finally {
+                    synchronized(lock) {
+                        if (activeUrl == url) {
+                            activeJob = null
+                            activeUrl = null
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -163,6 +189,9 @@ object DownloadManager {
     // ── 内部实现 ────────────────────────────────────────────────────────────
 
     private val _states = mutableMapOf<String, State>()
+    private val lock = Any()
+    private var activeJob: Job? = null
+    private var activeUrl: String? = null
 
     private suspend fun doDownload(
         url: String,
@@ -182,13 +211,11 @@ object DownloadManager {
 
         _states[url] = initial.copy(status = State.Status.DOWNLOADING)
 
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .header("User-Agent", GITHUB_UA)
-        if (resumeFrom > 0L) requestBuilder.header("Range", "bytes=$resumeFrom-")
-        val response = httpClient.newCall(requestBuilder.build()).execute()
-
+        var response: okhttp3.Response? = null
         try {
+            val requestBuilder = Request.Builder().url(url).header("User-Agent", GITHUB_UA)
+            if (resumeFrom > 0L) requestBuilder.header("Range", "bytes=$resumeFrom-")
+            response = httpClient.newCall(requestBuilder.build()).execute()
             when (response.code) {
                 200 -> {
                     // 全新下载：清空旧文件
@@ -238,6 +265,7 @@ object DownloadManager {
             onSuccess(file)
 
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             retries++
             if (retries <= MAX_RETRIES) {
                 val delayMs = RETRY_BASE_DELAY_MS * (1L shl (retries - 1)) // 1s / 2s / 4s
@@ -253,7 +281,7 @@ object DownloadManager {
                 onFailure(e.message ?: "下载失败")
             }
         } finally {
-            response.close()
+            response?.close()
         }
     }
 

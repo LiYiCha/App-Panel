@@ -150,7 +150,7 @@ fun TaskDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     item {
@@ -163,7 +163,7 @@ fun TaskDetailScreen(
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 // 状态与开关行
                                 Row(
@@ -361,7 +361,7 @@ fun TaskDetailScreen(
                         !task.workDir.isNullOrBlank() || !task.agentId.isNullOrBlank() ||
                         (task.retryCount != null && task.retryCount > 0) ||
                         (task.randomRange != null && task.randomRange > 0) ||
-                        !task.languages.isNullOrEmpty() || !task.nextRunTime.isNullOrBlank()
+                        task.languages.isNotEmpty() || !task.nextRunTime.isNullOrBlank()
                     ) {
                         item {
                             ElevatedCard(

@@ -231,23 +231,18 @@ class MainActivity : ComponentActivity() {
                             arguments = listOf(navArgument("taskId") { type = NavType.StringType })
                         ) { backStackEntry ->
                             val taskId = backStackEntry.arguments?.getString("taskId") ?: ""
-                            TaskDetailScreen(
+                            CompactTaskDetailScreen(
                                 taskId = taskId,
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() },
-                                onOpenLogViewer = { title, tId, logPath ->
-                                    val encTitle = Uri.encode(title)
-                                    if (logPath.isNotBlank()) {
-                                        val encPath = Uri.encode(logPath)
-                                        navController.navigate("log_viewer?title=$encTitle&path=$encPath")
-                                    } else {
-                                        val encId = Uri.encode(tId)
-                                        navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
-                                    }
-                                },
-                                onOpenScriptEditorScreen = { scriptPath ->
+                                onBack = { navController.popBackStack("main_flow", false) },
+                                onOpenScriptEditor = { scriptPath ->
                                     val encoded = Uri.encode(scriptPath)
                                     navController.navigate("standalone_editor/$encoded")
+                                },
+                                onOpenLog = { title, tId ->
+                                    val encTitle = Uri.encode(title)
+                                    val encId = Uri.encode(tId)
+                                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
                                 }
                             )
                         }
@@ -333,7 +328,7 @@ class MainActivity : ComponentActivity() {
                         composable("subscriptions") {
                             SubscriptionsScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack("main_flow", false) }
                             )
                         }
                     }

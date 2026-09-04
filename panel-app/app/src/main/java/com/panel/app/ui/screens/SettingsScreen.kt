@@ -382,8 +382,8 @@ fun SettingsScreen(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModernNavTile(
                 icon = Icons.Default.Shield,
-                title = "账户权限管理",
-                desc = "用户与权限设置",
+                title = "应用权限管理",
+                desc = "应用的权限设置",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
@@ -789,7 +789,7 @@ private fun DownloadProgressCard(
                             text = when {
                                 isError -> "下载失败"
                                 isDone -> "下载完成"
-                                else -> "下载中 ${percent}%"
+                                else -> if (percent <= 0) "连接中..." else "正在下载 ${percent}%"
                             },
                             fontSize = 12.sp,
                             fontWeight = if (isDone) FontWeight.Bold else FontWeight.Medium,

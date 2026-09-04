@@ -3,9 +3,12 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -155,9 +158,9 @@ fun SubscriptionsScreen(
                     modifier = Modifier.height(30.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("同步仓库", fontSize = 11.sp)
+                    Text("新增订阅", fontSize = 11.sp)
                 }
             }
         }
@@ -170,21 +173,20 @@ fun SubscriptionsScreen(
             ) {
                 if (filteredSubs.isEmpty()) {
                     // PullToRefreshBox 完全依赖 nested scroll 手势，空态必须是可滚动容器，否则下拉无响应
-                    LazyColumn(
-                        modifier = Modifier.fillMaxHeight(),
-                        contentPadding = PaddingValues(top = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center
                     ) {
-                        item {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = if (uiState.isLoading) "正在刷新仓库同步任务..." else "暂无匹配的仓库同步任务",
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = if (uiState.isLoading) "正在刷新仓库同步任务..." else "暂无匹配的仓库同步任务",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 } else {
@@ -198,13 +200,6 @@ fun SubscriptionsScreen(
                                 sub = sub,
                                 isBatchMode = isBatchMode,
                                 onSelect = { viewModel.toggleSubscriptionSelection(sub.id) },
-                                onRunOrStop = {
-                                    if (sub.isRunning) {
-                                        viewModel.stopSubscription(sub.id)
-                                    } else {
-                                        viewModel.runSubscription(sub.id)
-                                    }
-                                },
                                 onViewLog = {
                                     viewLogSubId = sub.id
                                     isLogLoading = true
@@ -346,7 +341,6 @@ fun RepoSyncCard(
     sub: UnifiedSubscription,
     isBatchMode: Boolean,
     onSelect: () -> Unit,
-    onRunOrStop: () -> Unit,
     onViewLog: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -363,7 +357,7 @@ fun RepoSyncCard(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 1. 首行：复选框/图标、名称、状态徽章与快捷操作按钮
+            // 1. 首行：复选框/图标、名称，右侧操作按钮（紧凑）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -394,42 +388,13 @@ fun RepoSyncCard(
                         fontSize = 13.sp,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                 }
 
-                // 操作按键区
+                // 操作按键区（右对齐）
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    // 状态徽章 (⚡)
-                    Surface(
-                        color = if (sub.isRunning) Color(0xFFE8F5E9) else if (sub.isDisabled) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Bolt,
-                                contentDescription = null,
-                                tint = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(Modifier.width(2.dp))
-                            Text(
-                                text = if (sub.isRunning) "同步中" else sub.statusText,
-                                fontSize = 9.sp,
-                                color = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    ActionButtonSmall(
-                        icon = if (sub.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        label = if (sub.isRunning) "停止" else "同步",
-                        tint = if (sub.isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
-                        onClick = onRunOrStop
-                    )
                     ActionButtonSmall(
                         icon = Icons.AutoMirrored.Filled.Note,
                         label = "日志",
@@ -448,6 +413,36 @@ fun RepoSyncCard(
                         tint = MaterialTheme.colorScheme.error,
                         onClick = onDelete
                     )
+                }
+            }
+
+            // 2. 状态徽章（居中）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    color = if (sub.isRunning) Color(0xFFE8F5E9) else if (sub.isDisabled) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = if (sub.isRunning) "同步中" else sub.statusText,
+                            fontSize = 10.sp,
+                            color = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -541,13 +536,30 @@ fun SubscriptionDialog(
     var schedule by remember { mutableStateOf(initial?.schedule ?: "0 0 * * *") }
     var whitelist by remember { mutableStateOf(initial?.whitelist ?: "") }
     var blacklist by remember { mutableStateOf(initial?.blacklist ?: "") }
+    var extensions by remember { mutableStateOf(initial?.extensions ?: "") }
+    var alias by remember { mutableStateOf(initial?.alias ?: "") }
+    var targetPath by remember { mutableStateOf(initial?.targetPath ?: "") }
     var autoAddCron by remember { mutableStateOf(initial?.autoAddCron ?: true) }
+    var autoDelCron by remember { mutableStateOf(initial?.autoDelCron ?: true) }
+    var type by remember { mutableStateOf(initial?.type ?: "public-repo") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "同步/新建 Git 仓库" else "编辑仓库同步配置", fontSize = 16.sp) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ScrollableColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 类型选择
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("public-repo" to "公开仓库", "private-repo" to "私有仓库", "file" to "单文件")
+                        .forEach { (val_, label) ->
+                            FilterChip(
+                                selected = type == val_,
+                                onClick = { type = val_ },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                }
+
                 OutlinedTextField(
                     value = url,
                     onValueChange = {
@@ -565,7 +577,7 @@ fun SubscriptionDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("任务名称") },
+                    label = { Text("同步名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -581,16 +593,48 @@ fun SubscriptionDialog(
                     OutlinedTextField(
                         value = schedule,
                         onValueChange = { schedule = it },
-                        label = { Text("定时规则 (Cron)") },
+                        label = { Text("同步周期 (Cron)") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
                 }
 
                 OutlinedTextField(
+                    value = alias,
+                    onValueChange = { alias = it },
+                    label = { Text("唯一别名 (Alias，选填)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
                     value = whitelist,
                     onValueChange = { whitelist = it },
-                    label = { Text("白名单关键词 (选填，逗号或竖线分割)") },
+                    label = { Text("白名单关键词 (选填)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = blacklist,
+                    onValueChange = { blacklist = it },
+                    label = { Text("黑名单关键词 (选填)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = extensions,
+                    onValueChange = { extensions = it },
+                    label = { Text("脚本后缀 (选填，逗号分隔)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = targetPath,
+                    onValueChange = { targetPath = it },
+                    label = { Text("目标路径 (选填)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -599,6 +643,11 @@ fun SubscriptionDialog(
                     Checkbox(checked = autoAddCron, onCheckedChange = { autoAddCron = it })
                     Spacer(Modifier.width(4.dp))
                     Text("自动识别脚本注释并添加定时调度任务", fontSize = 11.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = autoDelCron, onCheckedChange = { autoDelCron = it })
+                    Spacer(Modifier.width(4.dp))
+                    Text("自动删除已失效的同步任务", fontSize = 11.sp)
                 }
             }
         },
@@ -609,13 +658,17 @@ fun SubscriptionDialog(
                         val sub = UnifiedSubscription(
                             id = initial?.id ?: "",
                             name = name.trim(),
-                            type = "public-repo",
+                            type = type,
                             url = url.trim(),
                             branch = branch.trim().ifEmpty { "main" },
                             schedule = schedule.trim().ifEmpty { "0 0 * * *" },
                             whitelist = whitelist.trim(),
                             blacklist = blacklist.trim(),
-                            autoAddCron = autoAddCron
+                            extensions = extensions.trim(),
+                            alias = alias.trim(),
+                            targetPath = if (targetPath.isBlank()) null else targetPath.trim(),
+                            autoAddCron = autoAddCron,
+                            autoDelCron = autoDelCron
                         )
                         onConfirm(sub)
                     }
@@ -628,5 +681,20 @@ fun SubscriptionDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         }
+    )
+}
+
+@Composable
+private fun ScrollableColumn(
+    modifier: Modifier = Modifier,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .wrapContentHeight(),
+        verticalArrangement = verticalArrangement,
+        content = content
     )
 }

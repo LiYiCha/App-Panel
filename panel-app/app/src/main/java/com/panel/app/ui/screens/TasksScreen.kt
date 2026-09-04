@@ -42,7 +42,8 @@ fun TasksScreen(
     showCreateDialog: Boolean = false,
     onDismissCreateDialog: () -> Unit = {},
     onOpenTaskDetail: (String) -> Unit,
-    onOpenLog: (String) -> Unit
+    onOpenLog: (String) -> Unit,
+    currentSubTab: Int = 0
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -50,6 +51,15 @@ fun TasksScreen(
     var selectedFilter by remember { mutableStateOf("all") }
     var editingTask by remember { mutableStateOf<UnifiedTask?>(null) }
     var deletingTask by remember { mutableStateOf<UnifiedTask?>(null) }
+
+    // 子Tab自动映射到筛选条件
+    LaunchedEffect(currentSubTab) {
+        selectedFilter = when (currentSubTab) {
+            1 -> "running"
+            2 -> "disabled"
+            else -> "all"
+        }
+    }
 
     val filteredTasks = remember(searchQuery, selectedFilter, uiState.tasks) {
         val filtered = uiState.tasks.filter { task ->
@@ -316,7 +326,7 @@ fun TaskCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
                 if (isBatchMode) {
@@ -378,7 +388,7 @@ fun TaskCard(
                         }
                     }
 
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(2.dp))
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                         shape = RoundedCornerShape(4.dp),

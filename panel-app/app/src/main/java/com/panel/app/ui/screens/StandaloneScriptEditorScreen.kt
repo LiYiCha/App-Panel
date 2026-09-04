@@ -96,17 +96,18 @@ fun StandaloneScriptEditorScreen(
         (it.red * 0.299 + it.green * 0.587 + it.blue * 0.114) < 0.5
     }
 
-    val syntaxTransformation = remember(scriptName, isDark, searchQuery, currentMatchIndex, searchMatches.size) {
-        CodeSyntaxVisualTransformation(
-            extension = scriptName,
-            isDark = isDark,
-            searchQuery = searchQuery,
+    // 大脚本不做逐字符语法转换，避免 80KB 以上内容进入 TextField 时卡顿。
+    val useSyntaxHighlight = codeText.length <= 64 * 1024
+    val syntaxTransformation = remember(scriptName, isDark, searchQuery, currentMatchIndex, searchMatches.size, useSyntaxHighlight) {
+        if (useSyntaxHighlight) CodeSyntaxVisualTransformation(
+            extension = scriptName, isDark = isDark, searchQuery = searchQuery,
             activeMatchIndex = if (searchMatches.isNotEmpty()) currentMatchIndex else -1
-        )
+        ) else androidx.compose.ui.text.input.VisualTransformation.None
     }
 
     Scaffold(
         topBar = {
+            Column {
             TopAppBar(
                 title = {
                     Text(
@@ -185,6 +186,7 @@ fun StandaloneScriptEditorScreen(
                     }
                 }
             )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -305,10 +307,7 @@ fun StandaloneScriptEditorScreen(
                 // 注意：只有在只读状态时包裹 SelectionContainer；可编辑模式下坚决不能包裹 SelectionContainer，
                 // 否则 SelectionContainer 会强行捕获手势并重置焦点游标至 0（导致点击中间自动回滚到顶部）！
                 if (!isEditable) {
-                    androidx.compose.foundation.text.selection.SelectionContainer(
-                        modifier = Modifier.weight(1f).fillMaxHeight()
-                    ) {
-                        TextField(
+                    TextField(
                             value = textFieldValue,
                             onValueChange = { textFieldValue = it },
                             readOnly = true,
@@ -330,8 +329,7 @@ fun StandaloneScriptEditorScreen(
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent
                             )
-                        )
-                    }
+                    )
                 } else {
                     TextField(
                         value = textFieldValue,

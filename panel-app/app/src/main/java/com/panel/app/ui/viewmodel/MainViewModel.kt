@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
 import javax.inject.Inject
 
 /**
@@ -108,7 +110,19 @@ class MainViewModel @Inject constructor(
             val file = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
             if (file.exists()) {
                 val json = file.readText()
-                val data = gson.fromJson(json, CachedPanelData::class.java)
+                val root = JsonParser.parseString(json).asJsonObject
+                fun <T> readList(name: String, type: java.lang.reflect.Type): List<T> =
+                    root.get(name)?.let { gson.fromJson<List<T>>(it, type) }.orEmpty()
+                val data = CachedPanelData(
+                    tasks = readList("tasks", object : TypeToken<List<UnifiedTask>>() {}.type),
+                    envs = readList("envs", object : TypeToken<List<UnifiedEnv>>() {}.type),
+                    subscriptions = readList("subscriptions", object : TypeToken<List<UnifiedSubscription>>() {}.type),
+                    deps = readList("deps", object : TypeToken<List<UnifiedDep>>() {}.type),
+                    scriptTree = readList("scriptTree", object : TypeToken<List<ScriptNode>>() {}.type),
+                    configFiles = readList("configFiles", object : TypeToken<List<String>>() {}.type),
+                    selectedConfigFile = root.get("selectedConfigFile")?.asString ?: "config.sh",
+                    configContent = root.get("configContent")?.asString ?: ""
+                )
                 // 只有从未加载过网络数据时，才使用缓存作为初始数据
                 if (data != null && getActivePanel().id == panelId && !hasNetworkDataLoaded) {
                     _uiState.value = _uiState.value.copy(

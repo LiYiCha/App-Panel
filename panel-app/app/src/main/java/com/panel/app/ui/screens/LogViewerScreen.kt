@@ -23,8 +23,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.components.ActionButtonSmall
@@ -132,7 +130,8 @@ fun LogViewerScreen(
     // 自动滚动到最新日志底部
     LaunchedEffect(filteredLines.size, autoScrollToBottom) {
         if (autoScrollToBottom && filteredLines.isNotEmpty()) {
-            listState.animateScrollToItem(filteredLines.size - 1)
+            // 日志流可能每秒追加多次；动画会排队并造成明显卡顿，直接定位到尾部。
+            listState.scrollToItem(filteredLines.size - 1)
         }
     }
 
@@ -266,30 +265,17 @@ fun LogViewerScreen(
                         Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     }
                 } else {
-                    androidx.compose.foundation.text.selection.SelectionContainer(
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        LazyColumn(
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
                             state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .pointerInput(Unit) {
-                                    detectTransformGestures { _, _, zoom, _ ->
-                                        if (zoom != 1f) {
-                                            val target = fontSizeSp * zoom
-                                            fontSizeSp = target.coerceIn(8f, 26f)
-                                        }
-                                    }
-                                }
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            itemsIndexed(filteredLines) { _, (originalIndex, line) ->
+                            itemsIndexed(filteredLines, key = { _, item -> item.first }) { _, (originalIndex, line) ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(vertical = 1.dp)
                                 ) {
-                                    // 行号 (靠左紧凑对齐，主题动态色)
                                     Text(
                                         text = "${originalIndex + 1}".padStart(4, ' '),
                                         fontFamily = FontFamily.Monospace,
@@ -297,8 +283,6 @@ fun LogViewerScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                         modifier = Modifier.width(36.dp)
                                     )
-
-                                    // 行内容
                                     val annotated = if (searchQuery.isNotEmpty() && line.contains(searchQuery, ignoreCase = true)) {
                                         buildAnnotatedString {
                                             val startIdx = line.indexOf(searchQuery, ignoreCase = true)
@@ -308,28 +292,22 @@ fun LogViewerScreen(
                                             pop()
                                             append(line.substring(startIdx + searchQuery.length))
                                         }
-                                    } else {
-                                        buildAnnotatedString { append(line) }
-                                    }
-
-                                    val textColor = when {
-                                        line.contains("error", ignoreCase = true) || line.contains("failed", ignoreCase = true) -> MaterialTheme.colorScheme.error
-                                        line.contains("success", ignoreCase = true) || line.contains("done", ignoreCase = true) -> MaterialTheme.colorScheme.primary
-                                        line.contains("warn", ignoreCase = true) -> MaterialTheme.colorScheme.tertiary
-                                        else -> MaterialTheme.colorScheme.onSurface
-                                    }
-
+                                    } else buildAnnotatedString { append(line) }
                                     Text(
                                         text = annotated,
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = fontSizeSp.sp,
-                                        color = textColor,
+                                        color = when {
+                                            line.contains("error", true) || line.contains("failed", true) -> MaterialTheme.colorScheme.error
+                                            line.contains("success", true) || line.contains("done", true) -> MaterialTheme.colorScheme.primary
+                                            line.contains("warn", true) -> MaterialTheme.colorScheme.tertiary
+                                            else -> MaterialTheme.colorScheme.onSurface
+                                        },
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
                             }
                         }
-                    }
                 }
             }
 

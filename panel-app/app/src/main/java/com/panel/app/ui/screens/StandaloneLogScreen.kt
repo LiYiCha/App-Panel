@@ -183,10 +183,7 @@ fun StandaloneLogScreen(
                         Text("暂无日志输出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    androidx.compose.foundation.text.selection.SelectionContainer(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        LazyColumn(
+                    LazyColumn(
                             state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -224,7 +221,6 @@ fun StandaloneLogScreen(
                                     }
                                 )
                             }
-                        }
                     }
                 }
             }

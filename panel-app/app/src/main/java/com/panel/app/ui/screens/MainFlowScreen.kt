@@ -5,11 +5,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelType
@@ -182,12 +187,42 @@ fun MainFlowScreen(
         ) {
             when (selectedTab) {
                 BottomNavScreen.Tasks -> {
-                    TabRow(selectedTabIndex = tasksSubTab, modifier = Modifier.fillMaxWidth()) {
-                        Tab(
-                            selected = tasksSubTab == 0,
-                            onClick = { tasksSubTab = 0 },
-                            text = { Text("定时任务 (${uiState.tasks.size})", fontSize = 12.sp) }
-                        )
+                    val runningCount = uiState.tasks.count { it.isRunning }
+                    val disabledCount = uiState.tasks.count { it.isDisabled }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // 统计摘要行
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (uiState.tasks.isNotEmpty()) {
+                                val chips = listOf(
+                                    Triple("全部", uiState.tasks.size, MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer),
+                                    if (runningCount > 0) Triple("运行中", runningCount, Color(0xFFE8F5E9) to Color(0xFF2E7D32)) else null,
+                                    if (disabledCount > 0) Triple("已禁用", disabledCount, MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer) else null
+                                ).filterNotNull()
+                                chips.forEach { (label, count, colorPair) ->
+                                    val bg = colorPair.first
+                                    val fg = colorPair.second
+                                    Surface(color = bg, shape = RoundedCornerShape(12.dp)) {
+                                        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
+                                            Text(label, fontSize = 11.sp, color = fg)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(count.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // 过滤 TabRow
+                        TabRow(selectedTabIndex = tasksSubTab, containerColor = MaterialTheme.colorScheme.surface) {
+                            Tab(selected = tasksSubTab == 0, onClick = { tasksSubTab = 0 }, text = { Text("全部", fontSize = 12.sp) })
+                            Tab(selected = tasksSubTab == 1, onClick = { tasksSubTab = 1 }, text = { Text("运行中", fontSize = 12.sp) })
+                            Tab(selected = tasksSubTab == 2, onClick = { tasksSubTab = 2 }, text = { Text("已禁用", fontSize = 12.sp) })
+                        }
                     }
 
                     TasksScreen(
@@ -195,7 +230,8 @@ fun MainFlowScreen(
                         showCreateDialog = showCreateTaskDialog,
                         onDismissCreateDialog = { showCreateTaskDialog = false },
                         onOpenTaskDetail = onOpenTaskDetail,
-                        onOpenLog = onOpenLogScreen
+                        onOpenLog = onOpenLogScreen,
+                        currentSubTab = tasksSubTab
                     )
                 }
 

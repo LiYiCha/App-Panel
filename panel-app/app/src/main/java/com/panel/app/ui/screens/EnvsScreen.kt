@@ -3,7 +3,7 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -60,7 +60,13 @@ fun EnvsScreen(
     var deletingEnv by remember { mutableStateOf<UnifiedEnv?>(null) }
     var exportingEnvIds by remember { mutableStateOf<List<String>?>(null) }
     var sortedEnvs by remember(envList) { mutableStateOf(envList.toList()) }
-    var dragOverIndex by remember { mutableStateOf<Int?>(null) }
+    // 共享拖拽状态对象，确保跨卡片手势识别稳定
+    val dragState = remember {
+        object {
+            var sourceIndex: Int = -1
+            var targetIndex: Int = -1
+        }
+    }
 
     val fetchScope = rememberCoroutineScope()
 
@@ -193,24 +199,26 @@ fun EnvsScreen(
                                 onPin = { viewModel.pinEnv(env.id, !env.isPinned) },
                                 onDelete = { deletingEnv = env },
                                 onDragStart = {
-                                    dragOverIndex = currentIndex
+                                    dragState.sourceIndex = currentIndex
+                                    dragState.targetIndex = currentIndex
                                 },
                                 onDragOver = {
-                                    dragOverIndex = currentIndex
+                                    dragState.targetIndex = currentIndex
                                 },
                                 onDragEnd = {
-                                    val fromIdx = sortedEnvs.indexOf(env)
-                                    val toIdx = dragOverIndex ?: run { dragOverIndex = null; return@EnvCard }
-                                    if (fromIdx != toIdx && fromIdx != -1) {
+                                    val fromIdx = dragState.sourceIndex
+                                    val toIdx = dragState.targetIndex
+                                    dragState.sourceIndex = -1
+                                    dragState.targetIndex = -1
+                                    if (fromIdx != toIdx && fromIdx != -1 && toIdx != -1) {
                                         sortedEnvs = sortedEnvs.toMutableList().apply {
                                             add(toIdx, removeAt(fromIdx))
                                         }
                                         // 同步到服务端
                                         viewModel.moveEnvToServer(env.id, fromIdx, toIdx)
                                     }
-                                    dragOverIndex = null
                                 },
-                                isDragging = dragOverIndex == currentIndex
+                                isDragging = dragState.sourceIndex == currentIndex
                             )
                         }
                     }
@@ -395,15 +403,15 @@ fun EnvCard(
                 .padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 拖拽把手：仅把手可水平拖拽触发排序，垂直滚动由LazyColumn处理
+            // 拖拽把手：使用垂直拖拽，和列表排序方向一致。
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .pointerInput(isBatchMode) {
                         if (isBatchMode) return@pointerInput
-                        detectHorizontalDragGestures(
+                        detectDragGestures(
                             onDragStart = { onDragStart() },
-                            onHorizontalDrag = { _, _ -> },
+                            onDrag = { _, _ -> onDragOver() },
                             onDragEnd = { onDragEnd() }
                         )
                     },
