@@ -21,8 +21,13 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
+import com.google.gson.Gson
 import com.panel.app.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.flow.filter
 
 data class ScriptLogGroup(
     val scriptName: String,
@@ -53,6 +58,32 @@ fun ServerLogsScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+
+    val context = LocalContext.current
+    val serverLogsPrefs = remember { context.getSharedPreferences("panel_hub_prefs", Context.MODE_PRIVATE) }
+    val gson = remember { Gson() }
+
+    // 恢复"服务端日志"各分组展开/折叠状态（仅首次进入时读取一次）
+    LaunchedEffect(Unit) {
+        val json = serverLogsPrefs.getString("server_logs_expanded_v1", null)
+        if (!json.isNullOrBlank()) {
+            runCatching {
+                val map = gson.fromJson(json, Map::class.java) as? Map<*, *>
+                map?.forEach { (k, v) ->
+                    if (k is String && v is Boolean) expandedGroups[k] = v
+                }
+            }
+        }
+    }
+
+    // 任意展开/折叠变化后自动落盘，实现状态记忆
+    LaunchedEffect(Unit) {
+        snapshotFlow { expandedGroups.toMap() }
+            .filter { it.isNotEmpty() }
+            .collect { map ->
+                serverLogsPrefs.edit { putString("server_logs_expanded_v1", gson.toJson(map)) }
+            }
+    }
 
     val reloadTree = {
         isLoading = true

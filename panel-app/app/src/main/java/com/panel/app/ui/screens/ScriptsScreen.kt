@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.ScriptNode
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -491,29 +492,19 @@ fun FlatScriptRowItem(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (!node.isDir) {
-                        IconButton(
-                            onClick = { onAddToTask(node) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.AddAlarm,
-                                contentDescription = "添加到定时任务",
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = { onRename(node) },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.DriveFileRenameOutline,
-                            contentDescription = "重命名",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
+                        ActionButtonSmall(
+                            icon = Icons.Default.AddAlarm,
+                            label = "定时",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            onClick = { onAddToTask(node) }
                         )
                     }
+                    ActionButtonSmall(
+                        icon = Icons.Default.DriveFileRenameOutline,
+                        label = "重命名",
+                        tint = MaterialTheme.colorScheme.primary,
+                        onClick = { onRename(node) }
+                    )
                 }
             }
         }

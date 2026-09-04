@@ -27,6 +27,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -165,23 +166,26 @@ fun LogViewerScreen(
                 },
                 actions = {
                     // 自动滚动到底部开关
-                    IconButton(onClick = {
-                        autoScrollToBottom = !autoScrollToBottom
-                        Toast.makeText(context, if (autoScrollToBottom) "已开启自动滚动" else "已关闭自动滚动", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.VerticalAlignBottom,
-                            contentDescription = "自动滚动",
-                            tint = if (autoScrollToBottom) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = {
-                        isSearchOpen = !isSearchOpen
-                        if (!isSearchOpen) searchQuery = ""
-                    }) {
-                        Icon(if (isSearchOpen) Icons.Default.Close else Icons.Default.Search, contentDescription = "搜索")
-                    }
-                    // 实时跟随指示器（仅 taskId 有效时显示）
+                    ActionButtonSmall(
+                        icon = Icons.Default.VerticalAlignBottom,
+                        label = "滚动",
+                        tint = if (autoScrollToBottom) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = {
+                            autoScrollToBottom = !autoScrollToBottom
+                            Toast.makeText(context, if (autoScrollToBottom) "已开启自动滚动" else "已关闭自动滚动", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                    // 搜索 / 关闭搜索
+                    ActionButtonSmall(
+                        icon = if (isSearchOpen) Icons.Default.Close else Icons.Default.Search,
+                        label = if (isSearchOpen) "关闭" else "搜索",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = {
+                            isSearchOpen = !isSearchOpen
+                            if (!isSearchOpen) searchQuery = ""
+                        }
+                    )
+                    // 实时跟随指示器（仅 taskId 有效时显示，非按钮）
                     if (taskId.isNotBlank()) {
                         if (isFollowing && isStreamActive) {
                             Row(
@@ -194,19 +198,26 @@ fun LogViewerScreen(
                             }
                         } else if (!isFollowing) {
                             // 任务已结束，显示手动刷新按钮
-                            IconButton(onClick = { fetchLog() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "刷新日志")
+                            ActionButtonSmall(
+                                icon = Icons.Default.Refresh,
+                                label = "刷新",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                onClick = { fetchLog() }
+                            )
+                        }
+                    }
+                    // 复制日志
+                    ActionButtonSmall(
+                        icon = Icons.Default.ContentCopy,
+                        label = "复制",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = {
+                            if (logContent.isNotBlank()) {
+                                clipboardManager.setText(AnnotatedString(logContent))
+                                Toast.makeText(context, "日志全文已复制", Toast.LENGTH_SHORT).show()
                             }
                         }
-                    }
-                    IconButton(onClick = {
-                        if (logContent.isNotBlank()) {
-                            clipboardManager.setText(AnnotatedString(logContent))
-                            Toast.makeText(context, "日志全文已复制", Toast.LENGTH_SHORT).show()
-                        }
-                    }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "复制日志")
-                    }
+                    )
                 }
             )
         }

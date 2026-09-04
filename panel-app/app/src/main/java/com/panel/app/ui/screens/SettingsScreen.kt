@@ -8,7 +8,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -338,7 +337,7 @@ fun SettingsScreen(
             ModernNavTile(
                 icon = Icons.Default.SyncAlt,
                 title = "仓库订阅",
-                desc = "自动同步代码仓库",
+                desc = "添加/同步定时仓库源",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
@@ -370,15 +369,6 @@ fun SettingsScreen(
 
         // Row 4: 订阅管理 + 系统高级配置
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ModernNavTile(
-                icon = Icons.Default.Sync,
-                title = "订阅仓库管理",
-                desc = "添加/同步定时仓库源",
-                badge = null,
-                badgeColor = null,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenSubscriptionsScreen
-            )
             ModernNavTile(
                 icon = Icons.Default.Tune,
                 title = "系统高级配置",

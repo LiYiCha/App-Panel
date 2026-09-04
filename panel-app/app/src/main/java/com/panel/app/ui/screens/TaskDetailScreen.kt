@@ -23,8 +23,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.panel.app.data.model.TaskInstanceRecord
 import com.panel.app.data.model.UnifiedTask
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,39 +75,40 @@ fun TaskDetailScreen(
                 },
                 actions = {
                     // 置顶 / 取消置顶
-                    IconButton(
-                        onClick = { viewModel.pinTask(task.id, !task.isPinned) },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
-                            contentDescription = "置顶",
-                            tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                    ActionButtonSmall(
+                        icon = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
+                        label = if (task.isPinned) "取消置顶" else "置顶",
+                        tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = { viewModel.pinTask(task.id, !task.isPinned) }
+                    )
                     // 动态运行 / 停止
                     if (task.isRunning) {
-                        IconButton(
-                            onClick = { viewModel.stopTask(task.id) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Default.Stop, contentDescription = "停止任务", tint = Color(0xFFEF4444), modifier = Modifier.size(20.dp))
-                        }
+                        ActionButtonSmall(
+                            icon = Icons.Default.Stop,
+                            label = "停止",
+                            tint = Color(0xFFEF4444),
+                            onClick = { viewModel.stopTask(task.id) }
+                        )
                     } else {
-                        IconButton(
-                            onClick = { viewModel.runTask(task.id) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "运行任务", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
-                        }
+                        ActionButtonSmall(
+                            icon = Icons.Default.PlayArrow,
+                            label = "运行",
+                            tint = Color(0xFF10B981),
+                            onClick = { viewModel.runTask(task.id) }
+                        )
                     }
-                    IconButton(onClick = { showEditDialog = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Edit, contentDescription = "编辑任务", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = { deletingTask = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除任务", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                    }
+                    ActionButtonSmall(
+                        icon = Icons.Default.Edit,
+                        label = "编辑",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = { showEditDialog = true }
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.Default.Delete,
+                        label = "删除",
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = { deletingTask = true }
+                    )
                 }
             )
         }
@@ -240,7 +241,33 @@ fun TaskDetailScreen(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("目标脚本 (Script)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(scriptFile, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                scriptFile,
+                                                fontSize = 12.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier
+                                                    .weight(1f, fill = false)
+                                                    .clickable { onOpenScriptEditorScreen(scriptFile) }
+                                            )
+                                            IconButton(
+                                                onClick = { onOpenScriptEditorScreen(scriptFile) },
+                                                modifier = Modifier.size(22.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.OpenInNew,
+                                                    contentDescription = "打开脚本",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("定时规则 (Cron)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -303,7 +330,7 @@ fun TaskDetailScreen(
                                     }
                                 }
 
-                                // 执行命令展示框（带快捷复制）
+                                // 执行命令展示框
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -311,15 +338,6 @@ fun TaskDetailScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("执行命令 (Command):", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        TextButton(
-                                            onClick = {
-                                                clipboardManager.setText(AnnotatedString(task.command))
-                                                Toast.makeText(context, "命令已复制", Toast.LENGTH_SHORT).show()
-                                            },
-                                            contentPadding = PaddingValues(0.dp)
-                                        ) {
-                                            Text("复制命令", fontSize = 10.sp)
-                                        }
                                     }
                                     Surface(
                                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -485,7 +503,7 @@ fun TaskDetailScreen(
                                                     fontSize = 10.sp,
                                                     fontFamily = FontFamily.Monospace,
                                                     maxLines = 1,
-                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                             }
                                         }

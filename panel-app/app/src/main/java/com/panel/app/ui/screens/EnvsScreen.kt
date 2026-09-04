@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import kotlinx.coroutines.CoroutineScope
@@ -487,7 +488,6 @@ fun EnvCard(
                         shape = RoundedCornerShape(4.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onCopy() }
                     ) {
                         Text(
                             text = env.value.trimStart('=').ifEmpty { "(空值)" },
@@ -513,7 +513,7 @@ fun EnvCard(
                             EnvsActionButton(
                                 icon = if (env.isPinned) Icons.Default.Pin else Icons.Default.PushPin,
                                 label = if (env.isPinned) "已置顶" else "置顶",
-                                tint = if (env.isPinned) androidx.compose.ui.graphics.Color(0xFFFFA000) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (env.isPinned) Color(0xFFFFA000) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 onClick = onPin
                             )
                         }
@@ -707,7 +707,7 @@ fun SmartEnvImportDialog(
                         modifier = Modifier.scale(0.75f)
                     )
                 }
-                Divider(thickness = 0.5.dp)
+                HorizontalDivider(Modifier, thickness = 0.5.dp, color = DividerDefaults.color)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -761,7 +761,7 @@ fun SmartEnvImportDialog(
 private fun EnvsActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    tint: androidx.compose.ui.graphics.Color,
+    tint: Color,
     onClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
