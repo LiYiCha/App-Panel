@@ -20,8 +20,8 @@ appNamespace = "com.panel.app"
 compileSdk = "36"
 minSdk = "26"
 targetSdk = "36"
-versionCode = "25"
-versionName = "2.0.5"
+versionCode = "30"
+versionName = "3.0.0"
 jvmTarget = "17"
 
 [libraries]
