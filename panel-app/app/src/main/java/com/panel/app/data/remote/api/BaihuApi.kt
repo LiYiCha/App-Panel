@@ -4,6 +4,7 @@ import com.panel.app.data.remote.ApiEnvelope
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.*
+import com.google.gson.annotations.SerializedName
 
 /**
  * 白虎面板 API 定义。
@@ -111,22 +112,23 @@ data class BaihuCreateTaskReq(
     val name: String,
     val remark: String? = null,
     val command: String? = null,
-    val preCommand: String? = null,
-    val postCommand: String? = null,
+    @SerializedName("pre_command") val preCommand: String? = null,
+    @SerializedName("post_command") val postCommand: String? = null,
     val tags: String? = null,
     val type: String = "task",
     val config: String? = null,
     val schedule: String,
     val timeout: Int = 30,
-    val workDir: String? = null,
+    @SerializedName("work_dir") val workDir: String? = null,
+    @SerializedName("clean_config") val cleanConfig: String? = null,
     val envs: String? = null,
     val languages: com.google.gson.JsonElement? = null,
-    val agentId: String? = null,
-    val triggerType: String? = null,
-    val retryCount: Int? = null,
-    val retryInterval: Int? = null,
-    val randomRange: Int? = null,
-    val pinType: String? = null
+    @SerializedName("agent_id") val agentId: String? = null,
+    @SerializedName("trigger_type") val triggerType: String? = null,
+    @SerializedName("retry_count") val retryCount: Int? = null,
+    @SerializedName("retry_interval") val retryInterval: Int? = null,
+    @SerializedName("random_range") val randomRange: Int? = null,
+    @SerializedName("pin_type") val pinType: String? = null
 )
 
 /** 字段对齐 `vo.TaskUpdateReq` */
@@ -256,6 +258,7 @@ data class BaihuFileNode(
     val name: String,
     val path: String,
     val isDir: Boolean,
+    val size: Long? = null,
     val modTime: Long? = null,
     val children: List<BaihuFileNode>? = null
 )

@@ -50,6 +50,17 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    fun safePopBack() {
+                        if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
+                            navController.popBackStack()
+                        } else {
+                            navController.navigate("main_flow") {
+                                popUpTo("main_flow") { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
+                    }
+
                     NavHost(
                         navController = navController,
                         startDestination = startDest
@@ -72,7 +83,7 @@ class MainActivity : ComponentActivity() {
                                 viewModel = viewModel,
                                 editPanel = editingPanel,
                                 onBack = if (navController.previousBackStackEntry != null) {
-                                    { navController.popBackStack() }
+                                    { safePopBack() }
                                 } else null,
                                 onLoginSuccess = {
                                     navController.navigate("main_flow") {
@@ -94,8 +105,8 @@ class MainActivity : ComponentActivity() {
                                 onOpenTaskDetail = { taskId ->
                                     navController.navigate("task_detail/$taskId")
                                 },
-                                onOpenLogScreen = { taskName ->
-                                    val encoded = Uri.encode(taskName)
+                                onOpenLogScreen = { taskNameOrId ->
+                                    val encoded = Uri.encode(taskNameOrId)
                                     navController.navigate("log_viewer?title=$encoded&taskId=$encoded")
                                 },
                                 onOpenScriptEditorScreen = { scriptPath ->
@@ -121,7 +132,7 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("developer_console")
                                 },
                                 onOpenLogHistoryScreen = {
-                                    navController.navigate("server_logs")
+                                    navController.navigate("execution_history")
                                 },
                                 onOpenSystemSettingsScreen = {
                                     navController.navigate("system_settings")
@@ -143,56 +154,59 @@ class MainActivity : ComponentActivity() {
                             CreateScriptScreen(
                                 viewModel = viewModel,
                                 existingDirs = existingDirs,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable(
-                            route = "log_viewer?title={title}&taskId={taskId}&path={path}",
+                            route = "log_viewer?title={title}&taskId={taskId}&path={path}&running={running}",
                             arguments = listOf(
                                 navArgument("title") { type = NavType.StringType; defaultValue = "执行日志" },
                                 navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null },
-                                navArgument("path") { type = NavType.StringType; nullable = true; defaultValue = null }
+                                navArgument("path") { type = NavType.StringType; nullable = true; defaultValue = null },
+                                navArgument("running") { type = NavType.BoolType; defaultValue = false }
                             )
                         ) { backStackEntry ->
                             val title = Uri.decode(backStackEntry.arguments?.getString("title") ?: "执行日志")
                             val taskId = backStackEntry.arguments?.getString("taskId")?.let { Uri.decode(it) }
                             val path = backStackEntry.arguments?.getString("path")?.let { Uri.decode(it) }
+                            val running = backStackEntry.arguments?.getBoolean("running") ?: false
 
                             LogViewerScreen(
                                 title = title,
                                 taskId = taskId ?: "",
                                 logPath = path ?: "",
+                                taskRunning = running,
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("login_logs") {
                             LoginLogsScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("dashboard") {
                             DashboardScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("backup_restore") {
                             BackupRestoreScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("server_logs") {
                             ServerLogsScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() },
+                                onBack = { safePopBack() },
                                 onOpenLogViewer = { title, path ->
                                     val encTitle = Uri.encode(title)
                                     val encPath = Uri.encode(path)
@@ -204,14 +218,14 @@ class MainActivity : ComponentActivity() {
                         composable("developer_console") {
                             DeveloperConsoleScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("panel_manager") {
                             PanelManagerScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() },
+                                onBack = { safePopBack() },
                                 onNavigateToAddPanel = {
                                     navController.navigate("login")
                                 },
@@ -227,6 +241,30 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable(
+                            route = "execution_history?taskId={taskId}",
+                            arguments = listOf(
+                                navArgument("taskId") {
+                                    type = NavType.StringType
+                                    nullable = true
+                                    defaultValue = null
+                                }
+                            )
+                        ) { backStackEntry ->
+                            val taskId = backStackEntry.arguments?.getString("taskId")?.takeIf { it.isNotBlank() && it != "null" }
+                            ExecutionHistoryScreen(
+                                taskId = taskId,
+                                viewModel = viewModel,
+                                onBack = { safePopBack() },
+                                onOpenLogViewer = { title, logPath, logTaskId, isRunning ->
+                                    val encTitle = Uri.encode(title)
+                                    val encPath = Uri.encode(logPath)
+                                    val encTaskId = Uri.encode(logTaskId)
+                                    navController.navigate("log_viewer?title=$encTitle&path=$encPath&taskId=$encTaskId&running=$isRunning")
+                                }
+                            )
+                        }
+
+                        composable(
                             route = "task_detail/{taskId}",
                             arguments = listOf(navArgument("taskId") { type = NavType.StringType })
                         ) { backStackEntry ->
@@ -234,7 +272,7 @@ class MainActivity : ComponentActivity() {
                             CompactTaskDetailScreen(
                                 taskId = taskId,
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack("main_flow", false) },
+                                onBack = { safePopBack() },
                                 onOpenScriptEditor = { scriptPath ->
                                     val encoded = Uri.encode(scriptPath)
                                     navController.navigate("standalone_editor/$encoded")
@@ -243,6 +281,9 @@ class MainActivity : ComponentActivity() {
                                     val encTitle = Uri.encode(title)
                                     val encId = Uri.encode(tId)
                                     navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
+                                },
+                                onOpenHistory = { tId ->
+                                    navController.navigate("execution_history?taskId=$tId")
                                 }
                             )
                         }
@@ -264,7 +305,7 @@ class MainActivity : ComponentActivity() {
                             StandaloneLogScreen(
                                 taskName = displayName,
                                 initialLog = logContent,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
@@ -298,14 +339,14 @@ class MainActivity : ComponentActivity() {
                                 onAddToTask = { name, command, schedule ->
                                     viewModel.createTask(name, command, schedule)
                                 },
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("standalone_deps") {
                             StandaloneDepsScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
@@ -315,20 +356,20 @@ class MainActivity : ComponentActivity() {
                                 viewModel = viewModel,
                                 panelType = currentPanel?.type ?: PanelType.BAIHU,
                                 dashboard = viewModel.getCachedDashboard(),
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("app_permissions") {
                             AppPermissionsScreen(
-                                onBack = { navController.popBackStack() }
+                                onBack = { safePopBack() }
                             )
                         }
 
                         composable("subscriptions") {
                             SubscriptionsScreen(
                                 viewModel = viewModel,
-                                onBack = { navController.popBackStack("main_flow", false) }
+                                onBack = { safePopBack() }
                             )
                         }
                     }

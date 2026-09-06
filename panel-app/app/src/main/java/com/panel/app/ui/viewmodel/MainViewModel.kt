@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.panel.app.data.adapter.BaihuPanelAdapter
+import com.panel.app.data.adapter.QinglongApiHelpers
 import com.panel.app.data.adapter.QinglongV10Adapter
 import com.panel.app.data.adapter.QinglongV15Adapter
 import com.panel.app.data.remote.api.QinglongV15Api
@@ -75,7 +76,11 @@ data class MainUiState(
     val otpPendingPanel: PanelInstance? = null,
     /** 脚本内容缓存：路径 -> 内容 */
     val scriptViewerCache: Map<String, String> = emptyMap(),
-    val scriptViewerLoadingPath: String? = null
+    val scriptViewerLoadingPath: String? = null,
+    /** 任务/服务器日志缓存：key -> 日志文本 */
+    val taskLogCache: Map<String, String> = emptyMap(),
+    /** 任务执行耗时缓存：logKey/id/taskId -> 格式化耗时 */
+    val taskDurationCache: Map<String, String> = emptyMap()
 )
 
 data class CachedPanelData(
@@ -300,6 +305,20 @@ class MainViewModel @Inject constructor(
     private fun <T> CoroutineScope.safeAsync(block: suspend () -> Result<T>): Deferred<Result<T>> =
         async { safeCall(block) }
 
+    /** 判断接口返回的异常是否为 Token 过期或未授权等可自动刷新凭据恢复的错误 */
+    private fun isAuthException(e: Throwable?): Boolean {
+        val msg = e?.message?.lowercase() ?: return false
+        return msg.contains("401") ||
+                msg.contains("鉴权") ||
+                msg.contains("未登录") ||
+                msg.contains("登录失效") ||
+                msg.contains("登录已过期") ||
+                msg.contains("jwt") ||
+                msg.contains("unauthorized") ||
+                msg.contains("token") ||
+                msg.contains("凭据已失效")
+    }
+
     /**
      * 写入"当前工作面板" id。
      * 必须用 `commit = true` 同步落盘：`SharedPreferences.edit {}` 默认是 `apply()`（异步），
@@ -434,6 +453,25 @@ class MainViewModel @Inject constructor(
                     subsRes?.exceptionOrNull()?.let { "订阅加载失败: ${it.message}" },
                     depsRes?.exceptionOrNull()?.let { "依赖加载失败: ${it.message}" }
                 ).firstOrNull()
+
+                // 凭据过期检测：若核心接口报 401/鉴权/JWT/Token 过期异常，且面板存有账号密码，
+                // 立即执行静默重新登录换取新 Token 并自动重试，用户无感
+                val hasAuthFailure = listOfNotNull(tasksRes, envsRes, scriptTreeRes, subsRes, depsRes)
+                    .any { it.isFailure && isAuthException(it.exceptionOrNull()) }
+
+                if (hasAuthFailure && !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()) {
+                    repository.invalidateAdapter(activePanel.id)
+                    val reauthRes = runSafely { repository.testAuthenticate(activePanel) }
+                        .getOrElse { Result.failure(it) }
+                    if (reauthRes.isSuccess && reauthRes.getOrNull() != null) {
+                        val newToken = reauthRes.getOrNull()
+                        val updatedPanel = activePanel.copy(token = newToken)
+                        repository.savePanel(updatedPanel)
+                        // 携带新鲜有效的 Token 重新发起拉取，不向用户报误导性的未登录错误
+                        refreshPanelRemoteData(updatedPanel, notifyOnNoCredential, scopes)
+                        return@launch
+                    }
+                }
 
                 if (errorMsg != null) {
                     com.panel.app.data.logger.AppLogger.log(
@@ -889,10 +927,14 @@ class MainViewModel @Inject constructor(
     }
 
     fun createTask(name: String, command: String, schedule: String) {
+        createTask(UnifiedTask(id = "", name = name, command = command, schedule = schedule, statusText = ""))
+    }
+
+    fun createTask(task: UnifiedTask) {
         viewModelScope.launch {
-            val res = repository.getAdapter(getActivePanel()).createTask(name, command, schedule)
+            val res = repository.getAdapter(getActivePanel()).createTask(task)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "任务 [$name] 创建成功！")
+                _uiState.value = _uiState.value.copy(toastMessage = "任务 [${task.name}] 创建成功！")
             } else {
                 val err = res.exceptionOrNull()?.message ?: "未知错误"
                 _uiState.value = _uiState.value.copy(toastMessage = "创建任务失败: $err")
@@ -996,25 +1038,83 @@ class MainViewModel @Inject constructor(
     }
 
     fun loadTaskInstancesAndLog(taskId: String, onLoaded: (List<TaskInstanceRecord>, String) -> Unit) {
+        val cachedLog = _uiState.value.taskLogCache[taskId]
+        if (!cachedLog.isNullOrBlank() && _uiState.value.activeTaskInstances.isNotEmpty()) {
+            onLoaded(_uiState.value.activeTaskInstances, cachedLog)
+        }
         viewModelScope.launch {
             val adapter = repository.getAdapter(getActivePanel())
             val instancesRes = adapter.getTaskInstances(taskId)
             val logRes = adapter.getTaskLog(taskId)
-            val instances = instancesRes.getOrNull() ?: emptyList()
-            val log = logRes.getOrNull() ?: "暂无运行日志输出"
-            _uiState.value = _uiState.value.copy(activeTaskInstances = instances, activeLogContent = log)
-            onLoaded(instances, log)
+            val remoteInstances = instancesRes.getOrNull()
+            val instances = if (!remoteInstances.isNullOrEmpty()) {
+                remoteInstances
+            } else if (instancesRes.isSuccess && remoteInstances != null) {
+                remoteInstances
+            } else {
+                _uiState.value.activeTaskInstances
+            }
+            val log = logRes.getOrNull() ?: cachedLog ?: "暂无运行日志输出"
+            val parsedDuration = QinglongApiHelpers.parseDurationFromLog(log)
+            val durationUpdates: Map<String, String> = if (parsedDuration != null) mapOf(taskId to parsedDuration) else emptyMap()
+            val updatedInstances = if (parsedDuration != null) {
+                instances.map { inst ->
+                    if (inst.duration == "--" || inst.duration.isBlank()) inst.copy(duration = parsedDuration) else inst
+                }
+            } else instances
+
+            _uiState.update {
+                it.copy(
+                    activeTaskInstances = updatedInstances,
+                    activeLogContent = log,
+                    taskLogCache = it.taskLogCache + (taskId to log),
+                    taskDurationCache = it.taskDurationCache + durationUpdates
+                )
+            }
+            onLoaded(updatedInstances, log)
+        }
+    }
+
+    fun loadExecutionHistory(taskId: String? = null, onLoaded: (List<TaskInstanceRecord>) -> Unit) {
+        viewModelScope.launch {
+            val adapter = repository.getAdapter(getActivePanel())
+            val targetId = taskId.orEmpty()
+            val instancesRes = adapter.getTaskInstances(targetId)
+            val rawList = instancesRes.getOrNull()
+            val list = rawList?.map { inst ->
+                if (inst.duration == "--" || inst.duration.isBlank()) {
+                    val fromCache = _uiState.value.taskDurationCache[inst.logPath]
+                        ?: _uiState.value.taskDurationCache[inst.id]
+                        ?: _uiState.value.taskDurationCache[inst.taskId]
+                    val fromTask = if (inst.statusText != "运行中") {
+                        _uiState.value.tasks.find { it.id == inst.taskId }?.lastRunningTime?.takeIf { it > 0 }?.let {
+                            QinglongApiHelpers.formatSeconds(it)
+                        }
+                    } else null
+                    val dur = fromCache ?: fromTask
+                    if (dur != null) inst.copy(duration = dur) else inst
+                } else inst
+            }
+            if (!list.isNullOrEmpty()) {
+                _uiState.update { it.copy(activeTaskInstances = list) }
+                onLoaded(list)
+            } else if (instancesRes.isSuccess && list != null) {
+                // 成功返回但列表为空（如任务从未运行过），且原本无历史时更新为空
+                if (_uiState.value.activeTaskInstances.isEmpty()) {
+                    _uiState.update { it.copy(activeTaskInstances = emptyList()) }
+                    onLoaded(emptyList())
+                } else {
+                    onLoaded(_uiState.value.activeTaskInstances)
+                }
+            } else {
+                // 请求异常时保留已有历史记录，绝不冲刷成空列表导致消失
+                onLoaded(_uiState.value.activeTaskInstances)
+            }
         }
     }
 
     fun loadAllExecutionHistory(onLoaded: (List<TaskInstanceRecord>) -> Unit) {
-        viewModelScope.launch {
-            val adapter = repository.getAdapter(getActivePanel())
-            val instancesRes = adapter.getTaskInstances("")
-            val list = instancesRes.getOrNull() ?: emptyList()
-            _uiState.value = _uiState.value.copy(activeTaskInstances = list)
-            onLoaded(list)
-        }
+        loadExecutionHistory(null, onLoaded)
     }
 
     fun deleteTaskInstance(instanceId: String, onDeleted: () -> Unit) {
@@ -1386,10 +1486,57 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun loadServerLogDetail(path: String, file: String, onLoaded: (String) -> Unit) {
+    fun loadServerLogDetail(
+        path: String,
+        file: String,
+        fallbackTaskId: String? = null,
+        onLoaded: (String) -> Unit
+    ) {
+        val cacheKey = if (file.isNotBlank()) "$path/$file" else path
+        val cached = _uiState.value.taskLogCache[cacheKey] ?: _uiState.value.taskLogCache[file]
+        if (!cached.isNullOrBlank()) {
+            onLoaded(cached)
+        }
         viewModelScope.launch {
-            val res = repository.getAdapter(getActivePanel()).getLogDetail(path, file)
-            onLoaded(res.getOrNull() ?: "暂无日志")
+            val adapter = repository.getAdapter(getActivePanel())
+            var log = adapter.getLogDetail(path, file).getOrNull()
+            if ((log.isNullOrBlank() || log == "暂无日志内容") && !fallbackTaskId.isNullOrBlank()) {
+                val fallbackLog = adapter.getTaskLog(fallbackTaskId).getOrNull()
+                if (!fallbackLog.isNullOrBlank()) {
+                    log = fallbackLog
+                }
+            }
+            val finalLog = if (!log.isNullOrBlank()) log else "暂无日志内容"
+            val parsedDuration = QinglongApiHelpers.parseDurationFromLog(finalLog)
+            val durationUpdates: Map<String, String> = if (parsedDuration != null) {
+                buildMap<String, String> {
+                    put(cacheKey, parsedDuration)
+                    if (file.isNotBlank()) put(file, parsedDuration)
+                    if (!fallbackTaskId.isNullOrBlank()) put(fallbackTaskId, parsedDuration)
+                }
+            } else emptyMap()
+
+            // 同步更新 activeTaskInstances 中匹配的实例的 duration
+            val updatedInstances = if (parsedDuration != null) {
+                _uiState.value.activeTaskInstances.map { inst ->
+                    val match = inst.id == file || inst.id == cacheKey ||
+                            (inst.logPath != null && (inst.logPath == file || inst.logPath == cacheKey || inst.logPath.endsWith("/$file"))) ||
+                            (!fallbackTaskId.isNullOrBlank() && inst.taskId == fallbackTaskId && (inst.duration == "--" || inst.duration.isBlank()))
+                    if (match && (inst.duration == "--" || inst.duration.isBlank())) {
+                        inst.copy(duration = parsedDuration)
+                    } else inst
+                }
+            } else _uiState.value.activeTaskInstances
+
+            _uiState.update {
+                it.copy(
+                    taskLogCache = it.taskLogCache + (cacheKey to finalLog) + (file to finalLog),
+                    taskDurationCache = it.taskDurationCache + durationUpdates,
+                    activeLogContent = finalLog,
+                    activeTaskInstances = updatedInstances
+                )
+            }
+            onLoaded(finalLog)
         }
     }
 
@@ -1752,7 +1899,12 @@ class MainViewModel @Inject constructor(
             _uiState.update { it.copy(scriptViewerLoadingPath = path) }
             val res = repository.getAdapter(getActivePanel()).readScript(path)
             val content = res.getOrNull() ?: ""
-            _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+            // 大于 512KB 的脚本不常驻全局 State，避免反复触发重组造成大对象常驻
+            if (content.length <= 512 * 1024) {
+                _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+            } else {
+                _uiState.update { it.copy(scriptViewerLoadingPath = null) }
+            }
             onRead(content)
         }
     }
@@ -1797,13 +1949,28 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun getLogFromCache(key: String): String? {
+        return _uiState.value.taskLogCache[key]
+    }
+
     fun getTaskLog(taskNameOrId: String, onLoaded: (String) -> Unit) {
+        val cached = _uiState.value.taskLogCache[taskNameOrId]
+        if (!cached.isNullOrBlank()) {
+            onLoaded(cached)
+        }
         viewModelScope.launch {
             val matchedTask = _uiState.value.tasks.firstOrNull { it.id == taskNameOrId }
                 ?: _uiState.value.tasks.firstOrNull { it.name.equals(taskNameOrId, ignoreCase = true) }
             val realId = matchedTask?.id ?: taskNameOrId
             val res = repository.getAdapter(getActivePanel()).getTaskLog(realId)
-            onLoaded(res.getOrNull() ?: "暂无日志输出: ${res.exceptionOrNull()?.message ?: ""}")
+            val log = res.getOrNull() ?: "暂无日志输出: ${res.exceptionOrNull()?.message ?: ""}"
+            _uiState.update {
+                it.copy(
+                    taskLogCache = it.taskLogCache + (taskNameOrId to log) + (realId to log),
+                    activeLogContent = log
+                )
+            }
+            onLoaded(log)
         }
     }
 
@@ -1815,6 +1982,10 @@ class MainViewModel @Inject constructor(
      * 实时日志流：轮询面板直到任务结束，内容有变化才推送新值。
      * 供日志页"跟随"模式使用。
      */
-    fun streamTaskLog(logId: String): Flow<String> =
-        repository.getAdapter(getActivePanel()).streamLog(logId)
+    fun streamTaskLog(logId: String): Flow<String> {
+        val matchedTask = _uiState.value.tasks.firstOrNull { it.id == logId }
+            ?: _uiState.value.tasks.firstOrNull { it.name.equals(logId, ignoreCase = true) }
+        val realId = matchedTask?.id ?: logId
+        return repository.getAdapter(getActivePanel()).streamLog(realId)
+    }
 }

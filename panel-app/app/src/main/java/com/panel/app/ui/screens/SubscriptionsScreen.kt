@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,11 +26,13 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedSubscription
 import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.CronExpressionDescriber
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +47,7 @@ fun SubscriptionsScreen(
     val clipboardManager = LocalClipboardManager.current
     val uiState by viewModel.uiState.collectAsState()
 
+    var localShowCreateDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var isBatchMode by remember { mutableStateOf(false) }
     var editingSub by remember { mutableStateOf<UnifiedSubscription?>(null) }
@@ -153,7 +160,10 @@ fun SubscriptionsScreen(
                 }
 
                 Button(
-                    onClick = onCreateClick,
+                    onClick = {
+                        localShowCreateDialog = true
+                        onCreateClick()
+                    },
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     modifier = Modifier.height(30.dp),
                     shape = RoundedCornerShape(8.dp)
@@ -200,6 +210,13 @@ fun SubscriptionsScreen(
                                 sub = sub,
                                 isBatchMode = isBatchMode,
                                 onSelect = { viewModel.toggleSubscriptionSelection(sub.id) },
+                                onRunOrStop = {
+                                    if (sub.isRunning) {
+                                        viewModel.stopSubscription(sub.id)
+                                    } else {
+                                        viewModel.runSubscription(sub.id)
+                                    }
+                                },
                                 onViewLog = {
                                     viewLogSubId = sub.id
                                     isLogLoading = true
@@ -220,12 +237,16 @@ fun SubscriptionsScreen(
     }
 
     // 新建仓库弹窗
-    if (showCreateDialog) {
+    if (showCreateDialog || localShowCreateDialog) {
         SubscriptionDialog(
             initial = null,
-            onDismiss = onDismissCreateDialog,
+            onDismiss = {
+                localShowCreateDialog = false
+                onDismissCreateDialog()
+            },
             onConfirm = { newSub ->
                 viewModel.createSubscription(newSub)
+                localShowCreateDialog = false
                 onDismissCreateDialog()
             }
         )
@@ -341,23 +362,40 @@ fun RepoSyncCard(
     sub: UnifiedSubscription,
     isBatchMode: Boolean,
     onSelect: () -> Unit,
+    onRunOrStop: () -> Unit,
     onViewLog: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    ElevatedCard(
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
+    val isRunning = sub.isRunning
+    val statusColor = when {
+        isRunning -> Color(0xFF10B981)
+        sub.isDisabled -> Color(0xFFEF4444)
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = isBatchMode) { onSelect() },
-        shape = RoundedCornerShape(10.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isRunning) Color(0xFF10B981).copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface
+        ),
+        border = if (isRunning) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f))
+                 else if (sub.selected && isBatchMode) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                 else androidx.compose.foundation.BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 1. 首行：复选框/图标、名称，右侧操作按钮（紧凑）
+            // 1. 顶部标题行：图标/复选框 + 名称 + 状态微标 + 分支标签 + 右侧操作按钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -378,7 +416,7 @@ fun RepoSyncCard(
                         Icon(
                             Icons.Default.ForkRight,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = statusColor,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -386,17 +424,75 @@ fun RepoSyncCard(
                     Text(
                         text = sub.name,
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+
+                    // 状态徽标 (紧随标题，不另起一行)
+                    Surface(
+                        color = when {
+                            isRunning -> Color(0xFF10B981).copy(alpha = 0.15f)
+                            sub.isDisabled -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        },
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            if (isRunning) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .background(Color(0xFF10B981), CircleShape)
+                                )
+                            }
+                            Text(
+                                text = if (isRunning) "同步中" else if (sub.isDisabled) "已禁用" else "就绪",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = statusColor
+                            )
+                        }
+                    }
+
+                    // 分支标签 (增加最大宽度限制与省略保护)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = sub.branch.ifBlank { "main" },
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .widthIn(max = 68.dp)
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
                 }
 
-                // 操作按键区（右对齐）
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                // 操作按钮区 (包含立即同步/停止、日志、编辑、删除)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                     ActionButtonSmall(
-                        icon = Icons.AutoMirrored.Filled.Note,
+                        icon = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        label = if (isRunning) "停止" else "同步",
+                        tint = if (isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
+                        onClick = onRunOrStop
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.AutoMirrored.Filled.Notes,
                         label = "日志",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         onClick = onViewLog
@@ -416,107 +512,187 @@ fun RepoSyncCard(
                 }
             }
 
-            // 2. 状态徽章（居中）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+            // 2. 仓库地址行（增加 weight 约束，防止长地址挤压复制图标）
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        clipboardManager.setText(AnnotatedString(sub.url))
+                        Toast.makeText(context, "仓库地址已复制", Toast.LENGTH_SHORT).show()
+                    }
             ) {
-                Surface(
-                    color = if (sub.isRunning) Color(0xFFE8F5E9) else if (sub.isDisabled) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(6.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(12.dp)
+                        Text(
+                            text = "git",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = if (sub.isRunning) "同步中" else sub.statusText,
+                            text = sub.url,
+                            fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
-                            color = if (sub.isRunning) Color(0xFF2E7D32) else if (sub.isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "复制地址",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(12.dp)
+                    )
                 }
             }
 
-            // 2. 第二行：独立标签展示行 (语言环境徽章 + 节点徽章)，彻底避免挤压标题
-            if (sub.languages.isNotEmpty() || sub.location.isNotEmpty()) {
+            // 3. 配置规则与属性标签（横向滚动 + 最大宽度限制，避免长白名单/黑名单破损布局）
+            val hasTags = sub.autoAddCron || sub.whitelist.isNotBlank() || sub.blacklist.isNotBlank() || sub.languages.isNotEmpty() || sub.location.isNotBlank()
+            if (hasTags) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 语言环境徽章
+                    if (sub.autoAddCron) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(3.dp)
+                        ) {
+                            Text(
+                                text = "自动添加任务",
+                                fontSize = 9.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                    if (sub.whitelist.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(3.dp)
+                        ) {
+                            Text(
+                                text = "白名单: ${sub.whitelist}",
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier
+                                    .widthIn(max = 140.dp)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                    if (sub.blacklist.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(3.dp)
+                        ) {
+                            Text(
+                                text = "黑名单: ${sub.blacklist}",
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier
+                                    .widthIn(max = 140.dp)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
                     sub.languages.forEach { lang ->
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(4.dp)
+                            shape = RoundedCornerShape(3.dp)
                         ) {
                             Text(
                                 text = lang,
                                 fontSize = 9.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    // 本地/节点徽章
-                    if (sub.location.isNotEmpty()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = sub.location,
-                                fontSize = 9.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
                     }
                 }
             }
 
-            // 2. 仓库地址
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(4.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "[git] ${sub.url}",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                )
-            }
-
-            // 3. 同步周期与上一次/下一次执行时间
+            // 4. 定时调度与最近执行状态（两端加装权重限制，超长时自然截断）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "周期: ${sub.schedule}${if (sub.branch != "main") " • 分支: ${sub.branch}" else ""}",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (sub.lastRunTime != null && sub.lastRunTime != "--") {
-                        Text(text = "上: ${sub.lastRunTime}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    Icon(
+                        Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        text = sub.schedule,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    val cronDesc = remember(sub.schedule) { CronExpressionDescriber.describe(sub.schedule) }
+                    if (cronDesc.isNotBlank()) {
+                        Text(
+                            text = "($cronDesc)",
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    if (sub.nextRunTime != null && sub.nextRunTime != "--") {
-                        Text(text = "下: ${sub.nextRunTime}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                }
+
+                Spacer(Modifier.width(6.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!sub.lastRunTime.isNullOrBlank() && sub.lastRunTime != "--") {
+                        Text(
+                            text = "上: ${sub.lastRunTime}",
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!sub.nextRunTime.isNullOrBlank() && sub.nextRunTime != "--") {
+                        Text(
+                            text = "下: ${sub.nextRunTime}",
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.outline
+                        )
                     }
                 }
             }
@@ -543,6 +719,30 @@ fun SubscriptionDialog(
     var autoDelCron by remember { mutableStateOf(initial?.autoDelCron ?: true) }
     var type by remember { mutableStateOf(initial?.type ?: "public-repo") }
 
+    // 白虎面板高级配置字段
+    var showAdvanced by remember { mutableStateOf(
+        initial?.proxy?.isNotEmpty() == true ||
+        initial?.proxyUrl?.isNotEmpty() == true ||
+        initial?.authToken?.isNotEmpty() == true ||
+        initial?.sparsePath?.isNotEmpty() == true ||
+        initial?.singleFile == true ||
+        initial?.repoDirName?.isNotEmpty() == true ||
+        initial?.commentToTask == true ||
+        initial?.dependences?.isNotEmpty() == true
+    ) }
+    var proxy by remember { mutableStateOf(initial?.proxy ?: "none") }
+    var proxyUrl by remember { mutableStateOf(initial?.proxyUrl ?: "") }
+    var authToken by remember { mutableStateOf(initial?.authToken ?: "") }
+    var sparsePath by remember { mutableStateOf(initial?.sparsePath ?: "") }
+    var singleFile by remember { mutableStateOf(initial?.singleFile ?: false) }
+    var repoDirName by remember { mutableStateOf(initial?.repoDirName ?: "") }
+    var commentToTask by remember { mutableStateOf(initial?.commentToTask ?: false) }
+    var dependences by remember { mutableStateOf(initial?.dependences ?: "") }
+
+    val cronDesc = remember(schedule) {
+        CronExpressionDescriber.describe(schedule)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "同步/新建 Git 仓库" else "编辑仓库同步配置", fontSize = 16.sp) },
@@ -563,7 +763,6 @@ fun SubscriptionDialog(
                 OutlinedTextField(
                     value = url,
                     onValueChange = {
-                        url = it
                         if (name.isEmpty() && it.contains("/")) {
                             name = it.substringAfterLast("/").removeSuffix(".git")
                         }
@@ -597,6 +796,23 @@ fun SubscriptionDialog(
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
+                }
+
+                if (cronDesc.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                        }
+                    }
                 }
 
                 OutlinedTextField(
@@ -649,6 +865,96 @@ fun SubscriptionDialog(
                     Spacer(Modifier.width(4.dp))
                     Text("自动删除已失效的同步任务", fontSize = 11.sp)
                 }
+
+                // 高级同步与代理配置折叠项
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAdvanced = !showAdvanced }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("高级同步与代理配置", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                    Icon(
+                        if (showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                if (showAdvanced) {
+                    // 代理配置
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("none" to "无代理", "http" to "HTTP代理", "socks5" to "Socks5").forEach { (val_, label) ->
+                            FilterChip(
+                                selected = proxy == val_,
+                                onClick = { proxy = val_ },
+                                label = { Text(label, fontSize = 10.sp) }
+                            )
+                        }
+                    }
+
+                    if (proxy != "none") {
+                        OutlinedTextField(
+                            value = proxyUrl,
+                            onValueChange = { proxyUrl = it },
+                            label = { Text("代理地址 (proxy_url)") },
+                            placeholder = { Text("http://127.0.0.1:7890") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = authToken,
+                        onValueChange = { authToken = it },
+                        label = { Text("鉴权 Token / 密码 (auth_token)") },
+                        placeholder = { Text("私有仓库访问令牌 (选填)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = sparsePath,
+                        onValueChange = { sparsePath = it },
+                        label = { Text("部分检出路径 (sparse_path)") },
+                        placeholder = { Text("指定只拉取的子目录 (选填)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = repoDirName,
+                        onValueChange = { repoDirName = it },
+                        label = { Text("本地存放目录名 (repo_dir_name)") },
+                        placeholder = { Text("自定义本地目录名称 (选填)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = dependences,
+                        onValueChange = { dependences = it },
+                        label = { Text("依赖文件/包清单 (dependences)") },
+                        placeholder = { Text("例如 requirements.txt 或 package.json") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = singleFile, onCheckedChange = { singleFile = it })
+                        Spacer(Modifier.width(4.dp))
+                        Text("单文件下载模式 (single_file)", fontSize = 11.sp)
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = commentToTask, onCheckedChange = { commentToTask = it })
+                        Spacer(Modifier.width(4.dp))
+                        Text("识别注释自动转换为任务 (commenttotask)", fontSize = 11.sp)
+                    }
+                }
             }
         },
         confirmButton = {
@@ -664,11 +970,19 @@ fun SubscriptionDialog(
                             schedule = schedule.trim().ifEmpty { "0 0 * * *" },
                             whitelist = whitelist.trim(),
                             blacklist = blacklist.trim(),
+                            dependences = dependences.trim(),
                             extensions = extensions.trim(),
                             alias = alias.trim(),
                             targetPath = if (targetPath.isBlank()) null else targetPath.trim(),
                             autoAddCron = autoAddCron,
-                            autoDelCron = autoDelCron
+                            autoDelCron = autoDelCron,
+                            proxy = if (proxy == "none" && proxyUrl.isBlank()) null else proxy,
+                            proxyUrl = if (proxyUrl.isBlank()) null else proxyUrl.trim(),
+                            authToken = if (authToken.isBlank()) null else authToken.trim(),
+                            sparsePath = if (sparsePath.isBlank()) null else sparsePath.trim(),
+                            singleFile = singleFile,
+                            repoDirName = if (repoDirName.isBlank()) null else repoDirName.trim(),
+                            commentToTask = commentToTask
                         )
                         onConfirm(sub)
                     }

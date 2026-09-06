@@ -92,6 +92,7 @@ data class UnifiedSubscription(
 // 任务历次执行历史实例模型（对齐前端 RunningInstanceAttributes）
 data class TaskInstanceRecord(
     val id: String,
+    val taskId: String? = null,
     val taskName: String = "",
     val startTime: String,
     val endTime: String? = null,

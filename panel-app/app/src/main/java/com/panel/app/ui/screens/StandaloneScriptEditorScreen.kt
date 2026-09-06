@@ -17,15 +17,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.components.CodeSyntaxVisualTransformation
 import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.CronExpressionDescriber
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +43,7 @@ fun StandaloneScriptEditorScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     BackHandler {
         onBack()
@@ -48,6 +54,7 @@ fun StandaloneScriptEditorScreen(
     var showSearchBar by remember { mutableStateOf(false) }
     var isEditable by remember { mutableStateOf(false) }
     var showAddToTaskDialog by remember { mutableStateOf(false) }
+    var showLargeFileEditWarning by remember { mutableStateOf(false) }
 
     // 使用 TextFieldValue 保留选区和光标状态，杜绝纯 String 重组时光标被置零的问题
     var textFieldValue by remember(initialContent) {
@@ -61,14 +68,39 @@ fun StandaloneScriptEditorScreen(
     }
 
     val codeText = textFieldValue.text
+    val isLargeFile = remember(codeText) { codeText.length > 256 * 1024 }
 
-    // 计算搜索匹配项的所有起始下标
+    // 高效计算行偏移表（仅保存 \n 坐标，占用极少内存，例如 20 万行仅占 800KB IntArray）
+    val lineOffsets = remember(codeText) {
+        if (codeText.isEmpty()) intArrayOf()
+        else {
+            val list = java.util.ArrayList<Int>(minOf(codeText.length / 40, 250_000))
+            var idx = 0
+            while (idx < codeText.length) {
+                val nl = codeText.indexOf('\n', idx)
+                if (nl == -1) break
+                list.add(nl)
+                idx = nl + 1
+            }
+            val arr = IntArray(list.size)
+            for (i in list.indices) arr[i] = list[i]
+            arr
+        }
+    }
+
+    val totalLines = remember(codeText, lineOffsets) {
+        if (codeText.isEmpty()) 1 else lineOffsets.size + 1
+    }
+
+    val lazyListState = rememberLazyListState()
+
+    // 计算搜索匹配项的所有起始下标（限制最多 500 个匹配，避免单字符在大文件中消耗过多内存）
     val searchMatches = remember(codeText, searchQuery) {
-        if (searchQuery.isBlank()) emptyList<Int>()
+        if (searchQuery.isBlank() || (searchQuery.length < 2 && codeText.length > 256 * 1024)) emptyList<Int>()
         else {
             val list = mutableListOf<Int>()
             var idx = 0
-            while (idx < codeText.length) {
+            while (idx < codeText.length && list.size < 500) {
                 val found = codeText.indexOf(searchQuery, idx, ignoreCase = true)
                 if (found == -1) break
                 list.add(found)
@@ -84,10 +116,6 @@ fun StandaloneScriptEditorScreen(
         if (currentMatchIndex >= searchMatches.size) {
             currentMatchIndex = 0
         }
-    }
-
-    val lineCount = remember(codeText) {
-        if (codeText.isEmpty()) 1 else codeText.lines().size
     }
 
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -161,7 +189,13 @@ fun StandaloneScriptEditorScreen(
                     }
                     if (!isEditable) {
                         Button(
-                            onClick = { isEditable = true },
+                            onClick = {
+                                if (isLargeFile) {
+                                    showLargeFileEditWarning = true
+                                } else {
+                                    isEditable = true
+                                }
+                            },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.padding(end = 4.dp).height(30.dp)
                         ) {
@@ -194,6 +228,32 @@ fun StandaloneScriptEditorScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // 大文件流式虚拟化提示栏
+            if (isLargeFile) {
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Speed,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "已启用极速流式虚拟化浏览 (${String.format("%.2f", codeText.length / (1024f * 1024f))} MB, 共 $totalLines 行)，保证极致流畅",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+
             // 搜索操作栏 (具备高亮匹配计数与前后跳转)
             if (showSearchBar) {
                 Surface(
@@ -227,7 +287,7 @@ fun StandaloneScriptEditorScreen(
 
                         // 匹配数量提示
                         val countText = when {
-                            searchMatches.isNotEmpty() -> "${currentMatchIndex + 1}/${searchMatches.size}"
+                            searchMatches.isNotEmpty() -> "${currentMatchIndex + 1}/${searchMatches.size}${if (searchMatches.size >= 500) "+" else ""}"
                             searchQuery.isNotEmpty() -> "0/0"
                             else -> ""
                         }
@@ -246,9 +306,16 @@ fun StandaloneScriptEditorScreen(
                                 if (searchMatches.isNotEmpty()) {
                                     currentMatchIndex = (currentMatchIndex - 1 + searchMatches.size) % searchMatches.size
                                     val targetOffset = searchMatches[currentMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = TextRange(targetOffset, targetOffset + searchQuery.length)
-                                    )
+                                    if (isEditable) {
+                                        textFieldValue = textFieldValue.copy(
+                                            selection = TextRange(targetOffset, targetOffset + searchQuery.length)
+                                        )
+                                    } else {
+                                        val targetLine = lineOffsets.binarySearch(targetOffset).let { if (it < 0) -it - 1 else it }
+                                        coroutineScope.launch {
+                                            lazyListState.animateScrollToItem(minOf(targetLine, totalLines - 1))
+                                        }
+                                    }
                                 }
                             },
                             enabled = searchMatches.isNotEmpty(),
@@ -263,9 +330,16 @@ fun StandaloneScriptEditorScreen(
                                 if (searchMatches.isNotEmpty()) {
                                     currentMatchIndex = (currentMatchIndex + 1) % searchMatches.size
                                     val targetOffset = searchMatches[currentMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = TextRange(targetOffset, targetOffset + searchQuery.length)
-                                    )
+                                    if (isEditable) {
+                                        textFieldValue = textFieldValue.copy(
+                                            selection = TextRange(targetOffset, targetOffset + searchQuery.length)
+                                        )
+                                    } else {
+                                        val targetLine = lineOffsets.binarySearch(targetOffset).let { if (it < 0) -it - 1 else it }
+                                        coroutineScope.launch {
+                                            lazyListState.animateScrollToItem(minOf(targetLine, totalLines - 1))
+                                        }
+                                    }
                                 }
                             },
                             enabled = searchMatches.isNotEmpty(),
@@ -277,60 +351,100 @@ fun StandaloneScriptEditorScreen(
                 }
             }
 
-            // 动态行号与代码编辑区域
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface)
-            ) {
-                // 行号栏
-                Column(
+            // 核心代码浏览/编辑区域
+            if (!isEditable) {
+                // 虚拟化按需渲染，零 OOM 风险，11MB/50MB 文件秒开秒滑
+                val lineNumWidth = remember(totalLines) {
+                    maxOf(40, (totalLines.toString().length * 8 + 18)).dp
+                }
+                val horizontalScrollState = rememberScrollState()
+
+                Box(
                     modifier = Modifier
-                        .width(38.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .verticalScroll(rememberScrollState())
-                        .padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface)
                 ) {
-                    for (i in 1..maxOf(lineCount, 1)) {
-                        Text(
-                            text = "$i",
-                            fontSize = fontSizeSp.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
+                    if (codeText.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "正在从服务端读取脚本内容...",
+                                fontSize = fontSizeSp.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            state = lazyListState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .horizontalScroll(horizontalScrollState)
+                        ) {
+                            items(totalLines) { lineIdx ->
+                                val start = if (lineIdx == 0) 0 else lineOffsets[lineIdx - 1] + 1
+                                val end = if (lineIdx < lineOffsets.size) lineOffsets[lineIdx] else codeText.length
+                                val lineStr = if (start <= end && start < codeText.length) {
+                                    codeText.substring(start, minOf(end, codeText.length)).trimEnd('\r')
+                                } else ""
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "${lineIdx + 1}",
+                                        modifier = Modifier
+                                            .width(lineNumWidth)
+                                            .padding(end = 8.dp),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        textAlign = TextAlign.End
+                                    )
+                                    Text(
+                                        text = lineStr.ifEmpty { " " },
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
+            } else {
+                // 编辑模式
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
+                    // 行号栏 (仅在行数 <= 1000 时渲染，避免过度创建 Node 触发 OOM)
+                    if (totalLines <= 1000) {
+                        Column(
+                            modifier = Modifier
+                                .width(38.dp)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .verticalScroll(rememberScrollState())
+                                .padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            for (i in 1..maxOf(totalLines, 1)) {
+                                Text(
+                                    text = "$i",
+                                    fontSize = fontSizeSp.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
 
-                // 核心代码输入区：
-                // 注意：只有在只读状态时包裹 SelectionContainer；可编辑模式下坚决不能包裹 SelectionContainer，
-                // 否则 SelectionContainer 会强行捕获手势并重置焦点游标至 0（导致点击中间自动回滚到顶部）！
-                if (!isEditable) {
-                    TextField(
-                            value = textFieldValue,
-                            onValueChange = { textFieldValue = it },
-                            readOnly = true,
-                            visualTransformation = syntaxTransformation,
-                            placeholder = {
-                                if (codeText.isEmpty()) {
-                                    Text("正在从服务端读取脚本内容...", fontSize = fontSizeSp.sp, fontFamily = FontFamily.Monospace)
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                            textStyle = LocalTextStyle.current.copy(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = fontSizeSp.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent
-                            )
-                    )
-                } else {
                     TextField(
                         value = textFieldValue,
                         onValueChange = { textFieldValue = it },
@@ -341,7 +455,7 @@ fun StandaloneScriptEditorScreen(
                                 Text("请输入或粘贴脚本代码...", fontSize = fontSizeSp.sp, fontFamily = FontFamily.Monospace)
                             }
                         },
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        modifier = Modifier.fillMaxSize(),
                         textStyle = LocalTextStyle.current.copy(
                             fontFamily = FontFamily.Monospace,
                             fontSize = fontSizeSp.sp,
@@ -357,6 +471,32 @@ fun StandaloneScriptEditorScreen(
                 }
             }
         }
+    }
+
+    if (showLargeFileEditWarning) {
+        AlertDialog(
+            onDismissRequest = { showLargeFileEditWarning = false },
+            title = { Text("大文件编辑提醒", fontSize = 15.sp) },
+            text = {
+                Text(
+                    "当前脚本大小为 ${String.format("%.2f", codeText.length / (1024f * 1024f))} MB（共 $totalLines 行）。\n\n在移动端全量输入编辑可能导致输入法卡顿或消耗大量内存。建议优先使用流式浏览，或在桌面端编辑。是否仍要切换为编辑模式？",
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLargeFileEditWarning = false
+                        isEditable = true
+                    }
+                ) {
+                    Text("仍要编辑")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLargeFileEditWarning = false }) { Text("取消") }
+            }
+        )
     }
 
     // 从代码编辑器一键添加为定时任务弹窗

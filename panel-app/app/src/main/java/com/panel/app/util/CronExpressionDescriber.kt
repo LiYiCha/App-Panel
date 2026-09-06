@@ -131,11 +131,11 @@ object CronExpressionDescriber {
     private fun formatTime6(sec: String, min: String, hour: String): String {
         return when {
             hour == "*" && min == "*" && sec == "*" -> "每秒"
-            hour == "*" && min == "*" && sec.all { it.isDigit() } -> "每分钟的第 $sec 秒"
+            hour == "*" && min == "*" && sec.all { it.isDigit() } -> "每分钟的第 ${sec} 秒"
             hour == "*" && min.all { it.isDigit() } && sec.all { it.isDigit() } ->
-                String.format(java.util.Locale.US, "每小时的 %02d:%02d", min.toInt(), sec.toInt())
+                if (sec == "0") "每小时的 ${min}分" else "每小时的 ${min}分${sec}秒"
             hour.all { it.isDigit() } && min.all { it.isDigit() } && sec.all { it.isDigit() } ->
-                String.format(java.util.Locale.US, "%02d:%02d:%02d", hour.toInt(), min.toInt(), sec.toInt())
+                if (sec == "0") "${hour}点${min}分" else "${hour}点${min}分${sec}秒"
             else -> {
                 val hStr = if (hour == "*") "每小时" else "${hour}点"
                 val mStr = if (min == "*") "每分" else "${min}分"
@@ -149,9 +149,9 @@ object CronExpressionDescriber {
         return when {
             hour == "*" && min == "*" -> "每分钟"
             hour == "*" && min.all { it.isDigit() } ->
-                String.format(java.util.Locale.US, "每小时第 %02d 分钟", min.toInt())
+                "每小时第 ${min} 分钟"
             hour.all { it.isDigit() } && min.all { it.isDigit() } ->
-                String.format(java.util.Locale.US, "%02d:%02d", hour.toInt(), min.toInt())
+                "${hour}点${min}分"
             else -> {
                 val hStr = if (hour == "*") "每小时" else "${hour}点"
                 val mStr = if (min == "*") "每分" else "${min}分"

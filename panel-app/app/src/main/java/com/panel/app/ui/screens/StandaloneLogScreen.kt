@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -135,10 +136,6 @@ fun StandaloneLogScreen(
                     }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "清空", modifier = Modifier.size(18.dp))
                     }
-                    // 单一、专业的复制按钮
-                    IconButton(onClick = { copyLog() }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "复制日志", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    }
                 }
             )
         }
@@ -183,7 +180,8 @@ fun StandaloneLogScreen(
                         Text("暂无日志输出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(
+                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
                             state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -197,34 +195,35 @@ fun StandaloneLogScreen(
                                     }
                                 }
                         ) {
-                        itemsIndexed(filteredLines) { index, line ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "${index + 1}",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = fontSizeSp.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = line,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = fontSizeSp.sp,
-                                    color = when {
-                                        line.contains("SUCCESS") || line.contains("成功") -> Color(0xFF2E7D32)
-                                        line.contains("ERROR") || line.contains("FAIL") || line.contains("失败") -> MaterialTheme.colorScheme.error
-                                        line.contains("WARN") -> Color(0xFFF57C00)
-                                        line.contains("EXEC") -> MaterialTheme.colorScheme.primary
-                                        else -> MaterialTheme.colorScheme.onSurface
-                                    }
-                                )
+                            itemsIndexed(filteredLines) { index, line ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "${index + 1}",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = line,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        color = when {
+                                            line.contains("SUCCESS") || line.contains("成功") -> Color(0xFF2E7D32)
+                                            line.contains("ERROR") || line.contains("FAIL") || line.contains("失败") -> MaterialTheme.colorScheme.error
+                                            line.contains("WARN") -> Color(0xFFF57C00)
+                                            line.contains("EXEC") -> MaterialTheme.colorScheme.primary
+                                            else -> MaterialTheme.colorScheme.onSurface
+                                        }
+                                    )
+                                }
                             }
+                        }
                     }
                 }
             }
         }
     }
-}
 }

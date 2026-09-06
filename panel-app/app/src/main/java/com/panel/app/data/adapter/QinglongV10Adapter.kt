@@ -29,39 +29,72 @@ class QinglongV10Adapter(
     private val api: QinglongV10Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV10Api::class.java)
     private var currentToken: String? = instance.token
 
+    private fun cleanToken(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        var t = raw.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+        while (t.startsWith("Bearer ", ignoreCase = true)) {
+            t = t.substring(7).trim()
+        }
+        return t
+    }
+
     private fun getAuthHeader(): String {
-        val t = currentToken ?: instance.token ?: ""
-        return if (t.startsWith("Bearer ", ignoreCase = true)) t else "Bearer $t"
+        val t = cleanToken(currentToken ?: instance.token)
+        return if (t.isNotBlank()) "Bearer $t" else ""
     }
 
     private suspend fun ensureAuth(): Boolean {
-        if (!currentToken.isNullOrEmpty()) return true
-        if (!instance.token.isNullOrEmpty()) {
-            currentToken = instance.token
+        val t = cleanToken(currentToken ?: instance.token)
+        if (t.isNotBlank()) {
+            currentToken = t
             return true
         }
-        if (!instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()) {
+        val user = instance.username?.trim().orEmpty()
+        val pass = instance.password?.trim().orEmpty()
+        if (user.isNotEmpty() && pass.isNotEmpty()) {
             return authenticate().isSuccess
         }
         return false
     }
 
+    private fun isAuthError(e: Throwable?): Boolean {
+        val msg = e?.message?.lowercase() ?: return false
+        return msg.contains("401") ||
+                msg.contains("jwt") ||
+                msg.contains("unauthorized") ||
+                msg.contains("token") ||
+                msg.contains("鉴权") ||
+                msg.contains("未登录") ||
+                msg.contains("登录已过期") ||
+                msg.contains("凭据已失效")
+    }
+
     private fun toIds(ids: List<String>): List<Long> = ids.mapNotNull { it.toLongOrNull() }
 
     override suspend fun authenticate(): Result<String> {
-        val saved = instance.token
-        if (!saved.isNullOrEmpty()) {
-            currentToken = saved
-            return Result.success(saved)
+        val user = instance.username?.trim().orEmpty()
+        val pass = instance.password?.trim().orEmpty()
+        if (user.isEmpty() || pass.isEmpty()) {
+            val saved = cleanToken(instance.token)
+            if (saved.isNotBlank()) {
+                currentToken = saved
+                return Result.success(saved)
+            }
+            return Result.failure(Exception("请输入青龙面板登录账号与密码"))
         }
+
         val resp = try {
-            api.login(QlV10LoginReq(instance.username ?: "admin", instance.password ?: ""))
+            api.login(QlV10LoginReq(user, pass))
         } catch (e: Exception) {
             return Result.failure(Exception("连接失败: ${e.message ?: "网络超时，请检查面板地址"}"))
         }
         val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
-        val token = envelope.data?.token
-            ?: return Result.failure(Exception("登录失败: 服务端未返回 token"))
+        val rawToken = envelope.data?.token
+            ?: return Result.failure(Exception("登录失败: 服务端未返回 token (${envelope.message ?: ""})"))
+        val token = cleanToken(rawToken)
+        if (token.isBlank()) {
+            return Result.failure(Exception("登录失败: 服务端返回无效的空 token"))
+        }
         currentToken = token
         return Result.success(token)
     }
@@ -69,14 +102,27 @@ class QinglongV10Adapter(
     // ---------------------------------------------------------------- 1. 任务
 
     override suspend fun getTasks(query: String?): Result<List<UnifiedTask>> {
-        ensureAuth()
+        if (!ensureAuth()) return Result.failure(Exception("青龙面板未登录或凭据已失效，请重新登录"))
         return try {
-            api.getCrons(getAuthHeader(), query)
+            val res = api.getCrons(getAuthHeader(), query)
                 .unwrapTo("获取任务列表失败") { env ->
                     parseCronArray(env.data).map { it.toUnifiedTask() }
                 }
+            if (res.isFailure && isAuthError(res.exceptionOrNull())) {
+                // Token 失效，尝试重新登录一次
+                if (!instance.username.isNullOrBlank() && !instance.password.isNullOrBlank()) {
+                    val authRes = authenticate()
+                    if (authRes.isSuccess) {
+                        return api.getCrons(getAuthHeader(), query)
+                            .unwrapTo("获取任务列表失败") { env ->
+                                parseCronArray(env.data).map { it.toUnifiedTask() }
+                            }
+                    }
+                }
+            }
+            res
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception("网络异常: ${e.message ?: "获取任务失败"}"))
         }
     }
 
@@ -97,6 +143,13 @@ class QinglongV10Adapter(
         val running = status == 0
         val queued = status == 3
         val disabled = isDisabled == 1
+        val parsedRunningTime = QinglongApiHelpers.parseSeconds(last_running_time)
+        val parsedExecutionTime = QinglongApiHelpers.parseSeconds(last_execution_time)
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val lastRunTimeStr = QinglongApiHelpers.parseTimestampToMillis(last_execution_time)?.let {
+            sdf.format(java.util.Date(it))
+        }
+
         return UnifiedTask(
             id = cleanId(id),
             name = name.orEmpty(),
@@ -112,8 +165,9 @@ class QinglongV10Adapter(
             isDisabled = disabled,
             isPinned = isPinned == 1,
             labels = labels.orEmpty(),
-            lastRunningTime = last_running_time,
-            lastExecutionTime = last_execution_time,
+            lastRunningTime = parsedRunningTime,
+            lastExecutionTime = parsedExecutionTime,
+            lastRunTime = lastRunTimeStr,
             createdAt = createdAt,
             updatedAt = updatedAt,
             pid = pid
@@ -497,14 +551,33 @@ class QinglongV10Adapter(
 
     override suspend fun getLogDetail(path: String, file: String): Result<String> {
         ensureAuth()
-        return api.getLogDetail(
+        val normalized = file.replace('\\', '/')
+        val finalFile = if (path.isEmpty() && normalized.contains('/')) normalized.substringAfterLast('/') else file
+        val finalPath = if (path.isEmpty() && normalized.contains('/')) normalized.substringBeforeLast('/') else path
+
+        val result = api.getLogDetail(
             auth = getAuthHeader(),
-            file = file,
-            path = path.ifEmpty { null },
+            file = finalFile,
+            path = finalPath.ifEmpty { null },
             tail = true
         ).unwrapTo("读取日志失败") { chunk ->
             chunk.data ?: ""
         }
+
+        if (result.isSuccess && !result.getOrNull().isNullOrBlank()) {
+            return result
+        }
+
+        val numericId = QinglongApiHelpers.toId(finalFile) ?: QinglongApiHelpers.toId(file)
+        if (numericId != null) {
+            val cronLogResult = api.getCronLog(getAuthHeader(), numericId.toString())
+                .unwrapTo("读取任务日志失败") { chunk -> chunk.data ?: "" }
+            if (cronLogResult.isSuccess && !cronLogResult.getOrNull().isNullOrBlank()) {
+                return cronLogResult
+            }
+        }
+
+        return result
     }
 
     suspend fun fetchSystemSettings(): Result<Map<String, String>> =

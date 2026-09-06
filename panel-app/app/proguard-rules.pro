@@ -104,3 +104,7 @@
 
 # Application 类由 @HiltAndroidApp 标记，作为注入根需保留
 -keep class com.panel.app.PanelApp { *; }
+
+# Zstd-JNI 本地代码与类混淆保护
+-keep class com.github.luben.zstd.** { *; }
+-dontwarn com.github.luben.zstd.**

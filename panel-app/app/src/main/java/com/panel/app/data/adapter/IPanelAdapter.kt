@@ -19,6 +19,7 @@ interface IPanelAdapter {
     // 2. 任务 (Tasks / Crons)
     suspend fun getTasks(query: String? = null): Result<List<UnifiedTask>>
     suspend fun createTask(name: String, command: String, schedule: String): Result<Boolean>
+    suspend fun createTask(task: UnifiedTask): Result<Boolean> = createTask(task.name, task.command, task.schedule)
     suspend fun updateTask(task: UnifiedTask): Result<Boolean>
     suspend fun runTask(taskIds: List<String>): Result<Boolean>
     suspend fun stopTask(taskIds: List<String>): Result<Boolean>

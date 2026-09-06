@@ -38,50 +38,76 @@ class QinglongV15Adapter(
     private val api: QinglongV15Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV15Api::class.java)
     private var currentToken: String? = instance.token
 
+    private fun cleanToken(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        var t = raw.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+        while (t.startsWith("Bearer ", ignoreCase = true)) {
+            t = t.substring(7).trim()
+        }
+        return t
+    }
+
     private fun getAuthHeader(): String {
-        val t = currentToken ?: instance.token ?: ""
-        return if (t.startsWith("Bearer ", ignoreCase = true)) t else "Bearer $t"
+        val t = cleanToken(currentToken ?: instance.token)
+        return if (t.isNotBlank()) "Bearer $t" else ""
+    }
+
+    private fun isAuthError(e: Throwable?): Boolean {
+        val msg = e?.message?.lowercase() ?: return false
+        return msg.contains("401") ||
+                msg.contains("jwt") ||
+                msg.contains("unauthorized") ||
+                msg.contains("token") ||
+                msg.contains("鉴权") ||
+                msg.contains("未登录") ||
+                msg.contains("登录已过期") ||
+                msg.contains("凭据已失效")
     }
 
     private suspend fun ensureAuth(): Boolean {
-        if (!currentToken.isNullOrEmpty()) return true
-        if (!instance.token.isNullOrEmpty()) {
-            currentToken = instance.token
+        val t = cleanToken(currentToken ?: instance.token)
+        if (t.isNotBlank()) {
+            currentToken = t
             return true
         }
-        if (!instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()) {
+        val user = instance.username?.trim().orEmpty()
+        val pass = instance.password?.trim().orEmpty()
+        if (user.isNotEmpty() && pass.isNotEmpty()) {
             return authenticate().isSuccess
         }
         return false
     }
 
-
-
     // ---------------------------------------------------------------- 认证
 
     override suspend fun authenticate(): Result<String> {
-        val saved = instance.token
-        if (!saved.isNullOrEmpty()) {
-            currentToken = saved
-            return Result.success(saved)
-        }
-
-        val user = instance.username
-        val pass = instance.password
-        if (!user.isNullOrEmpty() && !pass.isNullOrEmpty()) {
-            val resp = try {
-                api.login(mapOf("username" to user, "password" to pass))
-            } catch (e: Exception) {
-                return Result.failure(Exception("连接异常: ${e.message ?: "无法连接"}"))
+        val user = instance.username?.trim().orEmpty()
+        val pass = instance.password?.trim().orEmpty()
+        if (user.isEmpty() || pass.isEmpty()) {
+            val saved = cleanToken(instance.token)
+            if (saved.isNotBlank()) {
+                currentToken = saved
+                return Result.success(saved)
             }
-            val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
-            val token = envelope.data?.token
-                ?: return Result.failure(Exception("登录失败: 服务端未返回 token"))
-            currentToken = token
-            return Result.success(token)
+            return Result.failure(Exception("请输入青龙面板登录账号与密码"))
         }
 
-        return Result.failure(Exception("请输入面板登录账号与密码"))
+        // 有账号密码时，直接向服务端发起标准密码登录换取合法 JWT
+        val resp = try {
+            api.login(mapOf("username" to user, "password" to pass))
+        } catch (e: Exception) {
+            return Result.failure(Exception("连接失败: ${e.message ?: "无法连接青龙面板"}"))
+        }
+
+        val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
+        val rawToken = envelope.data?.token
+            ?: return Result.failure(Exception("登录失败: 服务端未返回 token (${envelope.message ?: ""})"))
+        val token = cleanToken(rawToken)
+        if (token.isBlank()) {
+            return Result.failure(Exception("登录失败: 服务端返回无效的空 token"))
+        }
+        currentToken = token
+        return Result.success(token)
     }
 
     /** POST /api/user/logout，面板侧吊销该 token */
@@ -94,14 +120,27 @@ class QinglongV15Adapter(
     // ---------------------------------------------------------------- 1. 任务
 
     override suspend fun getTasks(query: String?): Result<List<UnifiedTask>> {
-        ensureAuth()
+        if (!ensureAuth()) return Result.failure(Exception("青龙面板未登录或凭据已失效，请重新登录"))
         return try {
-            api.getCrons(getAuthHeader(), query)
+            val res = api.getCrons(getAuthHeader(), query)
                 .unwrapTo("获取任务列表失败") { env ->
                     parseCronArray(env.data).map { it.toUnifiedTask() }
                 }
+            if (res.isFailure && isAuthError(res.exceptionOrNull())) {
+                // Token 失效，尝试重新登录一次
+                if (!instance.username.isNullOrBlank() && !instance.password.isNullOrBlank()) {
+                    val authRes = authenticate()
+                    if (authRes.isSuccess) {
+                        return api.getCrons(getAuthHeader(), query)
+                            .unwrapTo("获取任务列表失败") { env ->
+                                parseCronArray(env.data).map { it.toUnifiedTask() }
+                            }
+                    }
+                }
+            }
+            res
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception("网络异常: ${e.message ?: "获取任务失败"}"))
         }
     }
 
@@ -134,6 +173,14 @@ class QinglongV15Adapter(
                 }
             } ?: emptyList()
         }.getOrDefault(emptyList())
+
+        val parsedRunningTime = QinglongApiHelpers.parseSeconds(last_running_time)
+        val parsedExecutionTime = QinglongApiHelpers.parseSeconds(last_execution_time)
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val lastRunTimeStr = QinglongApiHelpers.parseTimestampToMillis(last_execution_time)?.let {
+            sdf.format(java.util.Date(it))
+        }
+
         return UnifiedTask(
             id = QinglongApiHelpers.cleanId(id),
             name = name.orEmpty(),
@@ -149,8 +196,9 @@ class QinglongV15Adapter(
             isDisabled = disabled,
             isPinned = isPinned == 1,
             labels = labels.orEmpty(),
-            lastRunningTime = last_running_time,
-            lastExecutionTime = last_execution_time,
+            lastRunningTime = parsedRunningTime,
+            lastExecutionTime = parsedExecutionTime,
+            lastRunTime = lastRunTimeStr,
             extraSchedules = extraSchedules,
             workDir = work_dir,
             allowMultipleInstances = allow_multiple_instances == 1,
@@ -239,9 +287,13 @@ class QinglongV15Adapter(
     override suspend fun getTaskInstances(taskId: String): Result<List<TaskInstanceRecord>> {
         ensureAuth()
         val cronId = QinglongApiHelpers.toId(taskId)?.toString() ?: taskId.substringBefore('.')
-        // SimpleDateFormat 每次局部新建，且整体 try/catch：
-        // 历史日志数组的字段（filename/time）若为 JsonNull，asString/asLong 会抛异常，
-        // 不收敛的话会经 viewModelScope 冒到主线程导致闪退
+        if (cronId.isBlank()) {
+            return try {
+                loadAllCronsInstances()
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
         return try {
             loadTaskInstancesInternal(cronId)
         } catch (e: Exception) {
@@ -249,69 +301,188 @@ class QinglongV15Adapter(
         }
     }
 
+    private suspend fun loadAllCronsInstances(): Result<List<TaskInstanceRecord>> {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val cronsResp = api.getCrons(getAuthHeader(), null).unwrap("获取任务列表失败").getOrNull()
+        val crons = parseCronArray(cronsResp?.data)
+        val records = mutableListOf<TaskInstanceRecord>()
+
+        // 1. 尝试从运行中任务补充实时记录
+        val runningRes = runCatching {
+            api.getDashboardRuntime(getAuthHeader()).unwrap("获取运行态失败").getOrNull()?.data
+        }.getOrNull()
+        val runningArr = runningRes?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("running")?.takeIf { it.isJsonArray }?.asJsonArray
+        runningArr?.forEach { elem ->
+            if (elem.isJsonObject) {
+                val item = elem.asJsonObject
+                val tid = item.strOrNull("id") ?: item.longOrNull("id")?.toString() ?: ""
+                val tname = item.strOrNull("name") ?: "任务 #$tid"
+                val instId = item.strOrNull("instanceId") ?: item.longOrNull("instanceId")?.toString() ?: tid
+                val elapsed = item.longOrNull("elapsed")
+                records.add(
+                    TaskInstanceRecord(
+                        id = instId,
+                        taskId = tid,
+                        taskName = tname,
+                        startTime = "运行中",
+                        endTime = null,
+                        duration = elapsed?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--",
+                        exitCode = 0,
+                        statusText = "运行中",
+                        logPath = item.strOrNull("logPath"),
+                        pid = item.intOrNull("pid")
+                    )
+                )
+            }
+        }
+
+        // 2. 从已有执行记录的任务生成历史记录
+        val executedCrons = crons.filter {
+            it.status == 0 || it.lastExecutionTimeLong > 0
+        }.sortedByDescending { it.lastExecutionTimeLong }
+
+        for (cron in executedCrons.take(40)) {
+            val cid = QinglongApiHelpers.cleanId(cron.id) ?: continue
+            if (records.any { it.id == cid }) continue
+            val timeMs = QinglongApiHelpers.parseTimestampToMillis(cron.last_execution_time)
+            val timeStr = if (timeMs != null && timeMs > 0) {
+                sdf.format(java.util.Date(timeMs))
+            } else "--"
+            val runningSec = QinglongApiHelpers.parseSeconds(cron.last_running_time)
+            records.add(
+                TaskInstanceRecord(
+                    id = cid,
+                    taskId = cid,
+                    taskName = cron.name ?: "任务 #$cid",
+                    startTime = timeStr,
+                    endTime = null,
+                    duration = runningSec?.takeIf { it > 0 }?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--",
+                    exitCode = 0,
+                    statusText = if (cron.status == 0) "运行中" else "已完成",
+                    logPath = null
+                )
+            )
+        }
+        return Result.success(records)
+    }
+
     private suspend fun loadTaskInstancesInternal(cronId: String): Result<List<TaskInstanceRecord>> {
         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
 
+        // 预查该任务元数据（名称与最后运行时长），用于兜底与丰富展示
+        val targetCron = runCatching {
+            val cronsResp = api.getCrons(getAuthHeader(), null).unwrap("获取任务列表失败").getOrNull()
+            parseCronArray(cronsResp?.data).firstOrNull { QinglongApiHelpers.cleanId(it.id) == cronId }
+        }.getOrNull()
+        val cronLastRunningSec = QinglongApiHelpers.parseSeconds(targetCron?.last_running_time)
+        val defaultTaskName = targetCron?.name?.ifBlank { null } ?: "任务 #$cronId"
+
+        var instancesErr: Throwable? = null
         val fromInstances = runCatching {
-            api.getCronInstances(getAuthHeader(), cronId)
-                .unwrap("获取运行实例失败").getOrNull()
-                ?.data.orEmpty()
-                .map { inst ->
-                    TaskInstanceRecord(
-                        id = QinglongApiHelpers.cleanId(inst.id),
-                        startTime = inst.started_at?.takeIf { it > 0 }
-                            ?.let { sdf.format(java.util.Date(it * 1000)) }
-                            ?: inst.created_at ?: "--",
-                        endTime = inst.finished_at?.takeIf { it > 0 }
-                            ?.let { sdf.format(java.util.Date(it * 1000)) }
-                            ?: inst.updated_at,
-                        duration = when {
-                            inst.finished_at != null && inst.started_at != null && inst.finished_at >= inst.started_at ->
-                                QinglongApiHelpers.formatSeconds(inst.finished_at - inst.started_at)
-                            inst.duration != null -> QinglongApiHelpers.formatSeconds(inst.duration)
-                            else -> "--"
-                        },
-                        exitCode = inst.exit_code ?: if (inst.status == 1) 0 else 1,
-                        // InstanceStatus: 0=running, 1=finished, 2=stopped, 3=error
-                        statusText = when (inst.status) {
-                            0 -> "运行中"
-                            1 -> "成功"
-                            2 -> "已停止"
-                            3 -> "失败"
-                            else -> "完成"
-                        },
-                        logPath = inst.log_path,
-                        pid = runCatching { inst.pid?.toInt() }.getOrNull()
-                    )
+            val resp = api.getCronInstances(getAuthHeader(), cronId)
+            val envelope = resp.unwrap("获取运行实例失败").getOrElse {
+                instancesErr = it
+                return@runCatching emptyList()
+            }
+            envelope.data.orEmpty().mapIndexed { index, inst ->
+                val startMs = QinglongApiHelpers.parseTimestampToMillis(inst.started_at)
+                    ?: QinglongApiHelpers.parseTimestampToMillis(inst.created_at)
+                val finishMs = QinglongApiHelpers.parseTimestampToMillis(inst.finished_at)
+                    ?: QinglongApiHelpers.parseTimestampToMillis(inst.updated_at)
+                val directDurationSec = QinglongApiHelpers.parseSeconds(inst.duration)
+
+                val durationSec = when {
+                    directDurationSec != null && directDurationSec > 0 -> {
+                        if (directDurationSec > 100_000L) directDurationSec / 1000L else directDurationSec
+                    }
+                    finishMs != null && startMs != null && finishMs >= startMs -> {
+                        (finishMs - startMs) / 1000L
+                    }
+                    index == 0 && cronLastRunningSec != null && cronLastRunningSec > 0 -> {
+                        cronLastRunningSec
+                    }
+                    else -> null
                 }
+
+                val startTimeStr = startMs?.let { sdf.format(java.util.Date(it)) }
+                    ?: inst.created_at ?: "--"
+                val endTimeStr = finishMs?.let { sdf.format(java.util.Date(it)) }
+                    ?: inst.updated_at
+
+                TaskInstanceRecord(
+                    id = QinglongApiHelpers.cleanId(inst.id),
+                    taskId = cronId,
+                    taskName = defaultTaskName,
+                    startTime = startTimeStr,
+                    endTime = endTimeStr,
+                    duration = durationSec?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--",
+                    exitCode = inst.exit_code ?: if (inst.status == 1) 0 else 1,
+                    // InstanceStatus: 0=running, 1=finished, 2=stopped, 3=error
+                    statusText = when (inst.status) {
+                        0 -> "运行中"
+                        1 -> "成功"
+                        2 -> "已停止"
+                        3 -> "失败"
+                        else -> "完成"
+                    },
+                    logPath = inst.log_path,
+                    pid = runCatching { inst.pid?.toInt() }.getOrNull()
+                )
+            }
         }.getOrNull().orEmpty()
 
         if (fromInstances.isNotEmpty()) return Result.success(fromInstances)
 
-        // 旧版本没有 running_instance 表，退回历史日志文件列表
+        // 旧版本或无 running_instance 记录，退回历史日志文件列表
+        var historyErr: Throwable? = null
         val history = runCatching {
-            api.getCronHistoryLogs(getAuthHeader(), cronId)
-                .unwrap("获取历史日志失败").getOrNull()?.data
+            val resp = api.getCronHistoryLogs(getAuthHeader(), cronId)
+            val envelope = resp.unwrap("获取历史日志失败").getOrElse {
+                historyErr = it
+                return@runCatching null
+            }
+            val historyList = mutableListOf<TaskInstanceRecord>()
+            envelope.data
                 ?.takeIf { it.isJsonArray }?.asJsonArray
-                ?.mapNotNull { elem ->
-                    if (!elem.isJsonObject) return@mapNotNull null
+                ?.forEach { elem ->
+                    if (!elem.isJsonObject) return@forEach
                     val obj = elem.asJsonObject
-                    val filename = obj.strOrNull("filename") ?: return@mapNotNull null
+                    val filename = obj.strOrNull("filename") ?: return@forEach
                     val directory = obj.strOrNull("directory").orEmpty()
                     val time = obj.longOrNull("time") ?: 0L
-                    TaskInstanceRecord(
-                        id = filename,
-                        startTime = if (time > 0) sdf.format(java.util.Date(time)) else filename.removeSuffix(".log"),
-                        endTime = null,
-                        duration = "--",
-                        exitCode = 0,
-                        statusText = "已完成",
-                        logPath = if (directory.isNotEmpty()) "$directory/$filename" else filename
+                    val directDuration = QinglongApiHelpers.parseSeconds(obj.get("duration"))
+                        ?: QinglongApiHelpers.parseSeconds(obj.get("last_running_time"))
+                    val isFirstRecord = historyList.isEmpty() // 第一条为最新执行记录
+                    val recDuration = when {
+                        directDuration != null && directDuration > 0 -> QinglongApiHelpers.formatSeconds(directDuration)
+                        isFirstRecord && cronLastRunningSec != null && cronLastRunningSec > 0 -> QinglongApiHelpers.formatSeconds(cronLastRunningSec)
+                        else -> "--"
+                    }
+                    historyList.add(
+                        TaskInstanceRecord(
+                            id = filename,
+                            taskId = cronId,
+                            taskName = directory.ifEmpty { defaultTaskName },
+                            startTime = if (time > 0) sdf.format(java.util.Date(time)) else filename.removeSuffix(".log"),
+                            endTime = null,
+                            duration = recDuration,
+                            exitCode = 0,
+                            statusText = "已完成",
+                            logPath = if (directory.isNotEmpty()) "$directory/$filename" else filename
+                        )
                     )
                 }
+            historyList
         }.getOrNull()
 
-        return Result.success(history ?: emptyList())
+        if (history != null) {
+            return Result.success(history)
+        }
+        if (instancesErr != null && historyErr != null) {
+            return Result.failure(instancesErr ?: historyErr ?: Exception("获取历史日志失败"))
+        }
+        return Result.success(emptyList())
     }
 
     override suspend fun getTaskLog(taskNameOrId: String): Result<String> {
@@ -977,12 +1148,13 @@ class QinglongV15Adapter(
      *   - 使用 callbackFlow + try/catch 保证异常不泄漏到收集器
      */
     override fun streamLog(logId: String): Flow<String> = callbackFlow {
+        val cronId = QinglongApiHelpers.toId(logId)?.toString() ?: logId.substringBefore('.')
         var offset: Long? = null
         var accumulated = ""
         val ctx = currentCoroutineContext()
         val startAt = System.currentTimeMillis()
-        // 自适应退避：有增量回到 2s，空转逐步拉长到 10s，避免长任务期间高频空刷服务端
-        val backoffSteps = longArrayOf(2000L, 3000L, 5000L, 8000L, 10000L)
+        // 自适应退避：有增量回到 1.5s，空转逐步拉长到 5s，平稳轮询服务端
+        val backoffSteps = longArrayOf(1500L, 2000L, 3000L, 5000L)
         var idleStep = 0
         try {
             while (ctx.isActive) {
@@ -993,7 +1165,7 @@ class QinglongV15Adapter(
                 }
                 val isFirst = offset == null
                 val res = api.getCronLog(
-                    getAuthHeader(), logId,
+                    getAuthHeader(), cronId,
                     offset = offset,
                     limit = 256 * 1024,
                     tail = isFirst
@@ -1006,10 +1178,17 @@ class QinglongV15Adapter(
                 val newChunk = chunk?.data?.takeIf { it.isNotEmpty() } ?: ""
                 // 与前端一致：首次替换，后续追加
                 accumulated = if (isFirst) newChunk else accumulated + newChunk
-                if (accumulated.isNotEmpty()) trySend(accumulated)
-                val stillRunning = chunk?.logStatus == "running"
-                if (!stillRunning) break
-                offset = chunk.nextOffset
+                if (accumulated.isNotEmpty()) {
+                    trySend(accumulated)
+                } else if (isFirst) {
+                    trySend("暂无运行日志输出")
+                }
+                val stillRunning = chunk?.logStatus == "running" || chunk?.logStatus == "queued"
+                if (!stillRunning) {
+                    // 非运行中状态，如果是首次获取或已读取完成则退出
+                    break
+                }
+                offset = chunk.nextOffset ?: offset
                 idleStep = if (newChunk.isNotEmpty()) 0 else minOf(idleStep + 1, backoffSteps.lastIndex)
                 delay(backoffSteps[idleStep])
             }
@@ -1146,12 +1325,33 @@ class QinglongV15Adapter(
 
     override suspend fun getLogDetail(path: String, file: String): Result<String> {
         ensureAuth()
-        return api.getLogDetail(
+        val normalized = file.replace('\\', '/')
+        val finalFile = if (path.isEmpty() && normalized.contains('/')) normalized.substringAfterLast('/') else file
+        val finalPath = if (path.isEmpty() && normalized.contains('/')) normalized.substringBeforeLast('/') else path
+
+        // 尝试通过 /api/logs/detail 获取具体文件日志
+        val result = api.getLogDetail(
             auth = getAuthHeader(),
-            file = file,
-            path = path.ifEmpty { null },
+            file = finalFile,
+            path = finalPath.ifEmpty { null },
             tail = true
         ).unwrapTo("读取日志失败") { formatLogChunk(it) }
+
+        if (result.isSuccess && !result.getOrNull().isNullOrBlank()) {
+            return result
+        }
+
+        // 兜底：如果传入的是纯数字 ID（如任务 ID 或历史实例 ID），尝试通过 /api/crons/{id}/log 获取
+        val numericId = QinglongApiHelpers.toId(finalFile) ?: QinglongApiHelpers.toId(file)
+        if (numericId != null) {
+            val cronLogResult = api.getCronLog(getAuthHeader(), numericId.toString(), tail = true)
+                .unwrapTo("读取任务日志失败") { formatLogChunk(it) }
+            if (cronLogResult.isSuccess && !cronLogResult.getOrNull().isNullOrBlank()) {
+                return cronLogResult
+            }
+        }
+
+        return result
     }
 
     // ---------------------------------------------------------------- 9.5 仪表盘
@@ -1258,14 +1458,14 @@ class QinglongV15Adapter(
                 )
             }.ifEmpty {
                 if (fallbackCrons.isNotEmpty()) {
-                    fallbackCrons.filter { (it.last_execution_time ?: 0) > 0 }
-                        .sortedByDescending { it.last_execution_time ?: 0 }
+                    fallbackCrons.filter { it.lastExecutionTimeLong > 0 }
+                        .sortedByDescending { it.lastExecutionTimeLong }
                         .take(5)
                         .mapIndexed { idx, c ->
                             TaskRank(
                                 rank = idx + 1,
                                 name = c.name ?: "未命名任务",
-                                value = if ((c.last_running_time ?: 0) > 0) "${c.last_running_time}s" else "已调度",
+                                value = if (c.lastRunningTimeLong > 0) "${c.lastRunningTimeLong}s" else "已调度",
                                 detail = "规则: ${c.schedule ?: "-"}"
                             )
                         }

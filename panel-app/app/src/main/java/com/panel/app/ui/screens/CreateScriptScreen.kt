@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.viewmodel.MainViewModel
+import com.panel.app.util.CronExpressionDescriber
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -311,6 +312,26 @@ console.log("Hello from Panel Hub!");
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        val cronDesc = remember(cronSchedule) {
+                            CronExpressionDescriber.describe(cronSchedule)
+                        }
+                        if (cronDesc.isNotBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
 
                         // 快捷 Cron 推荐标签
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

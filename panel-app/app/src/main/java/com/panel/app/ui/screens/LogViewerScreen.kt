@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -49,24 +50,29 @@ fun LogViewerScreen(
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    var logContent by remember { mutableStateOf(initialContent) }
-    var isLoading by remember { mutableStateOf(initialContent.isBlank()) }
+    val cachedLog = remember(taskId, logPath) {
+        if (logPath.isNotBlank()) viewModel.getLogFromCache(logPath)
+        else if (taskId.isNotBlank()) viewModel.getLogFromCache(taskId)
+        else null
+    }
+    var logContent by remember { mutableStateOf(if (initialContent.isNotBlank()) initialContent else (cachedLog ?: "")) }
+    var isLoading by remember { mutableStateOf(initialContent.isBlank() && cachedLog.isNullOrBlank()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchOpen by remember { mutableStateOf(false) }
     var fontSizeSp by remember { mutableFloatStateOf(11f) }
 
     fun fetchLog() {
         isLoading = true
-        if (taskId.isNotBlank()) {
-            viewModel.getTaskLog(taskId) { content ->
-                logContent = content
-                isLoading = false
-            }
-        } else if (logPath.isNotBlank()) {
+        if (logPath.isNotBlank()) {
             val normalized = logPath.replace('\\', '/')
             val fileName = normalized.substringAfterLast('/')
             val dirPath = if (normalized.contains('/')) normalized.substringBeforeLast('/') else ""
-            viewModel.loadServerLogDetail(dirPath, fileName) { content ->
+            viewModel.loadServerLogDetail(dirPath, fileName, fallbackTaskId = taskId) { content ->
+                logContent = content
+                isLoading = false
+            }
+        } else if (taskId.isNotBlank()) {
+            viewModel.getTaskLog(taskId) { content ->
                 logContent = content
                 isLoading = false
             }
@@ -81,32 +87,40 @@ fun LogViewerScreen(
         }
     }
 
-    // 跟随模式：taskId 存在时默认开启，流结束后自动停止；用户可手动切换
-    var isFollowing by remember { mutableStateOf(taskId.isNotBlank()) }
+    // 跟随模式：仅当任务正在运行时默认开启，流结束后自动停止；用户可手动切换
+    var isFollowing by remember { mutableStateOf(taskRunning && (taskId.isNotBlank() || logPath.isNotBlank())) }
     var isStreamActive by remember { mutableStateOf(false) }
+    val streamTargetId = if (taskId.isNotBlank()) taskId else if (taskRunning) logPath else ""
 
     // 注意：isStreamActive 不能放进 key —— 在 effect 内部写它会使 key 立即变化，
     // 导致协程被取消后重新执行一遍，日志流被重复启动。
-    LaunchedEffect(isFollowing, taskId) {
-        if (!isFollowing || taskId.isBlank()) {
+    LaunchedEffect(isFollowing, streamTargetId) {
+        if (!isFollowing || streamTargetId.isBlank()) {
             isStreamActive = false
             return@LaunchedEffect
         }
         isStreamActive = true
         try {
-            viewModel.streamTaskLog(taskId)
+            viewModel.streamTaskLog(streamTargetId)
                 .catch { e ->
-                    logContent = "日志流中断: ${e.message}"
+                    if (e !is kotlinx.coroutines.CancellationException) {
+                        if (logContent.isBlank() && isLoading) {
+                            logContent = "日志流已结束或中断: ${e.message ?: ""}"
+                        }
+                    }
                 }
                 .collect { latest ->
                     // 与前端一致：超 1MB 时截取末尾部分，避免内存溢出
-                    logContent = if (latest.length > MAX_LOG_CHARS) latest.takeLast(MAX_LOG_CHARS) else latest
+                    if (latest.isNotBlank()) {
+                        logContent = if (latest.length > MAX_LOG_CHARS) latest.takeLast(MAX_LOG_CHARS) else latest
+                    }
                     isLoading = false
                 }
         } finally {
             // 流结束 = 任务已结束，退出跟随
             isStreamActive = false
             isFollowing = false
+            isLoading = false
         }
     }
 
@@ -184,8 +198,8 @@ fun LogViewerScreen(
                             if (!isSearchOpen) searchQuery = ""
                         }
                     )
-                    // 实时跟随指示器（仅 taskId 有效时显示，非按钮）
-                    if (taskId.isNotBlank()) {
+                    // 实时跟随指示器与刷新按钮
+                    if (taskId.isNotBlank() || logPath.isNotBlank()) {
                         if (isFollowing && isStreamActive) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -196,7 +210,7 @@ fun LogViewerScreen(
                                 Icon(Icons.Default.PlayArrow, contentDescription = "实时跟随中", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                             }
                         } else if (!isFollowing) {
-                            // 任务已结束，显示手动刷新按钮
+                            // 任务已结束或查看历史日志，显示手动刷新按钮
                             ActionButtonSmall(
                                 icon = Icons.Default.Refresh,
                                 label = "刷新",
@@ -205,18 +219,6 @@ fun LogViewerScreen(
                             )
                         }
                     }
-                    // 复制日志
-                    ActionButtonSmall(
-                        icon = Icons.Default.ContentCopy,
-                        label = "复制",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        onClick = {
-                            if (logContent.isNotBlank()) {
-                                clipboardManager.setText(AnnotatedString(logContent))
-                                Toast.makeText(context, "日志全文已复制", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    )
                 }
             )
         }
@@ -251,22 +253,33 @@ fun LogViewerScreen(
                 }
 
                 if (isLoading) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.height(12.dp))
-                        Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(12.dp))
+                            Text("正在拉取终端运行日志...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        }
                     }
                 } else if (lines.isEmpty()) {
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         Text("暂无日志输出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     }
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
+                    SelectionContainer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
                             state = listState,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                         ) {
@@ -308,6 +321,7 @@ fun LogViewerScreen(
                                 }
                             }
                         }
+                    }
                 }
             }
 

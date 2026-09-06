@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.ScriptNode
@@ -126,7 +127,7 @@ fun ScriptsScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     items(visibleFlatNodes, key = { it.node.path }) { flatNode ->
@@ -450,7 +451,7 @@ fun FlatScriptRowItem(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (level * 16 + 8).dp, top = 6.dp, bottom = 6.dp, end = 8.dp),
+                    .padding(start = (level * 12 + 8).dp, top = 2.dp, bottom = 2.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -471,14 +472,16 @@ fun FlatScriptRowItem(
                         },
                         contentDescription = null,
                         tint = if (node.isDir) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = node.name,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontFamily = if (node.isDir) FontFamily.Default else FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (node.size != null && !node.isDir) {
                         Spacer(Modifier.width(6.dp))
@@ -490,21 +493,31 @@ fun FlatScriptRowItem(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(0.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (!node.isDir) {
-                        ActionButtonSmall(
-                            icon = Icons.Default.AddAlarm,
-                            label = "定时",
-                            tint = MaterialTheme.colorScheme.secondary,
-                            onClick = { onAddToTask(node) }
+                        IconButton(
+                            onClick = { onAddToTask(node) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AddAlarm,
+                                contentDescription = "定时",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { onRename(node) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DriveFileRenameOutline,
+                            contentDescription = "重命名",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    ActionButtonSmall(
-                        icon = Icons.Default.DriveFileRenameOutline,
-                        label = "重命名",
-                        tint = MaterialTheme.colorScheme.primary,
-                        onClick = { onRename(node) }
-                    )
                 }
             }
         }
@@ -545,14 +558,15 @@ fun filterScriptTree(nodes: List<ScriptNode>, query: String): List<ScriptNode> {
     return result
 }
 
-// 提取脚本注释中嵌入的 Cron 与名称
+// 提取脚本注释中嵌入的 Cron 与名称 (仅扫描文件头前 8KB，避免大文件扫描造成卡顿或 OOM)
 fun parseScriptCommentInfo(content: String, fileName: String): Pair<String, String> {
     val defaultName = fileName.substringBeforeLast(".")
+    val header = if (content.length > 8192) content.substring(0, 8192) else content
     val cronRegex = Regex("""(?:cron|\bcronexp)\s*[:=]?\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     val envRegex = Regex("""new\s+Env\s*\(\s*["']([^"']+)["']\s*\)""", RegexOption.IGNORE_CASE)
     
-    val parsedCron = cronRegex.find(content)?.groupValues?.get(1) ?: "0 8 * * *"
-    val parsedName = envRegex.find(content)?.groupValues?.get(1) ?: defaultName
+    val parsedCron = cronRegex.find(header)?.groupValues?.get(1) ?: "0 8 * * *"
+    val parsedName = envRegex.find(header)?.groupValues?.get(1) ?: defaultName
     return Pair(parsedName, parsedCron)
 }
 

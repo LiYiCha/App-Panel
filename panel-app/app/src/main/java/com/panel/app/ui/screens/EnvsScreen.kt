@@ -3,12 +3,15 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -60,13 +63,10 @@ fun EnvsScreen(
     var deletingEnv by remember { mutableStateOf<UnifiedEnv?>(null) }
     var exportingEnvIds by remember { mutableStateOf<List<String>?>(null) }
     var sortedEnvs by remember(envList) { mutableStateOf(envList.toList()) }
-    // 共享拖拽状态对象，确保跨卡片手势识别稳定
-    val dragState = remember {
-        object {
-            var sourceIndex: Int = -1
-            var targetIndex: Int = -1
-        }
-    }
+    val lazyListState = rememberLazyListState()
+    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var draggingOffset by remember { mutableFloatStateOf(0f) }
+    var initialIndex by remember { mutableIntStateOf(-1) }
 
     val fetchScope = rememberCoroutineScope()
 
@@ -179,14 +179,79 @@ fun EnvsScreen(
                     }
                 } else {
                     LazyColumn(
+                        state = lazyListState,
                         verticalArrangement = Arrangement.spacedBy(3.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
                         modifier = Modifier.fillMaxHeight()
                     ) {
                         items(sortedEnvs, key = { it.id }) { env ->
                             val currentIndex = sortedEnvs.indexOf(env)
+                            val isThisDragging = draggingIndex == currentIndex
+
+                            val handleModifier = if (!uiState.isEnvBatchMode) {
+                                Modifier.pointerInput(Unit) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            initialIndex = currentIndex
+                                            draggingIndex = currentIndex
+                                            draggingOffset = 0f
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            draggingOffset += dragAmount.y
+                                            val currentIdx = draggingIndex ?: return@detectDragGesturesAfterLongPress
+                                            val itemHeight = lazyListState.layoutInfo.visibleItemsInfo
+                                                .firstOrNull { it.index == currentIdx }?.size?.toFloat() ?: 160f
+                                            if (draggingOffset > itemHeight * 0.65f && currentIdx < sortedEnvs.lastIndex) {
+                                                val nextIdx = currentIdx + 1
+                                                val mutable = sortedEnvs.toMutableList()
+                                                java.util.Collections.swap(mutable, currentIdx, nextIdx)
+                                                sortedEnvs = mutable
+                                                draggingIndex = nextIdx
+                                                draggingOffset -= itemHeight
+                                            } else if (draggingOffset < -itemHeight * 0.65f && currentIdx > 0) {
+                                                val prevIdx = currentIdx - 1
+                                                val mutable = sortedEnvs.toMutableList()
+                                                java.util.Collections.swap(mutable, currentIdx, prevIdx)
+                                                sortedEnvs = mutable
+                                                draggingIndex = prevIdx
+                                                draggingOffset += itemHeight
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val from = initialIndex
+                                            val to = draggingIndex
+                                            draggingIndex = null
+                                            draggingOffset = 0f
+                                            initialIndex = -1
+                                            if (from != -1 && to != null && from != to) {
+                                                val movedEnv = sortedEnvs.getOrNull(to)
+                                                if (movedEnv != null) {
+                                                    viewModel.moveEnvToServer(movedEnv.id, from, to)
+                                                }
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            draggingIndex = null
+                                            draggingOffset = 0f
+                                            initialIndex = -1
+                                        }
+                                    )
+                                }
+                            } else Modifier
+
                             EnvCard(
                                 env = env,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .zIndex(if (isThisDragging) 10f else 0f)
+                                    .graphicsLayer {
+                                        if (isThisDragging) {
+                                            translationY = draggingOffset
+                                            shadowElevation = 12f
+                                        }
+                                    },
+                                dragModifier = handleModifier,
                                 isBatchMode = uiState.isEnvBatchMode,
                                 onSelect = { viewModel.toggleEnvSelection(env.id) },
                                 onToggleEnable = { newStatus -> viewModel.toggleEnv(env.id, newStatus) },
@@ -198,27 +263,7 @@ fun EnvsScreen(
                                 onSubEdit = { subItemEditingEnv = env },
                                 onPin = { viewModel.pinEnv(env.id, !env.isPinned) },
                                 onDelete = { deletingEnv = env },
-                                onDragStart = {
-                                    dragState.sourceIndex = currentIndex
-                                    dragState.targetIndex = currentIndex
-                                },
-                                onDragOver = {
-                                    dragState.targetIndex = currentIndex
-                                },
-                                onDragEnd = {
-                                    val fromIdx = dragState.sourceIndex
-                                    val toIdx = dragState.targetIndex
-                                    dragState.sourceIndex = -1
-                                    dragState.targetIndex = -1
-                                    if (fromIdx != toIdx && fromIdx != -1 && toIdx != -1) {
-                                        sortedEnvs = sortedEnvs.toMutableList().apply {
-                                            add(toIdx, removeAt(fromIdx))
-                                        }
-                                        // 同步到服务端
-                                        viewModel.moveEnvToServer(env.id, fromIdx, toIdx)
-                                    }
-                                },
-                                isDragging = dragState.sourceIndex == currentIndex
+                                isDragging = isThisDragging
                             )
                         }
                     }
@@ -373,6 +418,8 @@ fun EnvsScreen(
 @Composable
 fun EnvCard(
     env: UnifiedEnv,
+    modifier: Modifier = Modifier,
+    dragModifier: Modifier = Modifier,
     isBatchMode: Boolean = false,
     onSelect: () -> Unit = {},
     onToggleEnable: (Boolean) -> Unit,
@@ -381,14 +428,10 @@ fun EnvCard(
     onSubEdit: () -> Unit,
     onPin: () -> Unit = {},
     onDelete: () -> Unit,
-    onDragStart: () -> Unit = {},
-    onDragOver: () -> Unit = {},
-    onDragEnd: () -> Unit = {},
     isDragging: Boolean = false
 ) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .border(
                 width = if (isDragging) 2.dp else 0.8.dp,
                 color = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -403,18 +446,11 @@ fun EnvCard(
                 .padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 拖拽把手：使用垂直拖拽，和列表排序方向一致。
+            // 拖拽把手：长按拖拽排序
             Box(
                 modifier = Modifier
                     .size(36.dp)
-                    .pointerInput(isBatchMode) {
-                        if (isBatchMode) return@pointerInput
-                        detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDrag = { _, _ -> onDragOver() },
-                            onDragEnd = { onDragEnd() }
-                        )
-                    },
+                    .then(dragModifier),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

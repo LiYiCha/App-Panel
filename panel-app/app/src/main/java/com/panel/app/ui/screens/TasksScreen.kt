@@ -1,5 +1,6 @@
 package com.panel.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -30,10 +31,23 @@ import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import com.panel.app.data.adapter.QinglongApiHelpers
+import androidx.compose.foundation.shape.CircleShape
+import com.panel.app.data.model.ScriptNode
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.data.model.extractScriptFiles
-import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
+
+enum class TaskSortType(val label: String) {
+    DEFAULT("默认排序"),
+    NAME_ASC("名称 A-Z"),
+    NAME_DESC("名称 Z-A"),
+    NEXT_RUN("下次运行"),
+    LAST_RUN("上次运行"),
+    STATUS("运行状态")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,38 +63,60 @@ fun TasksScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("all") }
+    var sortType by remember { mutableStateOf(TaskSortType.DEFAULT) }
+    var localShowCreateDialog by remember { mutableStateOf(false) }
     var editingTask by remember { mutableStateOf<UnifiedTask?>(null) }
     var deletingTask by remember { mutableStateOf<UnifiedTask?>(null) }
 
-    // 子Tab自动映射到筛选条件
-    LaunchedEffect(currentSubTab) {
-        selectedFilter = when (currentSubTab) {
-            1 -> "running"
-            2 -> "disabled"
-            else -> "all"
-        }
+    val scriptSizeMap = remember(uiState.scriptTree) {
+        buildScriptSizeMap(uiState.scriptTree)
     }
 
-    val filteredTasks = remember(searchQuery, selectedFilter, uiState.tasks) {
-        val filtered = uiState.tasks.filter { task ->
-            val matchFilter = when (selectedFilter) {
-                "running" -> task.isRunning
-                "enabled" -> !task.isDisabled
-                "disabled" -> task.isDisabled
-                else -> true
-            }
-            val matchSearch = if (searchQuery.isEmpty()) true else {
+    val filteredTasks = remember(searchQuery, selectedFilter, sortType, uiState.tasks) {
+        val bySearch = if (searchQuery.isEmpty()) {
+            uiState.tasks
+        } else {
+            uiState.tasks.filter { task ->
                 task.name.contains(searchQuery, ignoreCase = true) ||
                         task.command.contains(searchQuery, ignoreCase = true) ||
                         task.schedule.contains(searchQuery, ignoreCase = true)
             }
-            matchFilter && matchSearch
         }
-        filtered.sortedWith(
-            compareByDescending<UnifiedTask> { it.isPinned }
-                .thenBy { it.isDisabled }
-                .thenBy { it.name }
-        )
+        val byFilter = when (selectedFilter) {
+            "running" -> bySearch.filter { it.isRunning }
+            "enabled" -> bySearch.filter { !it.isDisabled }
+            "disabled" -> bySearch.filter { it.isDisabled }
+            else -> bySearch
+        }
+        when (sortType) {
+            TaskSortType.DEFAULT -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenBy { it.isDisabled }
+                    .thenBy { it.name }
+            )
+            TaskSortType.NAME_ASC -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenBy { it.name.lowercase() }
+            )
+            TaskSortType.NAME_DESC -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.name.lowercase() }
+            )
+            TaskSortType.NEXT_RUN -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenBy { it.nextRunTime.orEmpty().ifEmpty { "9999" } }
+            )
+            TaskSortType.LAST_RUN -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.lastExecutionTime ?: 0L }
+            )
+            TaskSortType.STATUS -> byFilter.sortedWith(
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
+                    .thenBy { it.isDisabled }
+                    .thenBy { it.name }
+            )
+        }
     }
 
     val selectedTasks = remember(uiState.tasks) { uiState.tasks.filter { it.selected } }
@@ -111,29 +147,266 @@ fun TasksScreen(
             singleLine = true
         )
 
-        // 3. 任务状态筛选标签与批量模式入口
+        // 3. 任务状态筛选与效率工具栏（集成交互式状态药丸与排序/批量/新建）
+        var showSortMenu by remember { mutableStateOf(false) }
+
+        val totalCount = uiState.tasks.size
+        val runningCount = uiState.tasks.count { it.isRunning }
+        val enabledCount = uiState.tasks.count { !it.isDisabled }
+        val disabledCount = uiState.tasks.count { it.isDisabled }
+
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
+            // 左侧：状态筛选药丸（可点击快速筛选，同时显示实时统计与动态指示）
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                val filters = listOf(
-                    "all" to "全部 (${uiState.tasks.size})",
-                    "running" to "运行中 (${uiState.tasks.count { it.isRunning }})",
-                    "enabled" to "已启用 (${uiState.tasks.count { !it.isDisabled }})",
-                    "disabled" to "已禁用 (${uiState.tasks.count { it.isDisabled }})"
-                )
-                items(filters) { (key, label) ->
-                    FilterChip(
-                        selected = selectedFilter == key,
-                        onClick = { selectedFilter = key },
-                        label = { Text(label, fontSize = 10.sp) },
-                        modifier = Modifier.height(30.dp)
+                // 全部
+                val isAllSelected = selectedFilter == "all"
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isAllSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = if (isAllSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+                    modifier = Modifier.clickable { selectedFilter = "all" }
+                ) {
+                    Text(
+                        text = "全部 $totalCount",
+                        fontSize = 11.sp,
+                        fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isAllSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
                     )
+                }
+
+                // 运行中
+                val isRunningSelected = selectedFilter == "running"
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                val pulseAlpha by infiniteTransition.animateFloat(
+                    initialValue = 0.4f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(800),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "pulseAlpha"
+                )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = when {
+                        isRunningSelected -> Color(0xFF10B981).copy(alpha = 0.25f)
+                        runningCount > 0 -> Color(0xFF10B981).copy(alpha = 0.12f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    },
+                    border = when {
+                        isRunningSelected -> BorderStroke(1.dp, Color(0xFF10B981))
+                        runningCount > 0 -> BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+                        else -> null
+                    },
+                    modifier = Modifier.clickable { selectedFilter = "running" }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (runningCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .background(
+                                        color = Color(0xFF10B981).copy(alpha = pulseAlpha),
+                                        shape = CircleShape
+                                    )
+                            )
+                        }
+                        Text(
+                            text = "运行中 $runningCount",
+                            fontSize = 11.sp,
+                            fontWeight = if (isRunningSelected || runningCount > 0) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isRunningSelected || runningCount > 0) Color(0xFF059669) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // 已启用
+                val isEnabledSelected = selectedFilter == "enabled"
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isEnabledSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = if (isEnabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+                    modifier = Modifier.clickable { selectedFilter = "enabled" }
+                ) {
+                    Text(
+                        text = "已启用 $enabledCount",
+                        fontSize = 11.sp,
+                        fontWeight = if (isEnabledSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isEnabledSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                    )
+                }
+
+                // 已禁用
+                val isDisabledSelected = selectedFilter == "disabled"
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isDisabledSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = if (isDisabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)) else null,
+                    modifier = Modifier.clickable { selectedFilter = "disabled" }
+                ) {
+                    Text(
+                        text = "已禁用 $disabledCount",
+                        fontSize = 11.sp,
+                        fontWeight = if (isDisabledSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isDisabledSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(6.dp))
+
+            // 右侧：效率工具栏 (多维排序 / 批量模式 / 快捷新建)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                // 排序下拉菜单
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (sortType != TaskSortType.DEFAULT)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        else
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        border = if (sortType != TaskSortType.DEFAULT)
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                        else null,
+                        modifier = Modifier.clickable { showSortMenu = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SwapVert,
+                                contentDescription = "排序",
+                                modifier = Modifier.size(13.dp),
+                                tint = if (sortType != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = sortType.label,
+                                fontSize = 11.sp,
+                                fontWeight = if (sortType != TaskSortType.DEFAULT) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (sortType != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showSortMenu,
+                        onDismissRequest = { showSortMenu = false }
+                    ) {
+                        TaskSortType.entries.forEach { type ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        type.label,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (sortType == type) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (sortType == type) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                leadingIcon = {
+                                    if (sortType == type) {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        Spacer(Modifier.size(16.dp))
+                                    }
+                                },
+                                onClick = {
+                                    sortType = type
+                                    showSortMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 批量模式切换
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (uiState.isTaskBatchMode)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                    else
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    border = if (uiState.isTaskBatchMode)
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                    else null,
+                    modifier = Modifier.clickable {
+                        viewModel.setTaskBatchMode(!uiState.isTaskBatchMode)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Checklist,
+                            contentDescription = "批量操作",
+                            modifier = Modifier.size(13.dp),
+                            tint = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (uiState.isTaskBatchMode) "退出" else "批量",
+                            fontSize = 11.sp,
+                            fontWeight = if (uiState.isTaskBatchMode) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // 快捷新建按钮
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        localShowCreateDialog = true
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "新建任务",
+                            modifier = Modifier.size(13.dp),
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Text(
+                            text = "新建",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                 }
             }
         }
@@ -220,8 +493,12 @@ fun TasksScreen(
                         contentPadding = PaddingValues(bottom = 16.dp)
                     ) {
                         items(filteredTasks, key = { it.id }) { task ->
+                            val scriptSize = remember(task.command, scriptSizeMap) {
+                                findScriptSizeForCommand(task.command, scriptSizeMap)
+                            }
                             TaskCard(
                                 task = task,
+                                scriptSize = scriptSize,
                                 isBatchMode = uiState.isTaskBatchMode,
                                 onSelect = { viewModel.toggleTaskSelection(task.id) },
                                 onClick = { onOpenTaskDetail(task.id) },
@@ -245,13 +522,17 @@ fun TasksScreen(
         }
     }
 
-    if (showCreateDialog) {
+    if (showCreateDialog || localShowCreateDialog) {
         CreateTaskDialog(
             scriptFiles = uiState.scriptTree.extractScriptFiles(),
-            onDismiss = onDismissCreateDialog,
-            onConfirm = { name, cmd, cron ->
-                viewModel.createTask(name, cmd, cron)
+            onDismiss = {
                 onDismissCreateDialog()
+                localShowCreateDialog = false
+            },
+            onConfirm = { newTask ->
+                viewModel.createTask(newTask)
+                onDismissCreateDialog()
+                localShowCreateDialog = false
             }
         )
     }
@@ -293,6 +574,7 @@ fun TasksScreen(
 @Composable
 fun TaskCard(
     task: UnifiedTask,
+    scriptSize: String? = null,
     isBatchMode: Boolean = false,
     onSelect: () -> Unit = {},
     onClick: () -> Unit,
@@ -326,7 +608,7 @@ fun TaskCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
                 if (isBatchMode) {
@@ -369,10 +651,9 @@ fun TaskCard(
                             StateBadge(state)
                         }
                         if (!isBatchMode) {
-                            // M3 要求触控目标至少 48dp；视觉尺寸由 Switch 内部控制
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(36.dp, 22.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -382,7 +663,7 @@ fun TaskCard(
                                 Switch(
                                     checked = !task.isDisabled,
                                     onCheckedChange = onToggle,
-                                    modifier = Modifier.scale(0.75f)
+                                    modifier = Modifier.scale(0.68f)
                                 )
                             }
                         }
@@ -394,80 +675,134 @@ fun TaskCard(
                         shape = RoundedCornerShape(4.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = task.command,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
-                        )
-                    }
-
-                    // cron + 操作按钮行
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        val cronDesc = remember(task.schedule) {
-                            com.panel.app.util.CronExpressionDescriber.describe(task.schedule)
-                        }
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.weight(1f, fill = false)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.Schedule,
-                                contentDescription = null,
-                                modifier = Modifier.size(10.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
-                            )
                             Text(
-                                text = if (cronDesc.isNotEmpty()) "${task.schedule} ($cronDesc)" else task.schedule,
+                                text = task.command,
+                                fontFamily = FontFamily.Monospace,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
                             )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (task.lastRunningTime != null && task.lastRunningTime > 0) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+                                        shape = RoundedCornerShape(3.dp)
+                                    ) {
+                                        Text(
+                                            text = QinglongApiHelpers.formatSeconds(task.lastRunningTime),
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                if (!scriptSize.isNullOrBlank()) {
+                                    if (task.lastRunningTime != null && task.lastRunningTime > 0) {
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                        shape = RoundedCornerShape(3.dp)
+                                    ) {
+                                        Text(
+                                            text = scriptSize,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
+                    }
 
-                        if (!isBatchMode) {
+                    // 紧凑操作按钮行 (保持列表卡片紧凑整洁、高密度呈现)
+                    if (!isBatchMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ActionButtonSmall(
-                                    icon = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
-                                    label = if (task.isPinned) "已置顶" else "置顶",
-                                    tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    onClick = onTogglePin
-                                )
-                                ActionButtonSmall(
-                                    icon = if (task.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                    label = if (task.isRunning) "停止" else "运行",
-                                    tint = if (task.isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
-                                    onClick = onRunOrStop
-                                )
-                                ActionButtonSmall(
-                                    icon = Icons.AutoMirrored.Filled.Notes,
-                                    label = "日志",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    onClick = onOpenLog
-                                )
-                                ActionButtonSmall(
-                                    icon = Icons.Default.Edit,
-                                    label = "编辑",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    onClick = onEdit
-                                )
-                                ActionButtonSmall(
-                                    icon = Icons.Default.Delete,
-                                    label = "删除",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    onClick = onDelete
-                                )
+                                IconButton(
+                                    onClick = onTogglePin,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
+                                        contentDescription = if (task.isPinned) "已置顶" else "置顶",
+                                        tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = onRunOrStop,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    if (task.isRunning) {
+                                        Icon(
+                                            Icons.Default.Stop,
+                                            contentDescription = "停止任务",
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = "立即执行",
+                                            tint = Color(0xFF10B981),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = onOpenLog,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Notes,
+                                        contentDescription = "查看日志",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = onEdit,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "编辑任务",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = onDelete,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除任务",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -542,18 +877,36 @@ private fun PulsingDot() {
 fun CreateTaskDialog(
     scriptFiles: List<String>,
     onDismiss: () -> Unit,
-    onConfirm: (String, String, String) -> Unit
+    onConfirm: (UnifiedTask) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var command by remember { mutableStateOf("") }
     var schedule by remember { mutableStateOf("0 8 * * *") }
     var showFilePicker by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
+
+    // 白虎与青龙高级配置项
+    var preCommand by remember { mutableStateOf("") }
+    var postCommand by remember { mutableStateOf("") }
+    var timeoutStr by remember { mutableStateOf("30") }
+    var workDir by remember { mutableStateOf("") }
+    var retryCountStr by remember { mutableStateOf("0") }
+    var retryIntervalStr by remember { mutableStateOf("0") }
+    var randomRangeStr by remember { mutableStateOf("0") }
+    var labelsStr by remember { mutableStateOf("") }
+
+    val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("新建定时任务", fontSize = 15.sp) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -669,10 +1022,112 @@ fun CreateTaskDialog(
                         }
                     }
                 }
+
+                // 高级配置切换按钮
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAdvanced = !showAdvanced }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (showAdvanced) "收起高级配置 ▲" else "展开白虎更多配置 ▼",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                if (showAdvanced) {
+                    OutlinedTextField(
+                        value = preCommand,
+                        onValueChange = { preCommand = it },
+                        label = { Text("前置命令 (选填)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = postCommand,
+                        onValueChange = { postCommand = it },
+                        label = { Text("后置命令 (选填)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = timeoutStr,
+                            onValueChange = { timeoutStr = it },
+                            label = { Text("超时(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = workDir,
+                            onValueChange = { workDir = it },
+                            label = { Text("工作目录(选填)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = retryCountStr,
+                            onValueChange = { retryCountStr = it },
+                            label = { Text("重试次数", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = retryIntervalStr,
+                            onValueChange = { retryIntervalStr = it },
+                            label = { Text("重试间隔(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = randomRangeStr,
+                            onValueChange = { randomRangeStr = it },
+                            label = { Text("随机延时(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = labelsStr,
+                        onValueChange = { labelsStr = it },
+                        label = { Text("标签 (逗号分隔)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { if (name.isNotEmpty() && command.isNotEmpty()) onConfirm(name, command, schedule) }) {
+            Button(
+                onClick = {
+                    if (name.isNotBlank() && command.isNotBlank()) {
+                        val task = UnifiedTask(
+                            id = "",
+                            name = name.trim(),
+                            command = command.trim(),
+                            schedule = schedule.trim(),
+                            statusText = "已就绪",
+                            preCommand = preCommand.trim().ifBlank { null },
+                            postCommand = postCommand.trim().ifBlank { null },
+                            timeout = timeoutStr.toIntOrNull() ?: 30,
+                            workDir = workDir.trim().ifBlank { null },
+                            retryCount = retryCountStr.toIntOrNull() ?: 0,
+                            retryInterval = retryIntervalStr.toIntOrNull() ?: 0,
+                            randomRange = randomRangeStr.toIntOrNull() ?: 0,
+                            labels = if (labelsStr.isBlank()) emptyList() else labelsStr.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
+                        )
+                        onConfirm(task)
+                    }
+                },
+                enabled = name.isNotBlank() && command.isNotBlank()
+            ) {
                 Text("创建")
             }
         },
@@ -691,6 +1146,18 @@ fun EditTaskDialog(
     var name by remember { mutableStateOf(task.name) }
     var command by remember { mutableStateOf(task.command) }
     var schedule by remember { mutableStateOf(task.schedule) }
+    var showAdvanced by remember { mutableStateOf(false) }
+
+    var preCommand by remember { mutableStateOf(task.preCommand ?: "") }
+    var postCommand by remember { mutableStateOf(task.postCommand ?: "") }
+    var timeoutStr by remember { mutableStateOf(task.timeout.toString()) }
+    var workDir by remember { mutableStateOf(task.workDir ?: "") }
+    var retryCountStr by remember { mutableStateOf(task.retryCount.toString()) }
+    var retryIntervalStr by remember { mutableStateOf(task.retryInterval.toString()) }
+    var randomRangeStr by remember { mutableStateOf(task.randomRange.toString()) }
+    var labelsStr by remember { mutableStateOf(task.labels.joinToString(", ")) }
+
+    val scrollState = rememberScrollState()
 
     val cronDesc = remember(schedule) {
         com.panel.app.util.CronExpressionDescriber.describe(schedule)
@@ -707,7 +1174,12 @@ fun EditTaskDialog(
         onDismissRequest = onDismiss,
         title = { Text("编辑任务", fontSize = 15.sp) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -764,10 +1236,107 @@ fun EditTaskDialog(
                         }
                     }
                 }
+
+                // 高级配置切换按钮
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAdvanced = !showAdvanced }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (showAdvanced) "收起高级配置 ▲" else "展开白虎更多配置 ▼",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                if (showAdvanced) {
+                    OutlinedTextField(
+                        value = preCommand,
+                        onValueChange = { preCommand = it },
+                        label = { Text("前置命令", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = postCommand,
+                        onValueChange = { postCommand = it },
+                        label = { Text("后置命令", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = timeoutStr,
+                            onValueChange = { timeoutStr = it },
+                            label = { Text("超时(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = workDir,
+                            onValueChange = { workDir = it },
+                            label = { Text("工作目录", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = retryCountStr,
+                            onValueChange = { retryCountStr = it },
+                            label = { Text("重试次数", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = retryIntervalStr,
+                            onValueChange = { retryIntervalStr = it },
+                            label = { Text("重试间隔(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = randomRangeStr,
+                            onValueChange = { randomRangeStr = it },
+                            label = { Text("随机延时(秒)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = labelsStr,
+                        onValueChange = { labelsStr = it },
+                        label = { Text("标签 (逗号分隔)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(task.copy(name = name, command = command, schedule = schedule)) }) {
+            Button(
+                onClick = {
+                    val updated = task.copy(
+                        name = name.trim(),
+                        command = command.trim(),
+                        schedule = schedule.trim(),
+                        preCommand = preCommand.trim().ifBlank { null },
+                        postCommand = postCommand.trim().ifBlank { null },
+                        timeout = timeoutStr.toIntOrNull() ?: task.timeout,
+                        workDir = workDir.trim().ifBlank { null },
+                        retryCount = retryCountStr.toIntOrNull() ?: task.retryCount,
+                        retryInterval = retryIntervalStr.toIntOrNull() ?: task.retryInterval,
+                        randomRange = randomRangeStr.toIntOrNull() ?: task.randomRange,
+                        labels = if (labelsStr.isBlank()) emptyList() else labelsStr.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
+                    )
+                    onConfirm(updated)
+                }
+            ) {
                 Text("保存")
             }
         },
@@ -776,3 +1345,41 @@ fun EditTaskDialog(
         }
     )
 }
+
+/**
+ * 遍历脚本树建立映射，提取每个脚本文件的尺寸（支持全路径、无前导斜杠路径和纯文件名匹配）
+ */
+fun buildScriptSizeMap(nodes: List<ScriptNode>): Map<String, String> {
+    val map = mutableMapOf<String, String>()
+    fun traverse(list: List<ScriptNode>) {
+        for (node in list) {
+            if (!node.isDir && !node.size.isNullOrBlank() && node.size != "-") {
+                val size = node.size
+                map[node.path] = size
+                map[node.path.trimStart('/')] = size
+                map[node.name] = size
+            }
+            node.children?.let { traverse(it) }
+        }
+    }
+    traverse(nodes)
+    return map
+}
+
+/**
+ * 从任务执行命令中解析出脚本路径或文件名，并从尺寸映射中查找文件大小
+ */
+fun findScriptSizeForCommand(command: String, sizeMap: Map<String, String>): String? {
+    if (command.isBlank() || sizeMap.isEmpty()) return null
+    val tokens = command.trim().split("\\s+".toRegex())
+    for (token in tokens.reversed()) {
+        val clean = token.removeSurrounding("\"", "'").removePrefix("./").removePrefix("/")
+        if (clean.contains(".")) {
+            sizeMap[clean]?.let { return it }
+            val baseName = clean.substringAfterLast('/')
+            sizeMap[baseName]?.let { return it }
+        }
+    }
+    return null
+}
+

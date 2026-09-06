@@ -1,5 +1,6 @@
 package com.panel.app.data.remote.api
 
+import com.google.gson.annotations.SerializedName
 import com.panel.app.data.remote.ApiEnvelope
 import retrofit2.Response
 import retrofit2.http.*
@@ -47,23 +48,51 @@ data class QlCronItem(
     val command: String?,
     val schedule: String?,
     val status: Int?,
+    @SerializedName(value = "isDisabled", alternate = ["is_disabled", "disabled"])
     val isDisabled: Int?,
+    @SerializedName(value = "isPinned", alternate = ["is_pinned", "pinned"])
     val isPinned: Int? = null,
+    @SerializedName(value = "extra_schedules", alternate = ["extraSchedules"])
     val extra_schedules: Any? = null,
     val labels: List<String>? = null,
+    @SerializedName(value = "sub_id", alternate = ["subId"])
     val sub_id: Any? = null,
+    @SerializedName(value = "task_before", alternate = ["taskBefore"])
     val task_before: String? = null,
+    @SerializedName(value = "task_after", alternate = ["taskAfter"])
     val task_after: String? = null,
+    @SerializedName(value = "log_name", alternate = ["logName"])
     val log_name: String? = null,
+    @SerializedName(value = "work_dir", alternate = ["workDir"])
     val work_dir: String? = null,
+    @SerializedName(value = "allow_multiple_instances", alternate = ["allowMultipleInstances"])
     val allow_multiple_instances: Int? = null,
-    val last_running_time: Long? = null,
-    val last_execution_time: Long? = null,
+    @SerializedName(value = "last_running_time", alternate = ["lastRunningTime", "running_time", "runningTime", "duration", "elapsed"])
+    val last_running_time: Any? = null,
+    @SerializedName(value = "last_execution_time", alternate = ["lastExecutionTime", "last_run_time", "lastRunTime", "execution_time", "executionTime"])
+    val last_execution_time: Any? = null,
+    @SerializedName(value = "createdAt", alternate = ["created_at", "created"])
     val createdAt: String? = null,
+    @SerializedName(value = "updatedAt", alternate = ["updated_at", "updated"])
     val updatedAt: String? = null,
     val pid: Int? = null,
+    @SerializedName(value = "log_path", alternate = ["logPath", "log"])
     val log_path: String? = null
-)
+) {
+    val lastRunningTimeLong: Long
+        get() = when (val v = last_running_time) {
+            is Number -> v.toLong()
+            is String -> v.trim().toLongOrNull() ?: v.trim().toDoubleOrNull()?.toLong() ?: 0L
+            else -> 0L
+        }
+
+    val lastExecutionTimeLong: Long
+        get() = when (val v = last_execution_time) {
+            is Number -> v.toLong()
+            is String -> v.trim().toLongOrNull() ?: v.trim().toDoubleOrNull()?.toLong() ?: 0L
+            else -> 0L
+        }
+}
 
 /**
  * 创建任务请求。字段对齐 `back/validation/schedule.ts` 的 commonCronSchema。
@@ -118,14 +147,22 @@ data class QlCronStatusReq(
 
 data class QlCronInstanceItem(
     val id: Any?,
+    @SerializedName(value = "cron_id", alternate = ["cronId", "task_id", "taskId"])
     val cron_id: Any?,
+    @SerializedName(value = "log_path", alternate = ["logPath", "log_name", "logName"])
     val log_path: String?,
-    val started_at: Long?,
-    val finished_at: Long?,
+    @SerializedName(value = "started_at", alternate = ["startedAt", "start_time", "startTime"])
+    val started_at: Any?,
+    @SerializedName(value = "finished_at", alternate = ["finishedAt", "end_time", "endTime"])
+    val finished_at: Any?,
+    @SerializedName(value = "created_at", alternate = ["createdAt", "created"])
     val created_at: String?,
+    @SerializedName(value = "updated_at", alternate = ["updatedAt", "updated"])
     val updated_at: String?,
-    val duration: Long?,
+    @SerializedName(value = "duration", alternate = ["last_running_time", "lastRunningTime", "running_time", "runningTime", "elapsed", "time"])
+    val duration: Any?,
     val status: Int?,
+    @SerializedName(value = "exit_code", alternate = ["exitCode", "exit_status", "exitStatus", "code"])
     val exit_code: Int?,
     val pid: Int? = null
 )

@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.data.adapter.QinglongApiHelpers
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -592,8 +593,16 @@ fun TaskDetailScreen(
                                             }
                                             Text(text = history.startTime, fontSize = 12.sp, style = MaterialTheme.typography.bodyMedium)
                                         }
+                                        val resolvedDuration = if (history.duration.isNotBlank() && history.duration != "--") {
+                                            history.duration
+                                        } else {
+                                            val fromCache = history.logPath?.let { uiState.taskDurationCache[it] }
+                                                ?: uiState.taskDurationCache[history.id]
+                                                ?: uiState.taskDurationCache[history.taskId ?: task.id]
+                                            fromCache ?: task.lastRunningTime?.takeIf { it > 0 }?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--"
+                                        }
                                         Text(
-                                            text = "耗时: ${history.duration} · 退出码: ${history.exitCode}",
+                                            text = "耗时: $resolvedDuration · 退出码: ${history.exitCode}",
                                             fontSize = 10.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

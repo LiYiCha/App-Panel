@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.data.adapter.QinglongApiHelpers
 import com.panel.app.data.model.RunningTaskInfo
 import com.panel.app.data.model.TaskInstanceRecord
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -30,27 +31,59 @@ import com.panel.app.ui.viewmodel.MainViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExecutionHistoryScreen(
+    taskId: String? = null,
     viewModel: MainViewModel,
     onBack: () -> Unit,
-    onOpenLogViewer: (String, String) -> Unit
+    onOpenLogViewer: (title: String, logPath: String, taskId: String, isRunning: Boolean) -> Unit
 ) {
     BackHandler { onBack() }
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatus by remember { mutableStateOf("all") }
     var viewMode by remember { mutableIntStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
-    var isLoading by remember { mutableStateOf(false) }
-    var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(emptyList()) }
     val uiState by viewModel.uiState.collectAsState()
     val expandedScripts = uiState.expandedHistoryScripts
+    var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(uiState.activeTaskInstances) }
+    var isLoading by remember { mutableStateOf(uiState.activeTaskInstances.isEmpty()) }
+    var collapsedByUser by remember { mutableStateOf(setOf<String>()) }
 
     // 运行中任务：只有拿到真实运行实例才能精确停止
     var runningTasks by remember { mutableStateOf<List<RunningTaskInfo>>(emptyList()) }
 
+    fun resolveRecordDuration(record: TaskInstanceRecord): String {
+        if (record.duration.isNotBlank() && record.duration != "--") {
+            return record.duration
+        }
+        val fromLogPath = record.logPath?.let { uiState.taskDurationCache[it] }
+        if (!fromLogPath.isNullOrBlank()) return fromLogPath
+        val fromId = uiState.taskDurationCache[record.id]
+        if (!fromId.isNullOrBlank()) return fromId
+        val fromTaskId = record.taskId?.let { uiState.taskDurationCache[it] }
+        if (!fromTaskId.isNullOrBlank()) return fromTaskId
+        if (record.statusText != "运行中" && !record.taskId.isNullOrBlank()) {
+            val taskRunSec = uiState.tasks.find { it.id == record.taskId }?.lastRunningTime
+            if (taskRunSec != null && taskRunSec > 0) {
+                return QinglongApiHelpers.formatSeconds(taskRunSec)
+            }
+        }
+        return "--"
+    }
+
+    LaunchedEffect(uiState.activeTaskInstances) {
+        if (uiState.activeTaskInstances.isNotEmpty()) {
+            historyList = uiState.activeTaskInstances
+        }
+    }
+
     fun loadData() {
-        isLoading = true
-        viewModel.loadAllExecutionHistory { list ->
-            historyList = list
+        if (historyList.isEmpty()) {
+            isLoading = true
+        }
+        viewModel.loadExecutionHistory(taskId) { list ->
+            // 关键保护：仅当返回有数据或当前列表为空时才更新，严防失败或空数据冲刷导致已展示日志突然消失
+            if (list.isNotEmpty() || historyList.isEmpty()) {
+                historyList = list
+            }
             isLoading = false
         }
         viewModel.loadRunningTasks { list, _ ->
@@ -58,15 +91,15 @@ fun ExecutionHistoryScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(taskId) {
         loadData()
     }
 
     val filteredList = remember(historyList, searchQuery, selectedStatus) {
         historyList.filter { item ->
             val matchStatus = when (selectedStatus) {
-                "success" -> item.exitCode == 0 || item.statusText == "成功"
-                "failed" -> item.exitCode != 0 || item.statusText == "失败"
+                "success" -> item.statusText == "成功" || item.statusText == "已完成" || (item.exitCode == 0 && item.statusText != "失败" && item.statusText != "已停止" && item.statusText != "运行中")
+                "failed" -> item.statusText == "失败" || item.statusText == "已停止" || (item.exitCode != 0 && item.statusText != "成功" && item.statusText != "已完成" && item.statusText != "运行中")
                 else -> true
             }
             val matchSearch = if (searchQuery.isBlank()) true else {
@@ -85,10 +118,10 @@ fun ExecutionHistoryScreen(
             .sortedByDescending { it.second.size }
     }
 
-    // 首次进入时若没有任何记忆，默认展开前 3 个脚本组
+    // 首次进入时若没有任何记忆，默认展开前 5 个脚本组
     LaunchedEffect(groupedByScript) {
         if (expandedScripts.isEmpty() && groupedByScript.isNotEmpty()) {
-            groupedByScript.take(3).forEach { (scriptName, _) ->
+            groupedByScript.take(5).forEach { (scriptName, _) ->
                 viewModel.toggleHistoryScriptExpanded(scriptName)
             }
         }
@@ -99,7 +132,8 @@ fun ExecutionHistoryScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("执行日志与历史 (${historyList.size})", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                        val headerTitle = if (!taskId.isNullOrBlank()) "任务执行历史 (${historyList.size})" else "全部执行历史 (${historyList.size})"
+                        Text(headerTitle, fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
                         Text("按脚本归类归档 · 点击展开即看各次输出", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
@@ -214,8 +248,8 @@ fun ExecutionHistoryScreen(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val successCount = historyList.count { it.exitCode == 0 || it.statusText == "成功" }
-                    val failCount = historyList.count { it.exitCode != 0 || it.statusText == "失败" }
+                    val successCount = historyList.count { it.statusText == "成功" || it.statusText == "已完成" || (it.exitCode == 0 && it.statusText != "失败" && it.statusText != "已停止" && it.statusText != "运行中") }
+                    val failCount = historyList.count { it.statusText == "失败" || it.statusText == "已停止" || (it.exitCode != 0 && it.statusText != "成功" && it.statusText != "已完成" && it.statusText != "运行中") }
 
                     FilterChip(
                         selected = selectedStatus == "all",
@@ -303,7 +337,11 @@ fun ExecutionHistoryScreen(
                             contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
                             items(groupedByScript, key = { it.first }) { (scriptName, records) ->
-                                val isExpanded = expandedScripts.contains(scriptName)
+                                val isExpanded = if (!taskId.isNullOrBlank()) {
+                                    !collapsedByUser.contains(scriptName)
+                                } else {
+                                    expandedScripts.contains(scriptName) || groupedByScript.size == 1
+                                }
                                 val arrowRotation by animateFloatAsState(
                                     targetValue = if (isExpanded) 180f else 0f,
                                     label = "arrow"
@@ -324,7 +362,13 @@ fun ExecutionHistoryScreen(
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable { viewModel.toggleHistoryScriptExpanded(scriptName) }
+                                                .clickable {
+                                                    if (!taskId.isNullOrBlank()) {
+                                                        collapsedByUser = if (collapsedByUser.contains(scriptName)) collapsedByUser - scriptName else collapsedByUser + scriptName
+                                                    } else {
+                                                        viewModel.toggleHistoryScriptExpanded(scriptName)
+                                                    }
+                                                }
                                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
@@ -399,11 +443,14 @@ fun ExecutionHistoryScreen(
 
                                                 records.forEach { record ->
                                                     val isSuccess = record.exitCode == 0 || record.statusText == "成功"
+                                                    val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: record.id
+                                                    val recTaskId = record.taskId?.takeIf { it.isNotBlank() } ?: taskId ?: ""
+                                                    val isRunning = record.statusText == "运行中"
                                                     Surface(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .clickable {
-                                                                onOpenLogViewer(scriptName, record.id)
+                                                                onOpenLogViewer(scriptName, logPath, recTaskId, isRunning)
                                                             },
                                                         shape = RoundedCornerShape(6.dp),
                                                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -438,9 +485,10 @@ fun ExecutionHistoryScreen(
                                                                     fontFamily = FontFamily.Monospace,
                                                                     color = MaterialTheme.colorScheme.onSurface
                                                                 )
-                                                                if (record.duration.isNotBlank()) {
+                                                                val dispDuration = resolveRecordDuration(record)
+                                                                if (dispDuration != "--") {
                                                                     Text(
-                                                                        text = "· 耗时 ${record.duration}",
+                                                                        text = "· 耗时 $dispDuration",
                                                                         fontSize = 10.sp,
                                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                                     )
@@ -471,12 +519,16 @@ fun ExecutionHistoryScreen(
                         ) {
                             items(filteredList, key = { it.id }) { record ->
                                 val isSuccess = record.exitCode == 0 || record.statusText == "成功"
+                                val title = record.taskName.ifBlank { "执行记录 #${record.id}" }
+                                val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: record.id
+                                val recTaskId = record.taskId?.takeIf { it.isNotBlank() } ?: taskId ?: ""
+                                val isRunning = record.statusText == "运行中"
+                                val dispDuration = resolveRecordDuration(record)
                                 ElevatedCard(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            val title = record.taskName.ifBlank { "执行记录 #${record.id}" }
-                                            onOpenLogViewer(title, record.id)
+                                            onOpenLogViewer(title, logPath, recTaskId, isRunning)
                                         },
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
@@ -516,7 +568,7 @@ fun ExecutionHistoryScreen(
                                             }
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                                 Icon(Icons.Default.HourglassEmpty, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text(text = record.duration.ifBlank { "--" }, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(text = dispDuration, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }

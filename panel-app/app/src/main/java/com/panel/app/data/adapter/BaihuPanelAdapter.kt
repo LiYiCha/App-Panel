@@ -8,15 +8,21 @@ import com.panel.app.data.remote.api.*
 import com.panel.app.data.remote.unwrap
 import com.panel.app.data.remote.unwrapTo
 import com.google.gson.JsonParser
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import java.io.BufferedReader
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.zip.Inflater
+import android.util.Base64
+import com.github.luben.zstd.ZstdInputStream
 
 /**
  * 白虎面板适配器。
@@ -53,6 +59,18 @@ class BaihuPanelAdapter(
     private fun injectCookie(token: String) {
         val host = cookieHost
         if (host.isNotEmpty()) NetworkClient.injectCookie(host, "BHToken", token)
+    }
+
+    private fun isAuthError(e: Throwable?): Boolean {
+        val msg = e?.message?.lowercase() ?: return false
+        return msg.contains("401") ||
+                msg.contains("鉴权") ||
+                msg.contains("未登录") ||
+                msg.contains("登录失效") ||
+                msg.contains("登录已过期") ||
+                msg.contains("unauthorized") ||
+                msg.contains("bhtoken") ||
+                msg.contains("凭据已失效")
     }
 
     private suspend fun ensureAuth(): Boolean {
@@ -155,10 +173,22 @@ class BaihuPanelAdapter(
         ensureAuth()
         return try {
             // 明确传 type="task"：对齐白虎官方 web 的 TASK_TYPE.NORMAL，避免与仓库同步任务重复展示
-            api.getTasks(name = query?.takeIf { it.isNotBlank() }, type = "task", pageSize = 200)
+            val res = api.getTasks(name = query?.takeIf { it.isNotBlank() }, type = "task", pageSize = 200)
                 .unwrapTo("获取白虎任务失败") { env ->
                     env.data?.data.orEmpty().map { it.toUnifiedTask() }
                 }
+            if (res.isFailure && isAuthError(res.exceptionOrNull())) {
+                if (!instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()) {
+                    val authRes = authenticate()
+                    if (authRes.isSuccess) {
+                        return api.getTasks(name = query?.takeIf { it.isNotBlank() }, type = "task", pageSize = 200)
+                            .unwrapTo("获取白虎任务失败") { env ->
+                                env.data?.data.orEmpty().map { it.toUnifiedTask() }
+                            }
+                    }
+                }
+            }
+            res
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -232,11 +262,28 @@ class BaihuPanelAdapter(
         )
     }
 
-    override suspend fun createTask(name: String, command: String, schedule: String): Result<Boolean> {
+    override suspend fun createTask(name: String, command: String, schedule: String): Result<Boolean> =
+        createTask(UnifiedTask(id = "", name = name, command = command, schedule = schedule, statusText = ""))
+
+    override suspend fun createTask(task: UnifiedTask): Result<Boolean> {
         ensureAuth()
         return try {
-            api.createTask(BaihuCreateTaskReq(name = name, command = command, schedule = schedule))
-                .unwrap("创建白虎任务失败").map { true }
+            api.createTask(
+                BaihuCreateTaskReq(
+                    name = task.name,
+                    command = task.command,
+                    schedule = task.schedule,
+                    preCommand = task.preCommand?.ifBlank { null },
+                    postCommand = task.postCommand?.ifBlank { null },
+                    timeout = if (task.timeout > 0) task.timeout else 30,
+                    workDir = task.workDir?.ifBlank { null },
+                    cleanConfig = task.cleanConfig?.ifBlank { null },
+                    retryCount = task.retryCount.takeIf { it > 0 },
+                    retryInterval = task.retryInterval.takeIf { it > 0 },
+                    randomRange = task.randomRange.takeIf { it > 0 },
+                    pinType = if (task.isPinned) "top" else "none"
+                )
+            ).unwrap("创建白虎任务失败").map { true }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -253,7 +300,13 @@ class BaihuPanelAdapter(
                     schedule = task.schedule,
                     timeout = task.timeout,
                     enabled = !task.isDisabled,
-                    pin_type = if (task.isPinned) "top" else "none"
+                    pin_type = if (task.isPinned) "top" else "none",
+                    pre_command = task.preCommand?.ifBlank { null },
+                    post_command = task.postCommand?.ifBlank { null },
+                    work_dir = task.workDir?.ifBlank { null },
+                    retry_count = task.retryCount.takeIf { it > 0 },
+                    retry_interval = task.retryInterval.takeIf { it > 0 },
+                    random_range = task.randomRange.takeIf { it > 0 }
                 )
             ).unwrap("更新白虎任务失败").map { true }
         } catch (e: Exception) {
@@ -378,17 +431,19 @@ class BaihuPanelAdapter(
                     env.data?.data.orEmpty().map { log ->
                         TaskInstanceRecord(
                             id = log.id,
+                            taskId = log.task_id ?: taskId.takeIf { it.isNotBlank() },
                             taskName = log.task_name ?: "任务 #${log.id}",
                             startTime = log.start_time ?: "--",
                             endTime = log.end_time,
                             duration = log.duration?.let { BaihuApiHelpers.formatDuration(it) } ?: "--",
-                            exitCode = log.exit_code ?: 0,
+                            exitCode = log.exit_code ?: if (log.status == "failed") 1 else 0,
                             statusText = when (log.status) {
                                 "running" -> "运行中"
                                 "success" -> "成功"
                                 "failed" -> "失败"
                                 else -> log.status ?: "完成"
-                            }
+                            },
+                            logPath = log.id
                         )
                     }
                 }
@@ -400,21 +455,21 @@ class BaihuPanelAdapter(
     override suspend fun getTaskLog(taskNameOrId: String): Result<String> {
         ensureAuth()
         return try {
-            // 参数可能是日志 ID，也可能是任务 ID
-            val direct = api.getLogDetail(taskNameOrId).unwrap("获取日志详情失败")
-            if (direct.isSuccess) {
-                val d = direct.getOrNull()?.data
-                return Result.success(if (d != null) { val out = d.output; val err = d.error; if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容" } else "暂无日志内容")
-            }
             val latest = api.getLogs(taskId = taskNameOrId, pageSize = 1)
                 .unwrap("获取任务日志失败").getOrNull()
                 ?.data?.data?.firstOrNull()
-                ?: return Result.success("暂无任务执行日志记录")
 
-            api.getLogDetail(latest.id)
-                .unwrapTo("获取日志详情失败") { d ->
-                    if (d != null) { val out = d.data?.output ?: ""; val err = d.data?.error ?: ""; if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容" } else "暂无日志内容"
-                }
+            if (latest != null) {
+                return getLogDetail("", latest.id)
+            }
+
+            // 若按 taskId 未查到，参数可能本身就是 logId
+            val directResult = getLogDetail("", taskNameOrId)
+            if (directResult.isSuccess) {
+                return directResult
+            }
+
+            Result.success("暂无任务执行日志记录")
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -794,7 +849,7 @@ class BaihuPanelAdapter(
         name = node.name,
         path = node.path,
         isDir = node.isDir,
-        size = if (node.isDir) null else "-",
+        size = if (node.isDir) null else node.size?.let { QinglongApiHelpers.formatBytes(it) } ?: "-",
         mtime = node.modTime,
         children = node.children?.map { mapFileNode(it) }
     )
@@ -1158,7 +1213,6 @@ class BaihuPanelAdapter(
      * 使用 OkHttp Call.enqueue() 异步流式读取，避免阻塞协程调度线程。
      */
     override fun streamLog(logId: String): Flow<String> = callbackFlow {
-        val ctx = currentCoroutineContext()
         val baseUrl = instance.baseUrl.removeSuffix("/")
         val url = "$baseUrl/api/v1/logs/sse?log_id=${URLEncoder.encode(logId, StandardCharsets.UTF_8.toString())}"
         val request = okhttp3.Request.Builder()
@@ -1166,16 +1220,15 @@ class BaihuPanelAdapter(
             .header("Accept", "application/x-ndjson")
             .build()
 
-        var reader: BufferedReader? = null
-        try {
-            NetworkClient.unsafeOkHttpClient.newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
-                    trySend("[ERROR] ${e.message ?: "连接失败"}")
-                    close()
-                }
+        val call = NetworkClient.unsafeOkHttpClient.newCall(request)
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: IOException) {
+                trySend("[ERROR] ${e.message ?: "连接失败"}")
+                close()
+            }
 
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    if (!ctx.isActive) { response.close(); return }
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                try {
                     if (!response.isSuccessful) {
                         val errBody = response.body?.string()?.trim()
                         trySend("[ERROR] HTTP ${response.code}: $errBody")
@@ -1183,12 +1236,14 @@ class BaihuPanelAdapter(
                         return
                     }
                     val body = response.body
-                        ?: run { trySend("[ERROR] 空响应体"); close(); return }
-                    reader = BufferedReader(InputStreamReader(body.byteStream(), StandardCharsets.UTF_8))
-
+                    if (body == null) {
+                        trySend("[ERROR] 空响应体")
+                        close()
+                        return
+                    }
+                    val reader = BufferedReader(InputStreamReader(body.byteStream(), StandardCharsets.UTF_8))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        if (!ctx.isActive) break
                         line?.trim()?.takeIf { it.isNotEmpty() }?.let { rawLine ->
                             try {
                                 val json = JsonParser.parseString(rawLine).asJsonObject
@@ -1197,17 +1252,20 @@ class BaihuPanelAdapter(
                                     ?: rawLine
                                 if (msg.isNotEmpty()) trySend(msg)
                             } catch (_: Exception) {
-                                // 非 JSON 行直接透传
                                 trySend(rawLine)
                             }
                         }
                     }
+                } catch (_: Exception) {
+                } finally {
+                    response.close()
                     close()
                 }
-            })
-        } catch (e: Exception) {
-            trySend("[ERROR] ${e.message}")
-            close()
+            }
+        })
+
+        awaitClose {
+            call.cancel()
         }
     }
 
@@ -1385,11 +1443,72 @@ class BaihuPanelAdapter(
                 .unwrapTo("获取日志详情失败") { d: BaihuLogDetailResp ->
                     val out = d.data?.output ?: ""
                     val err = d.data?.error ?: ""
-                    if (!out.isNullOrBlank()) out else if (!err.isNullOrBlank()) err else "暂无日志内容"
+                    val raw = if (out.isNotBlank()) out else if (err.isNotBlank()) err else ""
+                    val decompressed = decompressBaihuLog(raw)
+                    if (decompressed.isNotBlank()) {
+                        decompressed
+                    } else if (d.data?.status == "running") {
+                        "任务正在运行中，正在等待日志输出..."
+                    } else {
+                        "暂无日志内容"
+                    }
                 }
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * 对齐白虎面板前端 (decompressFromBase64) 与后端 compress.go 的日志解压规范：
+     * 1. 检查 "raw:" 前缀（<=128 字节的短日志，直接截取返回）
+     * 2. 检查 "zstd:" 前缀（Base64 编码的 Zstd 压缩数据）
+     * 3. 兜底尝试 Base64 编码的 zlib 压缩流
+     * 4. 若均不符合则作为普通明文直接返回
+     */
+    private fun decompressBaihuLog(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        val trimmed = raw.trim()
+
+        // 1. raw: 前缀
+        if (trimmed.startsWith("raw:")) {
+            return trimmed.substring(4)
+        }
+
+        // 2. zstd: 前缀
+        if (trimmed.startsWith("zstd:")) {
+            val base64Data = trimmed.substring(5).trim()
+            val decompressed = runCatching {
+                val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                ByteArrayInputStream(bytes).use { bais ->
+                    ZstdInputStream(bais).use { zis ->
+                        InputStreamReader(zis, StandardCharsets.UTF_8).use { reader ->
+                            reader.readText()
+                        }
+                    }
+                }
+            }.getOrNull()
+            if (decompressed != null) return decompressed
+        }
+
+        // 3. 兜底 zlib (legacy)
+        val zlibDecompressed = runCatching {
+            val bytes = Base64.decode(trimmed, Base64.DEFAULT)
+            val inflater = Inflater()
+            inflater.setInput(bytes)
+            val outputStream = ByteArrayOutputStream(bytes.size * 2)
+            val buffer = ByteArray(2048)
+            while (!inflater.finished()) {
+                val count = inflater.inflate(buffer)
+                if (count == 0 && inflater.needsInput()) break
+                outputStream.write(buffer, 0, count)
+            }
+            inflater.end()
+            outputStream.toString(StandardCharsets.UTF_8.name())
+        }.getOrNull()
+        if (zlibDecompressed != null) return zlibDecompressed
+
+        // 4. 普通明文
+        return raw
     }
 
     // ---------------------------------------------------------------- 工具
