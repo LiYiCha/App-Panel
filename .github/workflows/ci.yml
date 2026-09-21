@@ -30,5 +30,11 @@ jobs:
 
       - name: Run Build Check
         working-directory: panel-app
-        # --info：失败时能看到每个仓库的真实报错（超时 / 403 / 404），便于定位
-        run: ./gradlew assembleDebug --no-daemon --info
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: panel-app/app/build/outputs/apk/debug/*.apk
+          retention-days: 7

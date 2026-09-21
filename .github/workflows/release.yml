@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -15,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -51,8 +54,78 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
 
+      - name: Generate CHANGELOG.md
+        id: changelog
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"%s" $PREV_TAG..HEAD)
+            RANGE="$PREV_TAG → v$VERSION"
+          else
+            COMMITS=$(git log --pretty=format:"%s" HEAD)
+            RANGE="初始版本 → v$VERSION"
+          fi
+
+          {
+            echo "# Panel App v$VERSION 更新日志"
+            echo ""
+            echo "> 发布日期：$(date '+%Y-%m-%d') · 版本范围：$RANGE"
+            echo ""
+          } > CHANGELOG.md
+
+          declare -A SECTIONS=(
+            ["feat"]="✨ 新功能"
+            ["fix"]="🐛 问题修复"
+            ["refactor"]="♻️ 重构优化"
+            ["perf"]="⚡ 性能提升"
+            ["docs"]="📝 文档"
+            ["chore"]="🔧 构建/杂项"
+            ["ci"]="🤖 CI/CD"
+            ["style"]="🎨 样式调整"
+            ["test"]="✅ 测试"
+          )
+          declare -A ENTRIES
+          OTHERS=""
+
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            TYPE=$(echo "$line" | sed -n 's/^\([a-zA-Z_]*\).*/\1/p')
+            TYPE=$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')
+            case "$TYPE" in
+              feat|fix|refactor|perf|docs|chore|ci|style|test)
+                ENTRIES[$TYPE]="${ENTRIES[$TYPE]}- $line"$'\n'
+                ;;
+              *)
+                OTHERS="${OTHERS}- $line"$'\n'
+                ;;
+            esac
+          done <<< "$COMMITS"
+
+          for TYPE in feat fix refactor perf docs style chore ci test; do
+            [ -n "${ENTRIES[$TYPE]}" ] && {
+              echo "### ${SECTIONS[$TYPE]}" >> CHANGELOG.md
+              echo "" >> CHANGELOG.md
+              printf "%s" "${ENTRIES[$TYPE]}" >> CHANGELOG.md
+              echo "" >> CHANGELOG.md
+            }
+          done
+
+          if [ -n "$OTHERS" ]; then
+            echo "### 📌 其他" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            printf "%s" "$OTHERS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+
+          echo "changelog_file=CHANGELOG.md" >> "$GITHUB_OUTPUT"
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: panel-app/app/build/outputs/apk/release/*.apk
-          generate_release_notes: true
+          files: |
+            panel-app/app/build/outputs/apk/release/*.apk
+            CHANGELOG.md
+          body_path: CHANGELOG.md
+          generate_release_notes: false
