@@ -491,14 +491,14 @@ fun EnvCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Surface(
-                            color = if (env.enabled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                            color = if (env.enabled) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
                                 text = if (env.enabled) "启用" else "禁用",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = if (env.enabled) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                color = if (env.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
@@ -557,7 +557,7 @@ fun EnvCard(
                             EnvsActionButton(
                                 icon = if (env.isPinned) Icons.Default.Pin else Icons.Default.PushPin,
                                 label = if (env.isPinned) "已置顶" else "置顶",
-                                tint = if (env.isPinned) Color(0xFFFFA000) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (env.isPinned) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 onClick = onPin
                             )
                         }

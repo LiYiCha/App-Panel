@@ -99,7 +99,7 @@ fun AppPermissionsScreen(
                 title = "安装未知应用",
                 description = "允许从浏览器或文件管理器安装 APK 文件（用于应用更新）",
                 status = if (canInstallPackages) "已授权" else "未授权",
-                statusColor = if (canInstallPackages) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                statusColor = if (canInstallPackages) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                 onAction = {
                     try {
                         context.startActivity(
@@ -191,7 +191,7 @@ fun AppPermissionsScreen(
                     else
                         "读取和写入外部存储，用于保存脚本、日志和备份文件",
                     status = if (hasStoragePermission) "无需授权 ✓" else "未授权",
-                    statusColor = if (hasStoragePermission) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                    statusColor = if (hasStoragePermission) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                     onAction = {
                         try {
                             context.startActivity(
@@ -228,7 +228,7 @@ fun AppPermissionsScreen(
                 title = "通知权限",
                 description = "接收任务执行通知、更新提醒等重要消息推送",
                 status = if (notificationEnabled) "已授权" else "未授权",
-                statusColor = if (notificationEnabled) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                statusColor = if (notificationEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                 onAction = {
                     try {
                         context.startActivity(

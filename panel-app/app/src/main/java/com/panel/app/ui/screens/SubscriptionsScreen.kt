@@ -372,8 +372,8 @@ fun RepoSyncCard(
 
     val isRunning = sub.isRunning
     val statusColor = when {
-        isRunning -> Color(0xFF10B981)
-        sub.isDisabled -> Color(0xFFEF4444)
+        isRunning -> MaterialTheme.colorScheme.secondary
+        sub.isDisabled -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.primary
     }
 
@@ -383,9 +383,9 @@ fun RepoSyncCard(
             .clickable(enabled = isBatchMode) { onSelect() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isRunning) Color(0xFF10B981).copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface
+            containerColor = if (isRunning) MaterialTheme.colorScheme.secondary.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface
         ),
-        border = if (isRunning) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f))
+        border = if (isRunning) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f))
                  else if (sub.selected && isBatchMode) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                  else androidx.compose.foundation.BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
@@ -434,8 +434,8 @@ fun RepoSyncCard(
                     // 状态徽标 (紧随标题，不另起一行)
                     Surface(
                         color = when {
-                            isRunning -> Color(0xFF10B981).copy(alpha = 0.15f)
-                            sub.isDisabled -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                            isRunning -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                            sub.isDisabled -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
                             else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                         },
                         shape = RoundedCornerShape(4.dp)
@@ -449,7 +449,7 @@ fun RepoSyncCard(
                                 Box(
                                     modifier = Modifier
                                         .size(5.dp)
-                                        .background(Color(0xFF10B981), CircleShape)
+                                        .background(MaterialTheme.colorScheme.secondary, CircleShape)
                                 )
                             }
                             Text(
@@ -488,7 +488,7 @@ fun RepoSyncCard(
                     ActionButtonSmall(
                         icon = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
                         label = if (isRunning) "停止" else "同步",
-                        tint = if (isRunning) Color(0xFFEF4444) else Color(0xFF10B981),
+                        tint = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
                         onClick = onRunOrStop
                     )
                     ActionButtonSmall(

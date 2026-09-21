@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="celadon">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel Hub · 现代传统配色方案</title>
+<style>
+  /* ============================================================
+     现代传统配色 —— 底色干净，传统色仅作点缀
+     ============================================================ */
+
+  /* ① 青瓷雅韵 —— 近白底 + 青瓷绿强调 */
+  :root, [data-theme="celadon"] {
+    --bg-0: #F4F6F3;
+    --bg-1: #FAFBF9;
+    --bg-2: #FFFFFF;
+    --bg-3: #EEF2EE;
+    --line: rgba(30, 50, 45, 0.07);
+    --line-2: rgba(30, 50, 45, 0.12);
+
+    --accent: #3F7D6E;          /* 青瓷绿 */
+    --accent-dim: rgba(63, 125, 110, 0.10);
+    --accent-line: rgba(63, 125, 110, 0.30);
+
+    --success: #4A8C5E;
+    --warn: #C9941F;
+    --error: #C0492E;
+    --violet: #6B5E8A;
+
+    --text-1: #1A1F1C;
+    --text-2: #5A6460;
+    --text-3: #9AA39E;
+
+    --radius-lg: 18px;
+    --radius-md: 13px;
+    --radius-sm: 9px;
+
+    --on-accent: #FAFBF9;
+    --ink-deep: #1A1F1C;
+  }
+
+  /* ② 青花瓷韵 —— 瓷白底 + 墨蓝强调 */
+  [data-theme="porcelain"] {
+    --bg-0: #F2F4F7;
+    --bg-1: #F7F9FC;
+    --bg-2: #FFFFFF;
+    --bg-3: #EEF1F6;
+    --line: rgba(30, 45, 70, 0.07);
+    --line-2: rgba(30, 45, 70, 0.12);
+
+    --accent: #2E5090;          /* 青花蓝 */
+    --accent-dim: rgba(46, 80, 144, 0.10);
+    --accent-line: rgba(46, 80, 144, 0.30);
+
+    --success: #3E7C59;
+    --warn: #C9941F;
+    --error: #C0492E;
+    --violet: #6E5B8C;
+
+    --text-1: #16202E;
+    --text-2: #556073;
+    --text-3: #94A0B2;
+
+    --on-accent: #F7F9FC;
+    --ink-deep: #16202E;
+  }
+
+  /* ③ 墨韵丹青 —— 近白底 + 墨色 + 朱砂点睛 */
+  [data-theme="ink"] {
+    --bg-0: #F3F4F3;
+    --bg-1: #FAFAF9;
+    --bg-2: #FFFFFF;
+    --bg-3: #EDEEEC;
+    --line: rgba(20, 20, 22, 0.07);
+    --line-2: rgba(20, 20, 22, 0.12);
+
+    --accent: #2C3038;          /* 墨色 */
+    --accent-dim: rgba(44, 48, 56, 0.08);
+    --accent-line: rgba(44, 48, 56, 0.28);
+
+    --success: #3E7C59;
+    --warn: #C9941F;
+    --error: #9D2933;          /* 朱砂 —— 用于错误/删除 */
+    --violet: #6B5E8A;
+
+    --text-1: #1C1C1E;
+    --text-2: #58585D;
+    --text-3: #9A9A9F;
+
+    --on-accent: #FAFAF9;
+    --ink-deep: #1C1C1E;
+  }
+
+  /* ④ 天水碧 —— 雾白底 + 碧色强调 */
+  [data-theme="skyblue"] {
+    --bg-0: #F0F4F5;
+    --bg-1: #F6F9FA;
+    --bg-2: #FFFFFF;
+    --bg-3: #EAF0F1;
+    --line: rgba(30, 60, 70, 0.07);
+    --line-2: rgba(30, 60, 70, 0.12);
+
+    --accent: #3D7B8C;          /* 天水碧 */
+    --accent-dim: rgba(61, 123, 140, 0.10);
+    --accent-line: rgba(61, 123, 140, 0.30);
+
+    --success: #3E7C59;
+    --warn: #C9941F;
+    --error: #C0492E;
+    --violet: #6B5E8A;
+
+    --text-1: #172328;
+    --text-2: #54626A;
+    --text-3: #93A1A8;
+
+    --on-accent: #F6F9FA;
+    --ink-deep: #172328;
+  }
+
+  /* ⑤ 朱砂点睛 —— 暖白底 + 朱砂强调 */
+  [data-theme="vermillion"] {
+    --bg-0: #F4F2EE;
+    --bg-1: #FAF8F4;
+    --bg-2: #FFFFFF;
+    --bg-3: #EFEBE4;
+    --line: rgba(60, 30, 25, 0.07);
+    --line-2: rgba(60, 30, 25, 0.12);
+
+    --accent: #B23A48;          /* 朱砂红 */
+    --accent-dim: rgba(178, 58, 72, 0.10);
+    --accent-line: rgba(178, 58, 72, 0.30);
+
+    --success: #3E7C59;
+    --warn: #C9941F;
+    --error: #9D2933;
+    --violet: #6B5E8A;
+
+    --text-1: #1E1B18;
+    --text-2: #5C5550;
+    --text-3: #9C948C;
+
+    --on-accent: #FAF8F4;
+    --ink-deep: #1E1B18;
+  }
+
+  /* ============================================================
+     全局
+     ============================================================ */
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg-0);
+    color: var(--text-1);
+    min-height: 100vh;
+    padding: 48px 24px 80px;
+    transition: background 0.4s ease, color 0.4s ease;
+  }
+
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  /* —— 主题切换器 —— */
+  .theme-switch {
+    background: var(--bg-2);
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    padding: 16px 18px;
+    margin-bottom: 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+  }
+  .theme-switch .label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-right: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .theme-switch .label::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .theme-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border-radius: 999px;
+    border: 1px solid var(--line-2);
+    background: var(--bg-3);
+    color: var(--text-1);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .theme-btn:hover { border-color: var(--accent-line); }
+  .theme-btn.active {
+    background: var(--accent-dim);
+    border-color: var(--accent-line);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .swatch-dots { display: flex; gap: 3px; }
+  .swatch-dots i {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.1);
+    display: block;
+  }
+
+  /* —— 顶部方案说明 —— */
+  .hero { margin-bottom: 40px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); padding: 6px 12px; border: 1px solid var(--accent-line);
+    border-radius: 999px; background: var(--accent-dim); margin-bottom: 18px;
+  }
+  .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+  h1 .dot { color: var(--accent); }
+  .sub { font-size: 15px; color: var(--text-2); max-width: 760px; line-height: 1.7; }
+
+  .insight {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md); padding: 16px 18px; margin-bottom: 28px;
+    font-size: 13px; line-height: 1.8; color: var(--text-2);
+  }
+  .insight b { color: var(--text-1); }
+  .insight code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; font-size: 12px; color: var(--accent); }
+
+  /* —— 屏幕画廊 —— */
+  .section-title {
+    font-size: 13px; color: var(--text-3); letter-spacing: 0.12em;
+    text-transform: uppercase; margin: 40px 0 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  .phones {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 32px; align-items: start;
+  }
+
+  .phone {
+    background: var(--ink-deep);
+    border-radius: 42px; padding: 12px;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.18), 0 0 0 1px var(--line-2);
+    width: 320px; margin: 0 auto;
+  }
+  .screen {
+    background: var(--bg-1);
+    border-radius: 32px; overflow: hidden;
+    height: 660px; position: relative; display: flex; flex-direction: column;
+  }
+  .notch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 100px; height: 24px; background: var(--ink-deep); border-radius: 999px; z-index: 10;
+  }
+  .statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 24px 6px; font-size: 12px; font-weight: 600; color: var(--text-1);
+  }
+  .statusbar .right { display: flex; align-items: center; gap: 5px; }
+  .sig { width: 16px; height: 10px; display: flex; align-items: flex-end; gap: 2px; }
+  .sig i { display: block; width: 3px; background: var(--text-1); border-radius: 1px; }
+  .sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:6px}.sig i:nth-child(3){height:8px}.sig i:nth-child(4){height:10px}
+  .battery { width: 22px; height: 11px; border: 1px solid var(--text-2); border-radius: 3px; position: relative; padding: 1px; }
+  .battery::after { content: ""; position: absolute; right: -3px; top: 3px; width: 2px; height: 5px; background: var(--text-2); border-radius: 0 2px 2px 0; }
+  .battery i { display: block; height: 100%; width: 80%; background: var(--text-1); border-radius: 1px; }
+
+  .screen-content { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+  .screen-content::-webkit-scrollbar { display: none; }
+
+  .screen-label {
+    text-align: center; margin-top: 16px; font-size: 13px; color: var(--text-2); font-weight: 500;
+  }
+  .screen-label small { display: block; font-size: 11px; color: var(--text-3); margin-top: 3px; font-weight: 400; }
+
+  /* ===== 通用组件 ===== */
+  .card {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+
+  /* ===== 顶部栏 ===== */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 4px 14px;
+  }
+  .topbar .title { font-size: 20px; font-weight: 700; }
+  .topbar .sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 12px; background: var(--bg-2);
+    border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
+    color: var(--text-1);
+  }
+
+  /* ===== 底部导航 ===== */
+  .bottomnav {
+    display: flex; justify-content: space-around; align-items: center;
+    padding: 10px 12px calc(10px + 6px);
+    background: var(--bg-1);
+    border-top: 1px solid var(--line);
+  }
+  .nav-item { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; color: var(--text-3); padding: 6px 10px; border-radius: 12px; }
+  .nav-item.active { color: var(--accent); background: var(--accent-dim); }
+  .nav-item svg { width: 20px; height: 20px; }
+
+  /* ============================================================
+     登录页
+     ============================================================ */
+  .login-bg {
+    position: absolute; inset: 0; overflow: hidden;
+    background: var(--bg-1);
+  }
+  .login-bg::before {
+    content: ""; position: absolute; top: -120px; right: -80px;
+    width: 320px; height: 320px; border-radius: 50%;
+    background: radial-gradient(circle, var(--accent-dim), transparent 70%);
+    filter: blur(20px);
+  }
+  .login-wrap { position: relative; z-index: 1; padding: 60px 28px 32px; height: 100%; display: flex; flex-direction: column; }
+  .logo-mark {
+    width: 64px; height: 64px; border-radius: 18px;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 18px;
+  }
+  .logo-mark svg { width: 32px; height: 32px; color: var(--on-accent); }
+  .login-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .login-sub { font-size: 13px; color: var(--text-2); margin-top: 6px; margin-bottom: 32px; }
+
+  .type-switch { display: flex; gap: 8px; margin-bottom: 18px; }
+  .type-pill {
+    flex: 1; text-align: center; padding: 10px; border-radius: 12px;
+    font-size: 13px; font-weight: 600; background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2);
+  }
+  .type-pill.on { background: var(--accent-dim); border-color: var(--accent-line); color: var(--accent); }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 11px; color: var(--text-3); margin-bottom: 6px; padding-left: 4px; }
+  .input {
+    width: 100%; background: var(--bg-2); border: 1px solid var(--line-2);
+    border-radius: 13px; padding: 13px 14px; font-size: 14px; color: var(--text-1);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .input input { flex: 1; background: transparent; border: none; outline: none; color: var(--text-1); font-size: 14px; }
+  .input svg { width: 18px; height: 18px; color: var(--text-3); flex-shrink: 0; }
+
+  .btn-primary {
+    width: 100%; padding: 15px; border: none; border-radius: 13px;
+    background: var(--accent); color: var(--on-accent);
+    font-size: 15px; font-weight: 700; margin-top: 10px; cursor: pointer;
+  }
+
+  /* ============================================================
+     仪表盘
+     ============================================================ */
+  .dash-summary {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
+  }
+  .stat {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: var(--radius-md); padding: 14px;
+  }
+  .stat .label { font-size: 11px; color: var(--text-3); }
+  .stat .val { font-size: 24px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
+  .stat .delta { font-size: 11px; margin-top: 4px; }
+  .stat.accent .val { color: var(--accent); }
+  .stat.success .val { color: var(--success); }
+  .stat.warn .val { color: var(--warn); }
+
+  .chart-card { margin-bottom: 14px; }
+  .chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .chart-head h3 { font-size: 14px; font-weight: 600; }
+  .chart-legend { display: flex; gap: 10px; font-size: 10px; color: var(--text-2); }
+  .legend-dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  .rank-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .rank-item:last-child { border-bottom: none; }
+  .rank-num { width: 22px; height: 22px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: var(--bg-3); color: var(--text-2); flex-shrink: 0; }
+  .rank-num.top1 { background: var(--warn); color: var(--ink-deep); }
+  .rank-num.top2 { background: var(--text-3); color: var(--bg-1); }
+  .rank-num.top3 { background: var(--accent); color: var(--on-accent); }
+  .rank-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rank-val { font-size: 12px; font-weight: 600; color: var(--accent); }
+
+  /* ============================================================
+     任务列表
+     ============================================================ */
+  .search-box {
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 13px;
+    padding: 11px 14px; display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  }
+  .search-box input { flex: 1; background: transparent; border: none; outline: none; color: var(--text-1); font-size: 13px; }
+  .search-box svg { width: 16px; height: 16px; color: var(--text-3); }
+
+  .filter-row { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 2px; }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-pill {
+    padding: 6px 12px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    white-space: nowrap; background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .filter-pill.on { background: var(--accent-dim); border-color: var(--accent-line); color: var(--accent); }
+  .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .task-card {
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 14px; margin-bottom: 10px; position: relative; overflow: hidden;
+  }
+  .task-card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .task-card.running::before { background: var(--success); }
+  .task-card.disabled::before { background: var(--text-3); }
+  .task-card.ready::before { background: var(--accent); }
+  .task-head { display: flex; align-items: center; justify-content: space-between; }
+  .task-title { font-size: 14px; font-weight: 600; }
+  .task-state { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px; }
+  .state-running { background: rgba(62,124,89,0.12); color: var(--success); }
+  .state-disabled { background: var(--bg-3); color: var(--text-2); }
+  .state-ready { background: var(--accent-dim); color: var(--accent); }
+  .task-cmd {
+    font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 11px;
+    color: var(--text-2); background: var(--bg-3); padding: 5px 8px; border-radius: 7px;
+    margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .task-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .task-cron { font-size: 11px; color: var(--text-3); }
+  .task-actions { display: flex; gap: 4px; }
+  .act-btn {
+    width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-3); border: none; color: var(--text-2);
+  }
+  .act-btn.play { color: var(--success); }
+
+  /* ============================================================
+     设置页
+     ============================================================ */
+  .panel-header {
+    background: var(--bg-2);
+    border: 1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 16px; margin-bottom: 16px;
+  }
+  .panel-head-row { display: flex; align-items: center; gap: 12px; }
+  .panel-avatar {
+    width: 42px; height: 42px; border-radius: 12px; background: var(--accent-dim);
+    display: flex; align-items: center; justify-content: center; color: var(--accent);
+  }
+  .panel-info .name { font-size: 15px; font-weight: 600; }
+  .panel-info .url { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .online-badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600;
+    color: var(--success); padding: 3px 8px; border-radius: 999px; background: var(--accent-dim);
+  }
+  .online-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+  .metric-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-top: 14px; }
+  .mini-stat { text-align: center; padding: 8px 4px; background: var(--bg-3); border-radius: 10px; }
+  .mini-stat .l { font-size: 9px; color: var(--text-3); }
+  .mini-stat .v { font-size: 14px; font-weight: 700; margin-top: 3px; }
+
+  .group-label { font-size: 11px; color: var(--text-3); letter-spacing: 0.06em; margin: 4px 4px 8px; }
+  .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .nav-tile {
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 14px; display: flex; align-items: flex-start; gap: 10px;
+  }
+  .tile-icon {
+    width: 32px; height: 32px; border-radius: 10px; background: var(--bg-3);
+    display: flex; align-items: center; justify-content: center; color: var(--accent); flex-shrink: 0;
+  }
+  .tile-icon svg { width: 16px; height: 16px; }
+  .tile-text .t { font-size: 12px; font-weight: 600; }
+  .tile-text .d { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+
+  .list-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+  .list-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 14px; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .list-row:last-child { border-bottom: none; }
+  .list-row .r { color: var(--text-3); font-size: 12px; }
+
+  /* ===== 配色方案说明卡 ===== */
+  .palette-note {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md); padding: 16px 18px; margin-bottom: 14px;
+    font-size: 13px; line-height: 1.7; color: var(--text-2);
+  }
+  .palette-note b { color: var(--text-1); }
+
+  .palette-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .pchip {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 12px; border-radius: 999px; background: var(--bg-3);
+    font-size: 11px; color: var(--text-1);
+  }
+  .pchip .cd { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.1); }
+
+  footer { margin-top: 72px; text-align: center; color: var(--text-3); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 主题切换器 -->
+  <div class="theme-switch" id="themeSwitch">
+    <span class="label">切换配色方案</span>
+    <button class="theme-btn active" data-theme="celadon">
+      <span class="swatch-dots"><i style="background:#FAFBF9"></i><i style="background:#3F7D6E"></i><i style="background:#1A1F1C"></i></span>
+      青瓷雅韵
+    </button>
+    <button class="theme-btn" data-theme="porcelain">
+      <span class="swatch-dots"><i style="background:#F7F9FC"></i><i style="background:#2E5090"></i><i style="background:#16202E"></i></span>
+      青花瓷韵
+    </button>
+    <button class="theme-btn" data-theme="ink">
+      <span class="swatch-dots"><i style="background:#FAFAF9"></i><i style="background:#2C3038"></i><i style="background:#1C1C1E"></i></span>
+      墨韵丹青
+    </button>
+    <button class="theme-btn" data-theme="skyblue">
+      <span class="swatch-dots"><i style="background:#F6F9FA"></i><i style="background:#3D7B8C"></i><i style="background:#172328"></i></span>
+      天水碧
+    </button>
+    <button class="theme-btn" data-theme="vermillion">
+      <span class="swatch-dots"><i style="background:#FAF8F4"></i><i style="background:#B23A48"></i><i style="background:#1E1B18"></i></span>
+      朱砂点睛
+    </button>
+  </div>
+
+  <!-- 设计思路说明 -->
+  <div class="hero">
+    <div class="eyebrow">Modern Traditional Palette</div>
+    <h1>传统色 · 现代用 <span class="dot">·</span> 五套方案实时切换</h1>
+    <p class="sub">
+      汲取中国传统色谱（青瓷、青花、墨、朱砂、天水碧），但用现代 UI 的配色逻辑来组织——
+      近白底色保证干净，深炭灰文字保证可读，传统色只作为 10% 的强调色出现。
+    </p>
+  </div>
+
+  <div class="insight">
+    <b>这次为什么不会"显老"：</b>
+    ① 底色是 <code>#FAFBF9</code> 这类近白色，而非大面积土黄/米黄；
+    ② 文字用深炭灰 <code>#1A1F1C</code>，不用棕色；
+    ③ 传统色（青瓷绿/青花蓝/朱砂）只占约 10%，用于按钮、激活态、强调数字，不铺底色；
+    ④ 高对比、充足留白，符合 2025 现代 UI 的"暖色中性底 + 单一强调色"趋势。
+  </div>
+
+  <!-- 当前配色说明 -->
+  <div class="palette-note" id="paletteNote"></div>
+
+  <!-- 屏幕原型 -->
+  <div class="section-title">核心屏幕原型（随配色实时变化）</div>
+  <div class="phones">
+
+    <!-- 登录页 -->
+    <div>
+      <div class="phone">
+        <div class="screen">
+          <div class="notch"></div>
+          <div class="login-bg"></div>
+          <div class="login-wrap">
+            <div class="logo-mark">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>
+            </div>
+            <div class="login-title">Panel Hub</div>
+            <div class="login-sub">青龙与白虎面板 · 统一管理</div>
+
+            <div class="type-switch">
+              <div class="type-pill on">白虎面板</div>
+              <div class="type-pill">青龙面板</div>
+            </div>
+
+            <div class="field">
+              <label>面板地址</label>
+              <div class="input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>
+                <input value="http://118.190.150.79:18082" />
+              </div>
+            </div>
+            <div class="field">
+              <label>登录账号</label>
+              <div class="input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>
+                <input value="admin" />
+              </div>
+            </div>
+            <div class="field">
+              <label>登录密码</label>
+              <div class="input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+                <input type="password" value="••••••••" />
+              </div>
+            </div>
+
+            <button class="btn-primary">登 录</button>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">登录页 <small>近白底 + 传统色按钮</small></div>
+    </div>
+
+    <!-- 仪表盘 -->
+    <div>
+      <div class="phone">
+        <div class="screen">
+          <div class="notch"></div>
+          <div class="statusbar"><span>9:41</span><div class="right"><div class="sig"><i></i><i></i><i></i><i></i></div><span>5G</span><div class="battery"><i></i></div></div></div>
+          <div class="screen-content">
+            <div class="topbar">
+              <div>
+                <div class="title">仪表盘</div>
+                <div class="sub">数据实时来自面板后端</div>
+              </div>
+              <div class="icon-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7L21 8M21 3v5h-5"/></svg>
+              </div>
+            </div>
+
+            <div class="dash-summary">
+              <div class="stat accent">
+                <div class="label">任务总数</div>
+                <div class="val">128</div>
+                <div class="delta" style="color:var(--success)">↑ 较昨日 +3</div>
+              </div>
+              <div class="stat success">
+                <div class="label">今日成功</div>
+                <div class="val">342</div>
+                <div class="delta" style="color:var(--text-3)">成功率 96.8%</div>
+              </div>
+              <div class="stat">
+                <div class="label">已启用</div>
+                <div class="val">112</div>
+              </div>
+              <div class="stat warn">
+                <div class="label">今日失败</div>
+                <div class="val">11</div>
+              </div>
+            </div>
+
+            <div class="card chart-card">
+              <div class="chart-head">
+                <h3>近 7 天执行趋势</h3>
+                <div class="chart-legend">
+                  <span><span class="legend-dot" style="background:var(--success)"></span>成功</span>
+                  <span><span class="legend-dot" style="background:var(--error)"></span>失败</span>
+                </div>
+              </div>
+              <svg viewBox="0 0 280 110" width="100%" height="110">
+                <defs>
+                  <linearGradient id="ga" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--success)" stop-opacity="0.30"/>
+                    <stop offset="100%" stop-color="var(--success)" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <line x1="0" y1="27" x2="280" y2="27" stroke="rgba(0,0,0,0.04)"/>
+                <line x1="0" y1="55" x2="280" y2="55" stroke="rgba(0,0,0,0.04)"/>
+                <line x1="0" y1="83" x2="280" y2="83" stroke="rgba(0,0,0,0.04)"/>
+                <path d="M0,80 L46,60 L93,70 L140,40 L186,50 L233,30 L280,45 L280,110 L0,110 Z" fill="url(#ga)"/>
+                <path d="M0,80 L46,60 L93,70 L140,40 L186,50 L233,30 L280,45" fill="none" stroke="var(--success)" stroke-width="2"/>
+                <rect x="40" y="88" width="12" height="12" rx="3" fill="var(--error)" opacity="0.6"/>
+                <rect x="87" y="84" width="12" height="16" rx="3" fill="var(--error)" opacity="0.6"/>
+                <rect x="134" y="90" width="12" height="10" rx="3" fill="var(--error)" opacity="0.6"/>
+                <rect x="180" y="82" width="12" height="18" rx="3" fill="var(--error)" opacity="0.6"/>
+                <rect x="227" y="86" width="12" height="14" rx="3" fill="var(--error)" opacity="0.6"/>
+                <rect x="274" y="92" width="12" height="8" rx="3" fill="var(--error)" opacity="0.6"/>
+              </svg>
+            </div>
+
+            <div class="card">
+              <div class="chart-head"><h3>执行次数 TOP 5</h3></div>
+              <div class="rank-item"><div class="rank-num top1">1</div><div class="rank-name">jd_daily_bean</div><div class="rank-val">1,284</div></div>
+              <div class="rank-item"><div class="rank-num top2">2</div><div class="rank-name">sckj_sign</div><div class="rank-val">982</div></div>
+              <div class="rank-item"><div class="rank-num top3">3</div><div class="rank-name">aliyun_check</div><div class="rank-val">756</div></div>
+              <div class="rank-item"><div class="rank-num">4</div><div class="rank-name">tx_cos_clean</div><div class="rank-val">612</div></div>
+              <div class="rank-item"><div class="rank-num">5</div><div class="rank-name">wzry_sign</div><div class="rank-val">498</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">仪表盘 <small>白色卡片 + 传统色强调数字</small></div>
+    </div>
+
+    <!-- 任务列表 -->
+    <div>
+      <div class="phone">
+        <div class="screen">
+          <div class="notch"></div>
+          <div class="statusbar"><span>9:41</span><div class="right"><div class="sig"><i></i><i></i><i></i><i></i></div><span>5G</span><div class="battery"><i></i></div></div></div>
+          <div class="screen-content">
+            <div class="topbar">
+              <div>
+                <div class="title">任务列表</div>
+                <div class="sub">共 128 个任务</div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <div class="icon-btn">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+                </div>
+                <div class="icon-btn" style="background:var(--accent);border-color:var(--accent)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--on-accent)" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                </div>
+              </div>
+            </div>
+
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+              <input placeholder="搜索任务名称、命令或 Cron..." />
+            </div>
+
+            <div class="filter-row">
+              <div class="filter-pill on">全部 128</div>
+              <div class="filter-pill"><span class="pulse-dot"></span>运行中 3</div>
+              <div class="filter-pill">已启用 112</div>
+              <div class="filter-pill">已禁用 16</div>
+            </div>
+
+            <div class="task-card running">
+              <div class="task-head">
+                <div class="task-title">jd_daily_bean</div>
+                <div class="task-state state-running">运行中</div>
+              </div>
+              <div class="task-cmd">python3 jd_daily_bean.py</div>
+              <div class="task-meta">
+                <div class="task-cron">每天 08:00 · 已运行 42s</div>
+                <div class="task-actions">
+                  <button class="act-btn play"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-card ready">
+              <div class="task-head">
+                <div class="task-title">aliyun_cdn_refresh</div>
+                <div class="task-state state-ready">已启用</div>
+              </div>
+              <div class="task-cmd">node aliyun_cdn.js refresh</div>
+              <div class="task-meta">
+                <div class="task-cron">每 30 分钟 · 下次 09:30</div>
+                <div class="task-actions">
+                  <button class="act-btn play"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-card disabled">
+              <div class="task-head">
+                <div class="task-title">old_backup_script</div>
+                <div class="task-state state-disabled">已禁用</div>
+              </div>
+              <div class="task-cmd">bash backup_old.sh</div>
+              <div class="task-meta">
+                <div class="task-cron">每天 02:00 · 已暂停</div>
+                <div class="task-actions">
+                  <button class="act-btn play"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></button>
+                  <button class="act-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottomnav">
+            <div class="nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              任务
+            </div>
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0018 0V5M3 12a9 3 0 0018 0"/></svg>
+              变量
+            </div>
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+              脚本
+            </div>
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+              设置
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">任务列表 <small>白卡 + 左侧状态色条</small></div>
+    </div>
+
+    <!-- 设置页 -->
+    <div>
+      <div class="phone">
+        <div class="screen">
+          <div class="notch"></div>
+          <div class="statusbar"><span>9:41</span><div class="right"><div class="sig"><i></i><i></i><i></i><i></i></div><span>5G</span><div class="battery"><i></i></div></div></div>
+          <div class="screen-content">
+            <div class="topbar">
+              <div>
+                <div class="title">系统设置</div>
+                <div class="sub">Panel Hub v2.0</div>
+              </div>
+              <div class="icon-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+              </div>
+            </div>
+
+            <div class="panel-header">
+              <div class="panel-head-row">
+                <div class="panel-avatar">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                </div>
+                <div class="panel-info" style="flex:1">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div class="name">白虎面板 · 主</div>
+                    <span class="online-badge"><span class="online-dot"></span>在线 23ms</span>
+                  </div>
+                  <div class="url">http://118.190.150.79:18082</div>
+                </div>
+              </div>
+              <div class="metric-row">
+                <div class="mini-stat"><div class="l">CPU</div><div class="v" style="color:var(--accent)">12%</div></div>
+                <div class="mini-stat"><div class="l">内存</div><div class="v" style="color:var(--success)">34%</div></div>
+                <div class="mini-stat"><div class="l">任务</div><div class="v">112</div></div>
+                <div class="mini-stat"><div class="l">变量</div><div class="v" style="color:var(--violet)">86</div></div>
+              </div>
+            </div>
+
+            <div class="group-label">功能与二级服务</div>
+            <div class="nav-grid">
+              <div class="nav-tile">
+                <div class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 5-5"/></svg></div>
+                <div class="tile-text"><div class="t">仪表盘</div><div class="d">趋势 · 排行</div></div>
+              </div>
+              <div class="nav-tile">
+                <div class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+                <div class="tile-text"><div class="t">历史日志</div><div class="d">执行流水</div></div>
+              </div>
+              <div class="nav-tile">
+                <div class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9M14 17H5M17 17a3 3 0 100-6 3 3 0 000 6zM7 7a3 3 0 100-6 3 3 0 000 6z"/></svg></div>
+                <div class="tile-text"><div class="t">依赖管理</div><div class="d">42 个包</div></div>
+              </div>
+              <div class="nav-tile">
+                <div class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-9-9M21 3v6h-6"/></svg></div>
+                <div class="tile-text"><div class="t">订阅同步</div><div class="d">仓库源</div></div>
+              </div>
+            </div>
+
+            <div class="group-label">常规设置</div>
+            <div class="list-card">
+              <div class="list-row"><span>网络超时</span><span class="r">15s ›</span></div>
+              <div class="list-row"><span>深色模式</span><span class="r" style="color:var(--accent)">跟随系统</span></div>
+              <div class="list-row"><span>检查更新</span><span class="r">v2.0.0 ›</span></div>
+              <div class="list-row"><span>关于 Panel Hub</span><span class="r">›</span></div>
+            </div>
+          </div>
+
+          <div class="bottomnav">
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              任务
+            </div>
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0018 0V5M3 12a9 3 0 0018 0"/></svg>
+              变量
+            </div>
+            <div class="nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+              脚本
+            </div>
+            <div class="nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+              设置
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">系统设置 <small>白卡 + 传统色图标</small></div>
+    </div>
+
+  </div>
+
+  <footer>点击顶部胶囊切换 5 套现代传统配色 · 所有屏幕实时联动</footer>
+
+</div>
+
+<script>
+  const themes = {
+    celadon: {
+      name: '青瓷雅韵',
+      desc: '近白底色 #FAFBF9 + 青瓷绿 #3F7D6E 强调。取自龙泉青瓷的粉青色调，沉静温润，绿色饱和度刻意压低，不抢内容。适合作为日常默认主题。',
+      colors: [['#FAFBF9','底色'], ['#3F7D6E','青瓷绿'], ['#1A1F1C','文字']]
+    },
+    porcelain: {
+      name: '青花瓷韵',
+      desc: '瓷白底 #F7F9FC + 青花蓝 #2E5090 强调。致敬青花瓷的蓝白配色，干净、可信、专业感强，适合工具类产品。',
+      colors: [['#F7F9FC','底色'], ['#2E5090','青花蓝'], ['#16202E','文字']]
+    },
+    ink: {
+      name: '墨韵丹青',
+      desc: '近白底 #FAFAF9 + 墨色 #2C3038 为主强调，朱砂红 #9D2933 仅用于错误/删除。最克制的一套，黑白为主，朱砂点睛，编辑/文字类场景首选。',
+      colors: [['#FAFAF9','底色'], ['#2C3038','墨色'], ['#9D2933','朱砂']]
+    },
+    skyblue: {
+      name: '天水碧',
+      desc: '雾白底 #F6F9FA + 天水碧 #3D7B8C 强调。取自古诗"天水碧"的蓝绿色调，清新安静，比青瓷更偏蓝，适合偏好冷调的用户。',
+      colors: [['#F6F9FA','底色'], ['#3D7B8C','天水碧'], ['#172328','文字']]
+    },
+    vermillion: {
+      name: '朱砂点睛',
+      desc: '暖白底 #FAF8F4 + 朱砂红 #B23A48 强调。朱砂是传统色谱中最具辨识度的颜色，这里只用作按钮/激活态，红色占比约 10%，正式而有生命力。',
+      colors: [['#FAF8F4','底色'], ['#B23A48','朱砂'], ['#1E1B18','文字']]
+    }
+  };
+
+  const root = document.documentElement;
+  const note = document.getElementById('paletteNote');
+
+  function applyTheme(id) {
+    root.setAttribute('data-theme', id);
+    document.querySelectorAll('.theme-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.theme === id);
+    });
+    const t = themes[id];
+    const chips = t.colors.map(([c, l]) =>
+      `<span class="pchip"><span class="cd" style="background:${c}"></span>${l} ${c}</span>`
+    ).join('');
+    note.innerHTML = `<b>${t.name}</b> — ${t.desc}<div class="palette-chips">${chips}</div>`;
+  }
+
+  applyTheme('celadon');
+
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyTheme(btn.dataset.theme));
+  });
+</script>
+</body>
+</html>

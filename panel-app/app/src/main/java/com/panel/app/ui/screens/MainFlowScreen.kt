@@ -160,7 +160,10 @@ fun MainFlowScreen(
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
                 BottomNavScreen.entries.forEach { screen ->
                     val isSelected = selectedTab == screen
                     NavigationBarItem(
@@ -173,7 +176,14 @@ fun MainFlowScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        label = { Text(text = screen.title, fontSize = 11.sp) }
+                        label = { Text(text = screen.title, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     )
                 }
             }

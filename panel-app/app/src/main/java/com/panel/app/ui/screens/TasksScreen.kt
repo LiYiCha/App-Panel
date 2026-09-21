@@ -202,13 +202,13 @@ fun TasksScreen(
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = when {
-                        isRunningSelected -> Color(0xFF10B981).copy(alpha = 0.25f)
-                        runningCount > 0 -> Color(0xFF10B981).copy(alpha = 0.12f)
+                        isRunningSelected -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)
+                        runningCount > 0 -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
                         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     },
                     border = when {
-                        isRunningSelected -> BorderStroke(1.dp, Color(0xFF10B981))
-                        runningCount > 0 -> BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+                        isRunningSelected -> BorderStroke(1.dp, MaterialTheme.colorScheme.secondary)
+                        runningCount > 0 -> BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f))
                         else -> null
                     },
                     modifier = Modifier.clickable { selectedFilter = "running" }
@@ -223,7 +223,7 @@ fun TasksScreen(
                                 modifier = Modifier
                                     .size(6.dp)
                                     .background(
-                                        color = Color(0xFF10B981).copy(alpha = pulseAlpha),
+                                        color = MaterialTheme.colorScheme.secondary.copy(alpha = pulseAlpha),
                                         shape = CircleShape
                                     )
                             )
@@ -232,7 +232,7 @@ fun TasksScreen(
                             text = "运行中 $runningCount",
                             fontSize = 11.sp,
                             fontWeight = if (isRunningSelected || runningCount > 0) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (isRunningSelected || runningCount > 0) Color(0xFF059669) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isRunningSelected || runningCount > 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -758,14 +758,14 @@ fun TaskCard(
                                         Icon(
                                             Icons.Default.Stop,
                                             contentDescription = "停止任务",
-                                            tint = Color(0xFFEF4444),
+                                            tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(15.dp)
                                         )
                                     } else {
                                         Icon(
                                             Icons.Default.PlayArrow,
                                             contentDescription = "立即执行",
-                                            tint = Color(0xFF10B981),
+                                            tint = MaterialTheme.colorScheme.secondary,
                                             modifier = Modifier.size(15.dp)
                                         )
                                     }
@@ -822,16 +822,16 @@ private fun StateBadge(state: TaskVisualState) {
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer
         )
-        TaskVisualState.Queued -> Triple("排队中", Color(0xFFFFF3E0), Color(0xFFB45309))
+        TaskVisualState.Queued -> Triple("排队中", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
         TaskVisualState.Disabled -> Triple(
             "已禁用",
-            Color(0xFFFFEBEE),
-            Color(0xFFC62828)
+            MaterialTheme.colorScheme.errorContainer,
+            MaterialTheme.colorScheme.error
         )
         TaskVisualState.Ready -> Triple(
             "已启用",
-            Color(0xFFE8F5E9),
-            Color(0xFF2E7D32)
+            MaterialTheme.colorScheme.secondaryContainer,
+            MaterialTheme.colorScheme.secondary
         )
     }
     Surface(color = container, shape = RoundedCornerShape(4.dp)) {

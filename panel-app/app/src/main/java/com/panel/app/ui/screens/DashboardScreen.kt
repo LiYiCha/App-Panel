@@ -159,33 +159,33 @@ private fun OverviewSection(d: PanelDashboard) {
 
             // 第一行：任务总量
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (d.totalTasks != null) StatChip("任务总数", "${d.totalTasks}", Color(0xFF3B82F6), Modifier.weight(1f))
-                if (d.enabledTasks != null) StatChip("已启用", "${d.enabledTasks}", Color(0xFF10B981), Modifier.weight(1f))
-                if (d.disabledTasks != null) StatChip("已禁用", "${d.disabledTasks}", Color(0xFFEF4444), Modifier.weight(1f))
+                if (d.totalTasks != null) StatChip("任务总数", "${d.totalTasks}", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                if (d.enabledTasks != null) StatChip("已启用", "${d.enabledTasks}", MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                if (d.disabledTasks != null) StatChip("已禁用", "${d.disabledTasks}", MaterialTheme.colorScheme.error, Modifier.weight(1f))
             }
 
             // 第二行：今日执行
             if (d.todayRuns != null) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    StatChip("今日运行", "${d.todayRuns}", Color(0xFF8B5CF6), Modifier.weight(1f))
+                    StatChip("今日运行", "${d.todayRuns}", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
                     if (d.todaySuccess != null) {
-                        StatChip("成功", "${d.todaySuccess}", Color(0xFF10B981), Modifier.weight(1f))
+                        StatChip("成功", "${d.todaySuccess}", MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
                     }
                     if (d.todayFail != null) {
-                        StatChip("失败", "${d.todayFail}", Color(0xFFEF4444), Modifier.weight(1f))
+                        StatChip("失败", "${d.todayFail}", MaterialTheme.colorScheme.error, Modifier.weight(1f))
                     }
                     if (d.successRate != null) {
-                        StatChip("成功率", "${d.successRate}%", Color(0xFF3B82F6), Modifier.weight(1f))
+                        StatChip("成功率", "${d.successRate}%", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                     }
                 }
             }
 
             // 第三行：白虎补充的总量类指标
             val extras = buildList {
-                if (d.scheduledCount != null) add(Triple("调度中", "${d.scheduledCount}", Color(0xFFF59E0B)))
-                if (d.runningCount != null) add(Triple("运行中", "${d.runningCount}", Color(0xFF10B981)))
-                if (d.totalEnvs != null) add(Triple("环境变量", "${d.totalEnvs}", Color(0xFF3B82F6)))
-                if (d.totalLogs != null) add(Triple("日志数", "${d.totalLogs}", Color(0xFF8B5CF6)))
+                if (d.scheduledCount != null) add(Triple("调度中", "${d.scheduledCount}", MaterialTheme.colorScheme.tertiary))
+                if (d.runningCount != null) add(Triple("运行中", "${d.runningCount}", MaterialTheme.colorScheme.secondary))
+                if (d.totalEnvs != null) add(Triple("环境变量", "${d.totalEnvs}", MaterialTheme.colorScheme.primary))
+                if (d.totalLogs != null) add(Triple("日志数", "${d.totalLogs}", MaterialTheme.colorScheme.tertiary))
             }
             if (extras.isNotEmpty()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -254,8 +254,8 @@ private fun TrendSection(points: List<TrendPoint>) {
                 Text("近期没有执行记录", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 val maxTotal = points.maxOf { it.total }.coerceAtLeast(1)
-                val successColor = Color(0xFF10B981)
-                val failColor = Color(0xFFEF4444)
+                val successColor = MaterialTheme.colorScheme.secondary
+                val failColor = MaterialTheme.colorScheme.error
                 val axisColor = MaterialTheme.colorScheme.surfaceVariant
 
                 Canvas(
@@ -349,9 +349,9 @@ private fun RankList(title: String, items: List<TaskRank>) {
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = when (rank.rank) {
-                        1 -> Color(0xFFFFB300)
-                        2 -> Color(0xFF9E9E9E)
-                        3 -> Color(0xFFBF7138)
+                        1 -> MaterialTheme.colorScheme.tertiary
+                        2 -> MaterialTheme.colorScheme.onSurfaceVariant
+                        3 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f)
                         else -> MaterialTheme.colorScheme.surfaceVariant
                     },
                     modifier = Modifier.size(20.dp)
@@ -361,7 +361,7 @@ private fun RankList(title: String, items: List<TaskRank>) {
                             "${rank.rank}",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (rank.rank <= 3) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (rank.rank <= 3) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

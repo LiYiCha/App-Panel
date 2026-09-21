@@ -162,6 +162,95 @@ object LogStorage {
         append('\n')
     }
 
+    // ---------------------------------------------------------- 解析（回灌用）
+
+    /** 解析日志文件尾部文本，恢复成带原始 level/tag 的条目列表 */
+    fun parseTailToEntries(tail: String, maxEntries: Int = 30): List<LogEntry> {
+        val blocks = tail.split(SEPARATOR)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .takeLast(maxEntries)
+        val result = ArrayList<LogEntry>(blocks.size)
+        for (block in blocks) {
+            result.add(parseBlock(block))
+        }
+        return result
+    }
+
+    private fun parseBlock(block: String): LogEntry {
+        val lines = block.lines()
+        val header = lines.firstOrNull() ?: ""
+        // header 格式: "2026-09-21 10:00:00.000  [HTTP_OK]  [HTTP]"
+        val headerMatch = Regex("""^(\S+\s+\S+)\s+\[(\w+)\]\s+\[([^\]]*)\]""").find(header)
+        val timestamp = headerMatch?.groupValues?.get(1) ?: now()
+        val levelStr = headerMatch?.groupValues?.get(2) ?: "INFO"
+        val tag = headerMatch?.groupValues?.get(3) ?: "上次会话"
+        val level = runCatching { LogLevel.valueOf(levelStr) }.getOrDefault(LogLevel.INFO)
+
+        // 去掉 header 行，剩余为 message 及可选的结构化字段
+        val rest = lines.drop(1).joinToString("\n").trim()
+        val message = StringBuilder()
+        var method: String? = null
+        var url: String? = null
+        var code: Int? = null
+        var durationMs: Long? = null
+        var requestBody: String? = null
+        var responseBody: String? = null
+        var error: String? = null
+
+        val fieldRegex = Regex("""^(方法|URL|状态码|请求入参|响应数据|异常报错):""")
+        var currentField: String? = null
+        val currentValue = StringBuilder()
+
+        fun flushField() {
+            when (currentField) {
+                "方法" -> method = currentValue.toString().trim()
+                "URL" -> url = currentValue.toString().trim()
+                "状态码" -> {
+                    val raw = currentValue.toString().trim()
+                    Regex("""(\d+)""").find(raw)?.let { code = it.groupValues[1].toIntOrNull() }
+                    Regex("""耗时:\s*(\d+)""").find(raw)?.let { durationMs = it.groupValues[1].toLongOrNull() }
+                }
+                "请求入参" -> requestBody = currentValue.toString().trim()
+                "响应数据" -> responseBody = currentValue.toString().trim()
+                "异常报错" -> error = currentValue.toString().trim()
+            }
+            currentField = null
+            currentValue.clear()
+        }
+
+        for (line in rest.lines()) {
+            val match = fieldRegex.find(line)
+            if (match != null) {
+                flushField()
+                currentField = match.groupValues[1]
+                val afterColon = line.substring(match.range.last + 1).trim()
+                if (afterColon.isNotEmpty()) currentValue.append(afterColon)
+            } else if (currentField != null) {
+                if (currentValue.isNotEmpty()) currentValue.append('\n')
+                currentValue.append(line)
+            } else {
+                if (message.isNotEmpty()) message.append('\n')
+                message.append(line)
+            }
+        }
+        flushField()
+
+        return LogEntry(
+            timestamp = timestamp,
+            level = level,
+            tag = tag,
+            message = message.toString().trim(),
+            method = method,
+            url = url,
+            code = code,
+            durationMs = durationMs,
+            requestBody = requestBody,
+            responseBody = responseBody,
+            error = error
+        )
+    }
+
     // ---------------------------------------------------------- 清理 / 读取
 
     /** 清除"当前"日志：今天的文件 + 由调用方负责清空内存列表 */
@@ -175,15 +264,32 @@ object LogStorage {
     }
 
     /**
-     * 读取最近一份日志文件的末尾内容。
+     * 读取最近一份日志文件的末尾内容（流式，只读尾部 N 行，避免大文件 OOM）。
      * 冷启动时用它把"上次会话"（尤其上次崩溃）恢复进控制台内存列表。
      */
-    fun readLatestTail(maxLines: Int = 60): String? {
+    fun readLatestTail(maxLines: Int = 80, maxBytes: Long = 128 * 1024): String? {
         val files = allLogFiles()
         for (file in files) {
-            val lines = runCatching { file.readLines() }.getOrNull() ?: continue
-            if (lines.isEmpty()) continue
-            return lines.takeLast(maxLines).joinToString("\n")
+            if (!file.exists() || file.length() == 0L) continue
+            try {
+                val lines = ArrayDeque<String>(maxLines)
+                file.inputStream().bufferedReader(Charsets.UTF_8).use { reader ->
+                    // 只跳到文件末尾前 maxBytes 处，避免把整个大文件读进内存
+                    val skipBytes = (file.length() - maxBytes).coerceAtLeast(0)
+                    if (skipBytes > 0) {
+                        reader.skip(skipBytes)
+                        reader.readLine() // 丢弃可能不完整的第一行
+                    }
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        if (lines.size >= maxLines) lines.removeFirst()
+                        lines.addLast(line!!)
+                    }
+                }
+                if (lines.isNotEmpty()) return lines.joinToString("\n")
+            } catch (_: Exception) {
+                continue
+            }
         }
         return null
     }

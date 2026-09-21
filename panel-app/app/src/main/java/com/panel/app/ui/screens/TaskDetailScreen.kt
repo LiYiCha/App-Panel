@@ -87,14 +87,14 @@ fun TaskDetailScreen(
                         ActionButtonSmall(
                             icon = Icons.Default.Stop,
                             label = "停止",
-                            tint = Color(0xFFEF4444),
+                            tint = MaterialTheme.colorScheme.error,
                             onClick = { viewModel.stopTask(task.id) }
                         )
                     } else {
                         ActionButtonSmall(
                             icon = Icons.Default.PlayArrow,
                             label = "运行",
-                            tint = Color(0xFF10B981),
+                            tint = MaterialTheme.colorScheme.secondary,
                             onClick = { viewModel.runTask(task.id) }
                         )
                     }
@@ -176,8 +176,8 @@ fun TaskDetailScreen(
                                         Surface(
                                             color = when {
                                                 task.isRunning -> MaterialTheme.colorScheme.primaryContainer
-                                                task.isDisabled -> Color(0xFFFFEBEE)
-                                                else -> Color(0xFFE8F5E9)
+                                                task.isDisabled -> MaterialTheme.colorScheme.errorContainer
+                                                else -> MaterialTheme.colorScheme.secondaryContainer
                                             },
                                             shape = RoundedCornerShape(4.dp)
                                         ) {
@@ -186,8 +186,8 @@ fun TaskDetailScreen(
                                                 fontSize = 11.sp,
                                                 color = when {
                                                     task.isRunning -> MaterialTheme.colorScheme.onPrimaryContainer
-                                                    task.isDisabled -> Color(0xFFC62828)
-                                                    else -> Color(0xFF2E7D32)
+                                                    task.isDisabled -> MaterialTheme.colorScheme.error
+                                                    else -> MaterialTheme.colorScheme.secondary
                                                 },
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                             )

@@ -18,6 +18,7 @@ import androidx.navigation.navArgument
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.screens.*
 import com.panel.app.ui.theme.PanelAppTheme
+import com.panel.app.ui.viewmodel.MainUiState
 import com.panel.app.ui.viewmodel.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -31,350 +32,283 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-
             PanelAppTheme(darkTheme = uiState.isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val navController = rememberNavController()
-
-                    val hasLoggedInPanel = uiState.panels.any { !it.token.isNullOrEmpty() || (!it.username.isNullOrEmpty() && !it.password.isNullOrEmpty()) }
-                    val startDest = "main_flow"
-
-                    LaunchedEffect(uiState.isDatabaseReady, hasLoggedInPanel) {
-                        if (uiState.isDatabaseReady && !hasLoggedInPanel) {
-                            navController.navigate("login") {
-                                popUpTo(0) { inclusive = true }
-                            }
-                        }
-                    }
-
-                    fun safePopBack() {
-                        if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
-                            navController.popBackStack()
-                        } else {
-                            navController.navigate("main_flow") {
-                                popUpTo("main_flow") { inclusive = false }
-                                launchSingleTop = true
-                            }
-                        }
-                    }
-
-                    NavHost(
-                        navController = navController,
-                        startDestination = startDest
-                    ) {
-                        composable(
-                            route = "login?panelId={panelId}",
-                            arguments = listOf(
-                                navArgument("panelId") {
-                                    type = NavType.StringType
-                                    nullable = true
-                                    defaultValue = null
-                                }
-                            )
-                        ) { backStackEntry ->
-                            val panelId = backStackEntry.arguments?.getString("panelId")
-                            val editingPanel = remember(panelId, uiState.panels) {
-                                if (panelId != null) uiState.panels.firstOrNull { it.id == panelId } else null
-                            }
-                            LoginScreen(
-                                viewModel = viewModel,
-                                editPanel = editingPanel,
-                                onBack = if (navController.previousBackStackEntry != null) {
-                                    { safePopBack() }
-                                } else null,
-                                onLoginSuccess = {
-                                    navController.navigate("main_flow") {
-                                        popUpTo("login") { inclusive = true }
-                                    }
-                                }
-                            )
-                        }
-
-                        composable("main_flow") {
-                            MainFlowScreen(
-                                viewModel = viewModel,
-                                onNavigateToLogin = {
-                                    navController.navigate("login")
-                                },
-                                onOpenPanelManager = {
-                                    navController.navigate("panel_manager")
-                                },
-                                onOpenTaskDetail = { taskId ->
-                                    navController.navigate("task_detail/$taskId")
-                                },
-                                onOpenLogScreen = { taskNameOrId ->
-                                    val encoded = Uri.encode(taskNameOrId)
-                                    navController.navigate("log_viewer?title=$encoded&taskId=$encoded")
-                                },
-                                onOpenScriptEditorScreen = { scriptPath ->
-                                    val encoded = Uri.encode(scriptPath)
-                                    navController.navigate("standalone_editor/$encoded")
-                                },
-                                onOpenDepsScreen = {
-                                    navController.navigate("standalone_deps")
-                                },
-                                onOpenLoginLogsScreen = {
-                                    navController.navigate("login_logs")
-                                },
-                                onOpenServerLogsScreen = {
-                                    navController.navigate("server_logs")
-                                },
-                                onOpenDashboardScreen = {
-                                    navController.navigate("dashboard")
-                                },
-                                onOpenBackupScreen = {
-                                    navController.navigate("backup_restore")
-                                },
-                                onOpenDevConsoleScreen = {
-                                    navController.navigate("developer_console")
-                                },
-                                onOpenLogHistoryScreen = {
-                                    navController.navigate("execution_history")
-                                },
-                                onOpenSystemSettingsScreen = {
-                                    navController.navigate("system_settings")
-                                },
-                                onOpenPermissionsScreen = {
-                                    navController.navigate("app_permissions")
-                                },
-                                onOpenSubscriptionsScreen = {
-                                    navController.navigate("subscriptions")
-                                },
-                                onNavigateToCreateScript = {
-                                    navController.navigate("create_script")
-                                }
-                            )
-                        }
-
-                        composable("create_script") {
-                            val existingDirs = extractAllDirectories(uiState.scriptTree)
-                            CreateScriptScreen(
-                                viewModel = viewModel,
-                                existingDirs = existingDirs,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable(
-                            route = "log_viewer?title={title}&taskId={taskId}&path={path}&running={running}",
-                            arguments = listOf(
-                                navArgument("title") { type = NavType.StringType; defaultValue = "执行日志" },
-                                navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null },
-                                navArgument("path") { type = NavType.StringType; nullable = true; defaultValue = null },
-                                navArgument("running") { type = NavType.BoolType; defaultValue = false }
-                            )
-                        ) { backStackEntry ->
-                            val title = Uri.decode(backStackEntry.arguments?.getString("title") ?: "执行日志")
-                            val taskId = backStackEntry.arguments?.getString("taskId")?.let { Uri.decode(it) }
-                            val path = backStackEntry.arguments?.getString("path")?.let { Uri.decode(it) }
-                            val running = backStackEntry.arguments?.getBoolean("running") ?: false
-
-                            LogViewerScreen(
-                                title = title,
-                                taskId = taskId ?: "",
-                                logPath = path ?: "",
-                                taskRunning = running,
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("login_logs") {
-                            LoginLogsScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("dashboard") {
-                            DashboardScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("backup_restore") {
-                            BackupRestoreScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("server_logs") {
-                            ServerLogsScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() },
-                                onOpenLogViewer = { title, path ->
-                                    val encTitle = Uri.encode(title)
-                                    val encPath = Uri.encode(path)
-                                    navController.navigate("log_viewer?title=$encTitle&path=$encPath")
-                                }
-                            )
-                        }
-
-                        composable("developer_console") {
-                            DeveloperConsoleScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("panel_manager") {
-                            PanelManagerScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() },
-                                onNavigateToAddPanel = {
-                                    navController.navigate("login")
-                                },
-                                onNavigateToSwitchAccount = { panel ->
-                                    navController.navigate("login?panelId=${panel.id}")
-                                },
-                                onAllPanelsDeleted = {
-                                    navController.navigate("login") {
-                                        popUpTo("panel_manager") { inclusive = true }
-                                    }
-                                }
-                            )
-                        }
-
-                        composable(
-                            route = "execution_history?taskId={taskId}",
-                            arguments = listOf(
-                                navArgument("taskId") {
-                                    type = NavType.StringType
-                                    nullable = true
-                                    defaultValue = null
-                                }
-                            )
-                        ) { backStackEntry ->
-                            val taskId = backStackEntry.arguments?.getString("taskId")?.takeIf { it.isNotBlank() && it != "null" }
-                            ExecutionHistoryScreen(
-                                taskId = taskId,
-                                viewModel = viewModel,
-                                onBack = { safePopBack() },
-                                onOpenLogViewer = { title, logPath, logTaskId, isRunning ->
-                                    val encTitle = Uri.encode(title)
-                                    val encPath = Uri.encode(logPath)
-                                    val encTaskId = Uri.encode(logTaskId)
-                                    navController.navigate("log_viewer?title=$encTitle&path=$encPath&taskId=$encTaskId&running=$isRunning")
-                                }
-                            )
-                        }
-
-                        composable(
-                            route = "task_detail/{taskId}",
-                            arguments = listOf(navArgument("taskId") { type = NavType.StringType })
-                        ) { backStackEntry ->
-                            val taskId = backStackEntry.arguments?.getString("taskId") ?: ""
-                            CompactTaskDetailScreen(
-                                taskId = taskId,
-                                viewModel = viewModel,
-                                onBack = { safePopBack() },
-                                onOpenScriptEditor = { scriptPath ->
-                                    val encoded = Uri.encode(scriptPath)
-                                    navController.navigate("standalone_editor/$encoded")
-                                },
-                                onOpenLog = { title, tId ->
-                                    val encTitle = Uri.encode(title)
-                                    val encId = Uri.encode(tId)
-                                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
-                                },
-                                onOpenHistory = { tId ->
-                                    navController.navigate("execution_history?taskId=$tId")
-                                }
-                            )
-                        }
-
-                        composable(
-                            route = "standalone_log/{taskName}",
-                            arguments = listOf(navArgument("taskName") { type = NavType.StringType })
-                        ) { backStackEntry ->
-                            val rawArg = backStackEntry.arguments?.getString("taskName") ?: ""
-                            val taskIdentifier = Uri.decode(rawArg)
-                            val allTasks = viewModel.uiState.collectAsState().value.tasks
-                            val displayName = allTasks.firstOrNull { it.id == taskIdentifier }?.name ?: taskIdentifier
-                            var logContent by remember(taskIdentifier) { mutableStateOf("正在拉取实时执行日志...") }
-                            LaunchedEffect(taskIdentifier) {
-                                viewModel.getTaskLog(taskIdentifier) { log ->
-                                    logContent = log
-                                }
-                            }
-                            StandaloneLogScreen(
-                                taskName = displayName,
-                                initialLog = logContent,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable(
-                            route = "standalone_editor/{scriptName}",
-                            arguments = listOf(navArgument("scriptName") { type = NavType.StringType })
-                        ) { backStackEntry ->
-                            val rawArg = backStackEntry.arguments?.getString("scriptName") ?: ""
-                            val scriptName = Uri.decode(rawArg)
-                            val uiState = viewModel.uiState.collectAsState()
-                            // 优先使用 ViewModel 缓存，避免重复请求
-                            var scriptContent by remember(scriptName) {
-                                mutableStateOf(uiState.value.scriptViewerCache[scriptName] ?: "")
-                            }
-                            LaunchedEffect(scriptName) {
-                                if (uiState.value.scriptViewerCache[scriptName].isNullOrBlank()) {
-                                    viewModel.readScript(scriptName) { content ->
-                                        scriptContent = content
-                                    }
-                                } else {
-                                    scriptContent = uiState.value.scriptViewerCache[scriptName] ?: ""
-                                }
-                            }
-                            StandaloneScriptEditorScreen(
-                                scriptName = scriptName,
-                                initialContent = scriptContent,
-                                viewModel = viewModel,
-                                onSave = { updatedContent ->
-                                    viewModel.saveScript(scriptName, updatedContent)
-                                },
-                                onAddToTask = { name, command, schedule ->
-                                    viewModel.createTask(name, command, schedule)
-                                },
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("standalone_deps") {
-                            StandaloneDepsScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("system_settings") {
-                            val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
-                            SystemSettingsScreen(
-                                viewModel = viewModel,
-                                panelType = currentPanel?.type ?: PanelType.BAIHU,
-                                dashboard = viewModel.getCachedDashboard(),
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("app_permissions") {
-                            AppPermissionsScreen(
-                                onBack = { safePopBack() }
-                            )
-                        }
-
-                        composable("subscriptions") {
-                            SubscriptionsScreen(
-                                viewModel = viewModel,
-                                onBack = { safePopBack() }
-                            )
-                        }
-                    }
+                    AppNavHost(viewModel = viewModel, uiState = uiState)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
+    val navController = rememberNavController()
+
+    val hasLoggedInPanel = uiState.panels.any {
+        !it.token.isNullOrEmpty() || (!it.username.isNullOrEmpty() && !it.password.isNullOrEmpty())
+    }
+
+    LaunchedEffect(uiState.isDatabaseReady, hasLoggedInPanel) {
+        if (uiState.isDatabaseReady && !hasLoggedInPanel) {
+            navController.navigate("login") { popUpTo(0) { inclusive = true } }
+        }
+    }
+
+    fun safePopBack() {
+        if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
+            navController.popBackStack()
+        } else {
+            navController.navigate("main_flow") {
+                popUpTo("main_flow") { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    NavHost(navController = navController, startDestination = "main_flow") {
+        composable(
+            route = "login?panelId={panelId}",
+            arguments = listOf(
+                navArgument("panelId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val panelId = backStackEntry.arguments?.getString("panelId")
+            val editingPanel = remember(panelId, uiState.panels) {
+                if (panelId != null) uiState.panels.firstOrNull { it.id == panelId } else null
+            }
+            LoginScreen(
+                viewModel = viewModel,
+                editPanel = editingPanel,
+                onBack = if (navController.previousBackStackEntry != null) {
+                    { safePopBack() }
+                } else null,
+                onLoginSuccess = {
+                    navController.navigate("main_flow") { popUpTo("login") { inclusive = true } }
+                }
+            )
+        }
+
+        composable("main_flow") {
+            MainFlowScreen(
+                viewModel = viewModel,
+                onNavigateToLogin = { navController.navigate("login") },
+                onOpenPanelManager = { navController.navigate("panel_manager") },
+                onOpenTaskDetail = { taskId -> navController.navigate("task_detail/$taskId") },
+                onOpenLogScreen = { taskNameOrId ->
+                    val encoded = Uri.encode(taskNameOrId)
+                    navController.navigate("log_viewer?title=$encoded&taskId=$encoded")
+                },
+                onOpenScriptEditorScreen = { scriptPath ->
+                    val encoded = Uri.encode(scriptPath)
+                    navController.navigate("standalone_editor/$encoded")
+                },
+                onOpenDepsScreen = { navController.navigate("standalone_deps") },
+                onOpenLoginLogsScreen = { navController.navigate("login_logs") },
+                onOpenServerLogsScreen = { navController.navigate("server_logs") },
+                onOpenDashboardScreen = { navController.navigate("dashboard") },
+                onOpenBackupScreen = { navController.navigate("backup_restore") },
+                onOpenDevConsoleScreen = { navController.navigate("developer_console") },
+                onOpenLogHistoryScreen = { navController.navigate("execution_history") },
+                onOpenSystemSettingsScreen = { navController.navigate("system_settings") },
+                onOpenPermissionsScreen = { navController.navigate("app_permissions") },
+                onOpenSubscriptionsScreen = { navController.navigate("subscriptions") },
+                onNavigateToCreateScript = { navController.navigate("create_script") }
+            )
+        }
+
+        composable("create_script") {
+            val existingDirs = extractAllDirectories(uiState.scriptTree)
+            CreateScriptScreen(
+                viewModel = viewModel,
+                existingDirs = existingDirs,
+                onBack = { safePopBack() }
+            )
+        }
+
+        composable(
+            route = "log_viewer?title={title}&taskId={taskId}&path={path}&running={running}",
+            arguments = listOf(
+                navArgument("title") { type = NavType.StringType; defaultValue = "执行日志" },
+                navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("path") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("running") { type = NavType.BoolType; defaultValue = false }
+            )
+        ) { backStackEntry ->
+            val title = Uri.decode(backStackEntry.arguments?.getString("title") ?: "执行日志")
+            val taskId = backStackEntry.arguments?.getString("taskId")?.let { Uri.decode(it) }
+            val path = backStackEntry.arguments?.getString("path")?.let { Uri.decode(it) }
+            val running = backStackEntry.arguments?.getBoolean("running") ?: false
+
+            LogViewerScreen(
+                title = title,
+                taskId = taskId ?: "",
+                logPath = path ?: "",
+                taskRunning = running,
+                viewModel = viewModel,
+                onBack = { safePopBack() }
+            )
+        }
+
+        composable("login_logs") {
+            LoginLogsScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        composable("dashboard") {
+            DashboardScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        composable("backup_restore") {
+            BackupRestoreScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        composable("server_logs") {
+            ServerLogsScreen(
+                viewModel = viewModel,
+                onBack = { safePopBack() },
+                onOpenLogViewer = { title, path ->
+                    val encTitle = Uri.encode(title)
+                    val encPath = Uri.encode(path)
+                    navController.navigate("log_viewer?title=$encTitle&path=$encPath")
+                }
+            )
+        }
+
+        composable("developer_console") {
+            DeveloperConsoleScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        composable("panel_manager") {
+            PanelManagerScreen(
+                viewModel = viewModel,
+                onBack = { safePopBack() },
+                onNavigateToAddPanel = { navController.navigate("login") },
+                onNavigateToSwitchAccount = { panel ->
+                    navController.navigate("login?panelId=${panel.id}")
+                },
+                onAllPanelsDeleted = {
+                    navController.navigate("login") { popUpTo("panel_manager") { inclusive = true } }
+                }
+            )
+        }
+
+        composable(
+            route = "execution_history?taskId={taskId}",
+            arguments = listOf(
+                navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
+        ) { backStackEntry ->
+            val taskId = backStackEntry.arguments?.getString("taskId")?.takeIf { it.isNotBlank() && it != "null" }
+            ExecutionHistoryScreen(
+                taskId = taskId,
+                viewModel = viewModel,
+                onBack = { safePopBack() },
+                onOpenLogViewer = { title, logPath, logTaskId, isRunning ->
+                    val encTitle = Uri.encode(title)
+                    val encPath = Uri.encode(logPath)
+                    val encTaskId = Uri.encode(logTaskId)
+                    navController.navigate("log_viewer?title=$encTitle&path=$encPath&taskId=$encTaskId&running=$isRunning")
+                }
+            )
+        }
+
+        composable(
+            route = "task_detail/{taskId}",
+            arguments = listOf(navArgument("taskId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val taskId = backStackEntry.arguments?.getString("taskId") ?: ""
+            CompactTaskDetailScreen(
+                taskId = taskId,
+                viewModel = viewModel,
+                onBack = { safePopBack() },
+                onOpenScriptEditor = { scriptPath ->
+                    val encoded = Uri.encode(scriptPath)
+                    navController.navigate("standalone_editor/$encoded")
+                },
+                onOpenLog = { title, tId ->
+                    val encTitle = Uri.encode(title)
+                    val encId = Uri.encode(tId)
+                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
+                },
+                onOpenHistory = { tId ->
+                    navController.navigate("execution_history?taskId=$tId")
+                }
+            )
+        }
+
+        composable(
+            route = "standalone_log/{taskName}",
+            arguments = listOf(navArgument("taskName") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val rawArg = backStackEntry.arguments?.getString("taskName") ?: ""
+            val taskIdentifier = Uri.decode(rawArg)
+            val allTasks = viewModel.uiState.collectAsState().value.tasks
+            val displayName = allTasks.firstOrNull { it.id == taskIdentifier }?.name ?: taskIdentifier
+            var logContent by remember(taskIdentifier) { mutableStateOf("正在拉取实时执行日志...") }
+            LaunchedEffect(taskIdentifier) {
+                viewModel.getTaskLog(taskIdentifier) { log -> logContent = log }
+            }
+            StandaloneLogScreen(
+                taskName = displayName,
+                initialLog = logContent,
+                onBack = { safePopBack() }
+            )
+        }
+
+        composable(
+            route = "standalone_editor/{scriptName}",
+            arguments = listOf(navArgument("scriptName") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val rawArg = backStackEntry.arguments?.getString("scriptName") ?: ""
+            val scriptName = Uri.decode(rawArg)
+            val uiStateValue = viewModel.uiState.collectAsState()
+            var scriptContent by remember(scriptName) {
+                mutableStateOf(uiStateValue.value.scriptViewerCache[scriptName] ?: "")
+            }
+            LaunchedEffect(scriptName) {
+                if (uiStateValue.value.scriptViewerCache[scriptName].isNullOrBlank()) {
+                    viewModel.readScript(scriptName) { content -> scriptContent = content }
+                } else {
+                    scriptContent = uiStateValue.value.scriptViewerCache[scriptName] ?: ""
+                }
+            }
+            StandaloneScriptEditorScreen(
+                scriptName = scriptName,
+                initialContent = scriptContent,
+                viewModel = viewModel,
+                onSave = { updatedContent -> viewModel.saveScript(scriptName, updatedContent) },
+                onAddToTask = { name, command, schedule -> viewModel.createTask(name, command, schedule) },
+                onBack = { safePopBack() }
+            )
+        }
+
+        composable("standalone_deps") {
+            StandaloneDepsScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        composable("system_settings") {
+            val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
+            SystemSettingsScreen(
+                viewModel = viewModel,
+                panelType = currentPanel?.type ?: PanelType.BAIHU,
+                dashboard = viewModel.getCachedDashboard(),
+                onBack = { safePopBack() }
+            )
+        }
+
+        composable("app_permissions") {
+            AppPermissionsScreen(onBack = { safePopBack() })
+        }
+
+        composable("subscriptions") {
+            SubscriptionsScreen(viewModel = viewModel, onBack = { safePopBack() })
         }
     }
 }

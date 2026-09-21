@@ -49,6 +49,8 @@ enum class LogLevel {
  */
 object AppLogger {
     private const val MAX_LOGS = 500
+    /** 单条 HTTP body 最大保留字符数，超出截断，避免内存暴涨 */
+    private const val MAX_BODY_CHARS = 4000
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val idSequence = AtomicLong(0)
@@ -58,18 +60,21 @@ object AppLogger {
     /** 只读给 UI 用；写入全部经 [append] 收敛到主线程 */
     val logs = mutableStateListOf<LogEntry>()
 
+    /** 单条日志 message 最大字符数 */
+    private const val MAX_MESSAGE_CHARS = 2000
+
+    /** 回灌到内存的上次会话日志条数上限，避免启动时一次性塞太多 */
+    private const val MAX_RESTORED_ENTRIES = 30
+
     /** Application.onCreate 里调用一次：初始化落盘目录，并回灌上次会话的日志尾部 */
     fun init(context: Context) {
         LogStorage.init(context)
         val tail = runCatching { LogStorage.readLatestTail() }.getOrNull() ?: return
-        val entry = LogEntry(
-            id = idSequence.incrementAndGet(),
-            timestamp = LogStorage.now(),
-            level = LogLevel.INFO,
-            tag = "上次会话",
-            message = "以下为上次运行遗留的日志尾部（已按保留天数持久化在本地）：\n$tail"
-        )
-        append(entry)
+        // 解析回原始 level/tag，HTTP 日志显示绿色、错误显示红色，和正常日志一致
+        val entries = LogStorage.parseTailToEntries(tail, MAX_RESTORED_ENTRIES)
+        entries.forEach { entry ->
+            append(entry.copy(id = idSequence.incrementAndGet()))
+        }
     }
 
     fun log(level: LogLevel, tag: String, message: String, error: String? = null) {
@@ -129,13 +134,13 @@ object AppLogger {
             message = "未捕获异常 线程[${thread.name}]: ${throwable.message ?: throwable.javaClass.simpleName}",
             error = android.util.Log.getStackTraceString(throwable)
         )
-        // 第一优先级：同步写文件，进程死前必须落盘
+        // 第一优先级：同步写文件（完整内容），进程死前必须落盘
         runCatching { LogStorage.appendSync(entry) }
         // 第二优先级：如果主线程还活着（后台线程崩溃），让控制台立刻可见
         if (isMainThread()) {
-            appendOnMain(entry)
+            appendOnMain(entry, persist = false)
         } else {
-            mainHandler.post { appendOnMain(entry) }
+            mainHandler.post { appendOnMain(entry, persist = false) }
         }
     }
 
@@ -158,12 +163,29 @@ object AppLogger {
         }
     }
 
-    private fun appendOnMain(entry: LogEntry) {
+    private fun appendOnMain(entry: LogEntry, persist: Boolean = true) {
+        // 1. 完整内容写文件（不截断，保证可追溯）
+        if (persist) LogStorage.appendAsync(entry)
+        // 2. 截断后加入内存列表（防止 OOM，UI 只看摘要）
+        val memoryEntry = entry.toMemoryEntry()
         if (logs.size >= MAX_LOGS) {
             logs.removeAt(0)
         }
-        logs.add(entry)
-        // 同步落盘（异步写不阻塞 UI，崩溃另有 recordCrash 的同步路径）
-        LogStorage.appendAsync(entry)
+        logs.add(memoryEntry)
     }
+
+    /**
+     * 生成内存版条目：超长字段截断，避免内存里 500 条大响应吃光内存。
+     * 完整内容仍保留在 [LogStorage] 的文件中。
+     */
+    private fun LogEntry.toMemoryEntry(): LogEntry = copy(
+        message = message.truncate(MAX_MESSAGE_CHARS),
+        requestBody = requestBody?.truncate(MAX_BODY_CHARS),
+        responseBody = responseBody?.truncate(MAX_BODY_CHARS),
+        error = error?.truncate(MAX_BODY_CHARS)
+    )
+
+    /** 超长文本截断，避免单条日志吃掉太多内存 */
+    private fun String.truncate(max: Int): String =
+        if (length <= max) this else substring(0, max) + "…(完整内容见日志文件)"
 }

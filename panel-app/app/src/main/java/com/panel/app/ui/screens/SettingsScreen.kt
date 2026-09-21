@@ -179,7 +179,7 @@ fun SettingsScreen(
                     val isOnline = isReachable == true
                     Surface(
                         color = if (isReachable == null) MaterialTheme.colorScheme.surfaceVariant
-                        else if (isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                        else if (isOnline) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(
@@ -189,7 +189,7 @@ fun SettingsScreen(
                         ) {
                             Surface(
                                 color = if (isReachable == null) MaterialTheme.colorScheme.outline
-                                else if (isOnline) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                else if (isOnline) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                                 shape = CircleShape,
                                 modifier = Modifier.size(5.dp)
                             ) {}
@@ -198,7 +198,7 @@ fun SettingsScreen(
                                 else if (isOnline) "在线 (${pingLatency ?: "正常"})" else "离线",
                                 fontSize = 9.sp,
                                 color = if (isReachable == null) MaterialTheme.colorScheme.onSurfaceVariant
-                                else if (isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
+                                else if (isOnline) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
                             )
                         }
                     }
@@ -213,8 +213,8 @@ fun SettingsScreen(
                 ) {
                     CompactMetricChip("CPU", remoteDashboard?.cpuUsage ?: currentPanel.cpuUsage, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                     CompactMetricChip("内存", remoteDashboard?.memUsage ?: currentPanel.ramUsage, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
-                    CompactMetricChip("任务", "$enabledTasks/${uiState.tasks.size}", Color(0xFF2E7D32), Modifier.weight(1f))
-                    CompactMetricChip("变量", "$totalEnvs 个", Color(0xFF0288D1), Modifier.weight(1f))
+                    CompactMetricChip("任务", "$enabledTasks/${uiState.tasks.size}", MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                    CompactMetricChip("变量", "$totalEnvs 个", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -394,7 +394,7 @@ fun SettingsScreen(
                 title = "开发者控制台",
                 desc = if (uiState.isDevMode) "已开启调试捕获" else "点击开启请求抓包",
                 badge = if (uiState.isDevMode) "ON" else "OFF",
-                badgeColor = if (uiState.isDevMode) Color(0xFF10B981) else Color.Gray,
+                badgeColor = if (uiState.isDevMode) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
                 onClick = {
                     if (uiState.isDevMode) onOpenDevConsole() else viewModel.toggleDevMode(true)
@@ -616,7 +616,7 @@ fun SettingsScreen(
                                 dlHolder.value = dlHolder.value.copy(dlDone = true)
                                 showUpdateDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
@@ -644,7 +644,7 @@ fun SettingsScreen(
                                 dlHolder.value = dlHolder.value.copy(dlDone = false, dlState = null)
                                 showUpdateDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))

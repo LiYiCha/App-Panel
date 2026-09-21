@@ -471,7 +471,7 @@ fun FlatScriptRowItem(
                             }
                         },
                         contentDescription = null,
-                        tint = if (node.isDir) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary,
+                        tint = if (node.isDir) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(6.dp))

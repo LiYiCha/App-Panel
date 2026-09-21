@@ -270,8 +270,8 @@ fun ConfigEditorScreen(
                                     ) {
                                         Surface(
                                             color = when {
-                                                isSh -> Color(0xFF10B981).copy(alpha = 0.12f)
-                                                isJson -> Color(0xFF3B82F6).copy(alpha = 0.12f)
+                                                isSh -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                                                isJson -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                                 else -> MaterialTheme.colorScheme.primaryContainer
                                             },
                                             shape = RoundedCornerShape(8.dp),
@@ -286,8 +286,8 @@ fun ConfigEditorScreen(
                                                     },
                                                     contentDescription = null,
                                                     tint = when {
-                                                        isSh -> Color(0xFF10B981)
-                                                        isJson -> Color(0xFF3B82F6)
+                                                        isSh -> MaterialTheme.colorScheme.secondary
+                                                        isJson -> MaterialTheme.colorScheme.primary
                                                         else -> MaterialTheme.colorScheme.primary
                                                     },
                                                     modifier = Modifier.size(20.dp)

@@ -89,7 +89,7 @@ fun CompactTaskDetailScreen(
                         onBack()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("确认删除", color = Color.White) }
+                ) { Text("确认删除", color = MaterialTheme.colorScheme.onError) }
             },
             dismissButton = { TextButton(onClick = { deletingTask = false }) { Text("取消") } }
         )
@@ -133,14 +133,14 @@ fun CompactTaskDetailScreen(
                         ActionButtonSmall(
                             icon = Icons.Default.Stop,
                             label = "停止",
-                            tint = Color(0xFFEF4444),
+                            tint = MaterialTheme.colorScheme.error,
                             onClick = { viewModel.stopTask(task.id) }
                         )
                     } else {
                         ActionButtonSmall(
                             icon = Icons.Default.PlayArrow,
                             label = "运行",
-                            tint = Color(0xFF10B981),
+                            tint = MaterialTheme.colorScheme.secondary,
                             onClick = { viewModel.runTask(task.id) }
                         )
                     }
@@ -183,10 +183,10 @@ fun CompactTaskDetailScreen(
             item {
                 NavigableActionCard(
                     icon = Icons.Default.Terminal,
-                    title = "实时执行终端日志",
-                    subtitle = if (task.isRunning) "任务当前正在运行中，点击跟随实时日志流" else "点击查看最新运行终端日志输出",
+                    title = "最新日志",
+                    subtitle = if (task.isRunning) "任务当前正在运行中，点击跟随实时日志流" else "点击查看最新日志输出",
                     badge = if (task.isRunning) "运行中" else "查看日志",
-                    badgeColor = if (task.isRunning) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
+                    badgeColor = if (task.isRunning) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
                     onClick = { onOpenLog(task.name, task.id) }
                 )
             }
@@ -246,9 +246,9 @@ fun CompactTaskDetailScreen(
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Surface(
                                     color = when {
-                                        task.isRunning -> Color(0xFFE8F5E9)
-                                        task.isDisabled -> Color(0xFFFFEBEE)
-                                        else -> Color(0xFFE3F2FD)
+                                        task.isRunning -> MaterialTheme.colorScheme.secondaryContainer
+                                        task.isDisabled -> MaterialTheme.colorScheme.errorContainer
+                                        else -> MaterialTheme.colorScheme.primaryContainer
                                     },
                                     shape = RoundedCornerShape(4.dp)
                                 ) {
@@ -257,9 +257,9 @@ fun CompactTaskDetailScreen(
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = when {
-                                            task.isRunning -> Color(0xFF2E7D32)
-                                            task.isDisabled -> Color(0xFFC62828)
-                                            else -> Color(0xFF1565C0)
+                                            task.isRunning -> MaterialTheme.colorScheme.secondary
+                                            task.isDisabled -> MaterialTheme.colorScheme.error
+                                            else -> MaterialTheme.colorScheme.primary
                                         },
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )

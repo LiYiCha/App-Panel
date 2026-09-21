@@ -211,9 +211,9 @@ fun StandaloneLogScreen(
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = fontSizeSp.sp,
                                         color = when {
-                                            line.contains("SUCCESS") || line.contains("成功") -> Color(0xFF2E7D32)
+                                            line.contains("SUCCESS") || line.contains("成功") -> MaterialTheme.colorScheme.secondary
                                             line.contains("ERROR") || line.contains("FAIL") || line.contains("失败") -> MaterialTheme.colorScheme.error
-                                            line.contains("WARN") -> Color(0xFFF57C00)
+                                            line.contains("WARN") -> MaterialTheme.colorScheme.tertiary
                                             line.contains("EXEC") -> MaterialTheme.colorScheme.primary
                                             else -> MaterialTheme.colorScheme.onSurface
                                         }

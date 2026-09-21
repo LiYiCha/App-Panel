@@ -207,7 +207,7 @@ fun PanelManagerScreen(
                                     val hasCredentials = !panel.token.isNullOrEmpty() || (!panel.username.isNullOrEmpty() && !panel.password.isNullOrEmpty())
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
-                                        color = if (hasCredentials) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
+                                        color = if (hasCredentials) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
@@ -217,12 +217,12 @@ fun PanelManagerScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .size(5.dp)
-                                                    .background(if (hasCredentials) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline, CircleShape)
+                                                    .background(if (hasCredentials) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline, CircleShape)
                                             )
                                             Text(
                                                 text = if (hasCredentials) "已授权" else "需登录",
                                                 fontSize = 10.sp,
-                                                color = if (hasCredentials) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = if (hasCredentials) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 fontWeight = FontWeight.Medium
                                             )
                                         }
