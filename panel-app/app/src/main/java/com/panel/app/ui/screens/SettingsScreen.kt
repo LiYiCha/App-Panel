@@ -91,6 +91,24 @@ fun SettingsScreen(
     val dlHolder = remember { mutableStateOf(DownloadStateHolder()) }
     var dlJob by remember { mutableStateOf<Job?>(null) }
 
+    // 缓存大小（APK + 面板数据缓存）
+    var cacheSizeText by remember { mutableStateOf<String>("计算中...") }
+    fun refreshCacheSize() {
+        val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+        val apkUrl = File(context.cacheDir, "Panel-App-download.apk.url")
+        val dataCacheDir = File(context.filesDir, "cache")
+        var total = 0L
+        if (apkFile.exists()) total += apkFile.length()
+        if (apkUrl.exists()) total += apkUrl.length()
+        if (dataCacheDir.exists()) dataCacheDir.listFiles()?.forEach { total += it.length() }
+        cacheSizeText = when {
+            total >= 1024 * 1024 -> "${String.format("%.1f", total.toDouble() / 1024 / 1024)} MB"
+            total >= 1024 -> "${String.format("%.1f", total.toDouble() / 1024)} KB"
+            else -> "${total} B"
+        }
+    }
+    LaunchedEffect(Unit) { refreshCacheSize() }
+
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
         val latency = withContext(Dispatchers.IO) {
@@ -457,6 +475,29 @@ fun SettingsScreen(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
+                // 清除缓存（APK 安装包 + 面板数据缓存）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+                            val apkUrl = File(context.cacheDir, "Panel-App-download.apk.url")
+                            apkFile.delete()
+                            apkUrl.delete()
+                            val dataCacheDir = File(context.filesDir, "cache")
+                            if (dataCacheDir.exists()) dataCacheDir.listFiles()?.forEach { it.delete() }
+                            refreshCacheSize()
+                            Toast.makeText(context, "缓存已清除", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("清除缓存", fontSize = 12.sp)
+                    Text("$cacheSizeText 清除 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
                 // 应用权限管理入口
                 Row(
                     modifier = Modifier
@@ -542,7 +583,16 @@ fun SettingsScreen(
     if (showUpdateDialog && updateInfo != null) {
         val info = updateInfo!!
         // 检查缓存目录是否已有已下载的 APK，允许直接安装无需重新下载
-        val cachedApk = File(context.cacheDir, "Panel-App-download.apk").takeIf { it.exists() && it.length() > 0 }
+        // 必须校验下载来源 URL：旧版本 APK 缓存不能用于新版安装，否则陷入"安装了还是旧包"的死循环
+        val cachedApkFile = File(context.cacheDir, "Panel-App-download.apk")
+        val cachedUrlFile = File(context.cacheDir, "Panel-App-download.apk.url")
+        val cachedApk = if (cachedApkFile.exists() && cachedApkFile.length() > 0
+            && cachedUrlFile.exists() && cachedUrlFile.readText() == info.downloadUrl
+        ) cachedApkFile else {
+            cachedApkFile.delete()
+            cachedUrlFile.delete()
+            null
+        }
         AlertDialog(
             onDismissRequest = {
                 dlJob?.cancel()
@@ -715,6 +765,7 @@ fun runDownload(
             }
         },
         onSuccess = { file ->
+            File(context.cacheDir, "Panel-App-download.apk.url").writeText(url)
             mainHandler.post {
                 holder.value = holder.value.copy(
                     dlDownloading = false, dlDone = true,
