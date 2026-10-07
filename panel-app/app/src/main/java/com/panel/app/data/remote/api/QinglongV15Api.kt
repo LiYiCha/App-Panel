@@ -75,7 +75,7 @@ data class QlCronItem(
     val createdAt: String? = null,
     @SerializedName(value = "updatedAt", alternate = ["updated_at", "updated"])
     val updatedAt: String? = null,
-    val pid: Int? = null,
+    val pid: Any? = null,
     @SerializedName(value = "log_path", alternate = ["logPath", "log"])
     val log_path: String? = null
 ) {
@@ -164,13 +164,13 @@ data class QlCronInstanceItem(
     val status: Int?,
     @SerializedName(value = "exit_code", alternate = ["exitCode", "exit_status", "exitStatus", "code"])
     val exit_code: Int?,
-    val pid: Int? = null
+    val pid: Any? = null
 )
 
 data class QlCronInstancesResp(
     override val code: Int?,
     override val message: String?,
-    val data: List<QlCronInstanceItem>?
+    val data: com.google.gson.JsonElement?
 ) : ApiEnvelope {
     override val msg: String? get() = null
 }

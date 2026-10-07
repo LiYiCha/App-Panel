@@ -129,7 +129,7 @@ fun LoginLogsScreen(
                         val address = log["address"]?.toString() ?: log["info"]?.toString() ?: "本地网络/内网"
                         val time = log["createdAt"]?.toString() ?: log["timestamp"]?.toString() ?: log["time"]?.toString() ?: "--"
                         val status = log["status"]?.toString() ?: "0"
-                        val isSuccess = status == "0" || status.equals("success", ignoreCase = true) || status == "1"
+                        val isSuccess = status == "0" || status.equals("success", ignoreCase = true)
 
                         ElevatedCard(
                             modifier = Modifier.fillMaxWidth(),

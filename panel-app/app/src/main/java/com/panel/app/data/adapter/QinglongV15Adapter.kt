@@ -204,7 +204,11 @@ class QinglongV15Adapter(
             allowMultipleInstances = allow_multiple_instances == 1,
             createdAt = createdAt,
             updatedAt = updatedAt,
-            pid = pid
+            pid = when (pid) {
+                is Number -> pid.toInt()
+                is String -> pid.toIntOrNull()
+                else -> null
+            }
         )
     }
 
@@ -385,7 +389,7 @@ class QinglongV15Adapter(
                 instancesErr = it
                 return@runCatching emptyList()
             }
-            envelope.data.orEmpty().mapIndexed { index, inst ->
+            parseInstanceArray(envelope.data).mapIndexed { index, inst ->
                 val startMs = QinglongApiHelpers.parseTimestampToMillis(inst.started_at)
                     ?: QinglongApiHelpers.parseTimestampToMillis(inst.created_at)
                 val finishMs = QinglongApiHelpers.parseTimestampToMillis(inst.finished_at)
@@ -427,7 +431,11 @@ class QinglongV15Adapter(
                         else -> "完成"
                     },
                     logPath = inst.log_path,
-                    pid = runCatching { inst.pid?.toInt() }.getOrNull()
+                    pid = when (val p = inst.pid) {
+                        is Number -> p.toInt()
+                        is String -> p.toIntOrNull()
+                        else -> null
+                    }
                 )
             }
         }.getOrNull().orEmpty()
@@ -1039,6 +1047,17 @@ class QinglongV15Adapter(
     private fun parseDepArray(data: com.google.gson.JsonElement?): List<QlDepItem> {
         if (data == null) return emptyList()
         val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlDepItem::class.java).type
+        return when {
+            data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
+            data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->
+                com.google.gson.Gson().fromJson(data.asJsonObject.get("data"), type) ?: emptyList()
+            else -> emptyList()
+        }
+    }
+
+    private fun parseInstanceArray(data: com.google.gson.JsonElement?): List<QlCronInstanceItem> {
+        if (data == null) return emptyList()
+        val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, QlCronInstanceItem::class.java).type
         return when {
             data.isJsonArray -> com.google.gson.Gson().fromJson(data, type) ?: emptyList()
             data.isJsonObject && data.asJsonObject.get("data")?.isJsonArray == true ->

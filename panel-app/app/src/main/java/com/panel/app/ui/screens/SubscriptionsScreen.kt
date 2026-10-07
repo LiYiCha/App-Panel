@@ -395,7 +395,39 @@ fun RepoSyncCard(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 1. 顶部标题行：图标/复选框 + 名称 + 状态微标 + 分支标签 + 右侧操作按钮
+            // 1. 名称行：图标/复选框 + 名称（独占一行，保证名称始终可见）
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isBatchMode) {
+                    Checkbox(
+                        checked = sub.selected,
+                        onCheckedChange = { onSelect() },
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.ForkRight,
+                        contentDescription = null,
+                        tint = statusColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Text(
+                    text = sub.name,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).widthIn(min = 0.dp)
+                )
+            }
+
+            // 2. 状态徽标 + 分支标签 + 操作按钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -404,34 +436,9 @@ fun RepoSyncCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.weight(1f, fill = false)
+                    modifier = Modifier.weight(1f).widthIn(min = 0.dp)
                 ) {
-                    if (isBatchMode) {
-                        Checkbox(
-                            checked = sub.selected,
-                            onCheckedChange = { onSelect() },
-                            modifier = Modifier.size(20.dp)
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.ForkRight,
-                            contentDescription = null,
-                            tint = statusColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    Text(
-                        text = sub.name,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-
-                    // 状态徽标 (紧随标题，不另起一行)
+                    // 状态徽标
                     Surface(
                         color = when {
                             isRunning -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
@@ -461,7 +468,7 @@ fun RepoSyncCard(
                         }
                     }
 
-                    // 分支标签 (增加最大宽度限制与省略保护)
+                    // 分支标签
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                         shape = RoundedCornerShape(4.dp)
@@ -480,7 +487,7 @@ fun RepoSyncCard(
                     }
                 }
 
-                // 操作按钮区 (包含立即同步/停止、日志、编辑、删除)
+                // 操作按钮区
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -512,7 +519,7 @@ fun RepoSyncCard(
                 }
             }
 
-            // 2. 仓库地址行（增加 weight 约束，防止长地址挤压复制图标）
+            // 3. 仓库地址行（增加 weight 约束，防止长地址挤压复制图标）
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(6.dp),
@@ -562,7 +569,7 @@ fun RepoSyncCard(
                 }
             }
 
-            // 3. 配置规则与属性标签（横向滚动 + 最大宽度限制，避免长白名单/黑名单破损布局）
+            // 4. 配置规则与属性标签（横向滚动 + 最大宽度限制，避免长白名单/黑名单破损布局）
             val hasTags = sub.autoAddCron || sub.whitelist.isNotBlank() || sub.blacklist.isNotBlank() || sub.languages.isNotEmpty() || sub.location.isNotBlank()
             if (hasTags) {
                 Row(
@@ -635,7 +642,7 @@ fun RepoSyncCard(
                 }
             }
 
-            // 4. 定时调度与最近执行状态（两端加装权重限制，超长时自然截断）
+            // 5. 定时调度与最近执行状态（两端加装权重限制，超长时自然截断）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

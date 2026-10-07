@@ -29,6 +29,11 @@ class QinglongV10Adapter(
     private val api: QinglongV10Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV10Api::class.java)
     private var currentToken: String? = instance.token
 
+    /** 登录探测到实际版本 >= 2.15 时置 true，提示上层切换到 V15 适配器 */
+    @Volatile
+    override var needsVersionUpgrade: Boolean = false
+        private set
+
     private fun cleanToken(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
         var t = raw.trim().removeSurrounding("\"").removeSurrounding("'").trim()
@@ -71,6 +76,34 @@ class QinglongV10Adapter(
 
     private fun toIds(ids: List<String>): List<Long> = ids.mapNotNull { it.toLongOrNull() }
 
+    /** 主动探测面板版本，若 >= 2.15 则设置 needsVersionUpgrade = true 并返回 true */
+    suspend fun probeVersion(): Boolean {
+        if (needsVersionUpgrade) return true
+        val t = cleanToken(currentToken ?: instance.token)
+        if (t.isBlank()) return false
+        return try {
+            val sysResp = api.getSystemInfo("Bearer $t")
+            if (sysResp.isSuccessful) {
+                val data = sysResp.body()?.data
+                val version = data?.let { d ->
+                    if (d.isJsonObject) d.asJsonObject.get("version")?.asString else null
+                }
+                if (version != null) {
+                    val parts = version.split(".")
+                    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                    if (major > 2 || (major == 2 && minor >= 15)) {
+                        needsVersionUpgrade = true
+                        return true
+                    }
+                }
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     override suspend fun authenticate(): Result<String> {
         val user = instance.username?.trim().orEmpty()
         val pass = instance.password?.trim().orEmpty()
@@ -96,6 +129,26 @@ class QinglongV10Adapter(
             return Result.failure(Exception("登录失败: 服务端返回无效的空 token"))
         }
         currentToken = token
+
+        // 版本探测：如果 /api/system 返回 version >= 2.15，说明实际是 V15 面板
+        try {
+            val sysResp = api.getSystemInfo("Bearer $token")
+            if (sysResp.isSuccessful) {
+                val data = sysResp.body()?.data
+                val version = data?.let { d ->
+                    if (d.isJsonObject) d.asJsonObject.get("version")?.asString else null
+                }
+                if (version != null) {
+                    val parts = version.split(".")
+                    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                    if (major > 2 || (major == 2 && minor >= 15)) {
+                        needsVersionUpgrade = true
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+
         return Result.success(token)
     }
 
@@ -170,7 +223,11 @@ class QinglongV10Adapter(
             lastRunTime = lastRunTimeStr,
             createdAt = createdAt,
             updatedAt = updatedAt,
-            pid = pid
+            pid = when (pid) {
+                is Number -> pid.toInt()
+                is String -> pid.toIntOrNull()
+                else -> null
+            }
         )
     }
 

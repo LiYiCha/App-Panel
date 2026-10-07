@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.Flow
 interface IPanelAdapter {
     val instance: PanelInstance
 
+    /** V10 适配器登录时探测到实际版本 >= 2.15，则标记为 true，提示上层自动升级面板类型 */
+    val needsVersionUpgrade: Boolean get() = false
+
     // 1. 认证
     suspend fun authenticate(): Result<String>
 

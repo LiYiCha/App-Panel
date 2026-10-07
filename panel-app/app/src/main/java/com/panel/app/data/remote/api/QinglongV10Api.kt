@@ -222,4 +222,10 @@ interface QinglongV10Api {
         @Query("limit") limit: Int? = null,
         @Query("tail") tail: Boolean? = null
     ): Response<QlLogChunkResp>
+
+    // 10. 系统信息（用于版本探测：V10 无此端点，2.15+ 返回版本号）
+    @GET("api/system")
+    suspend fun getSystemInfo(
+        @Header("Authorization") auth: String
+    ): Response<QlRawResp>
 }

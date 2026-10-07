@@ -390,17 +390,31 @@ class MainViewModel @Inject constructor(
                     return@launch
                 }
 
+                // V10 适配器自动升级：探测版本，>= 2.15 自动切换到 V15 适配器
+                if (activePanel.type == PanelType.QINGLONG_V10) {
+                    val v10Adapter = adapter as? QinglongV10Adapter
+                    val shouldUpgrade = v10Adapter?.needsVersionUpgrade == true
+                            || (v10Adapter?.probeVersion() == true)
+                    if (shouldUpgrade) {
+                        activePanel = activePanel.copy(type = PanelType.QINGLONG_V15)
+                        repository.savePanel(activePanel)
+                        val currentPanels = repository.panelsFlow.first()
+                        _uiState.value = _uiState.value.copy(panels = currentPanels)
+                    }
+                }
+                val effectiveAdapter = repository.getAdapter(activePanel)
+
                 // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s。
                 // scopes 非空时只发起真正需要的请求，其余类别沿用内存中已有数据。
                 fun wants(scope: RefreshScope) = scopes == null || scope in scopes
 
-                val tasksDeferred = if (wants(RefreshScope.TASKS)) safeAsync { adapter.getTasks() } else null
-                val subsDeferred = if (wants(RefreshScope.SUBS)) safeAsync { adapter.getSubscriptions() } else null
-                val envsDeferred = if (wants(RefreshScope.ENVS)) safeAsync { adapter.getEnvs() } else null
-                val depsDeferred = if (wants(RefreshScope.DEPS)) safeAsync { adapter.getDeps() } else null
-                val configFilesDeferred = if (wants(RefreshScope.CONFIG)) safeAsync { adapter.getConfigFiles() } else null
-                val scriptTreeDeferred = if (wants(RefreshScope.SCRIPTS)) safeAsync { adapter.getScriptTree() } else null
-                val metricsDeferred = if (wants(RefreshScope.METRICS)) safeAsync { adapter.getMetrics() } else null
+                val tasksDeferred = if (wants(RefreshScope.TASKS)) safeAsync { effectiveAdapter.getTasks() } else null
+                val subsDeferred = if (wants(RefreshScope.SUBS)) safeAsync { effectiveAdapter.getSubscriptions() } else null
+                val envsDeferred = if (wants(RefreshScope.ENVS)) safeAsync { effectiveAdapter.getEnvs() } else null
+                val depsDeferred = if (wants(RefreshScope.DEPS)) safeAsync { effectiveAdapter.getDeps() } else null
+                val configFilesDeferred = if (wants(RefreshScope.CONFIG)) safeAsync { effectiveAdapter.getConfigFiles() } else null
+                val scriptTreeDeferred = if (wants(RefreshScope.SCRIPTS)) safeAsync { effectiveAdapter.getScriptTree() } else null
+                val metricsDeferred = if (wants(RefreshScope.METRICS)) safeAsync { effectiveAdapter.getMetrics() } else null
 
                 val tasksRes = tasksDeferred?.await()
                 val subsRes = subsDeferred?.await()
@@ -436,7 +450,7 @@ class MainViewModel @Inject constructor(
                     ?: fileList.firstOrNull()
                     ?: "config.sh"
                 val configContentRes = if (configFilesRes?.isSuccess == true) {
-                    safeCall { adapter.readConfig(defaultFile) }
+                    safeCall { effectiveAdapter.readConfig(defaultFile) }
                 } else {
                     Result.failure(configFilesRes?.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
                 }
@@ -796,7 +810,12 @@ class MainViewModel @Inject constructor(
 
             if (authResult.isSuccess) {
                 val validToken = authResult.getOrNull()
-                val savedInstance = candidate.copy(token = validToken ?: candidate.token)
+                // 版本自动升级：V10 适配器登录时探测到实际版本 >= 2.15，自动切换为 V15 适配器
+                val upgradedType = if (type == PanelType.QINGLONG_V10) {
+                    val adapter = repository.getAdapter(candidate)
+                    if (adapter.needsVersionUpgrade) PanelType.QINGLONG_V15 else type
+                } else type
+                val savedInstance = candidate.copy(token = validToken ?: candidate.token, type = upgradedType)
                 setActivePanelId(savedInstance.id)
                 repository.savePanel(savedInstance)
                 val currentPanels = repository.panelsFlow.first()

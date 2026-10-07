@@ -85,6 +85,7 @@ fun DeveloperConsoleScreen(
                         val allText = filteredLogs.joinToString("\n\n") { entry ->
                             buildString {
                                 append("[${entry.timestamp}] [${entry.level}] ${entry.method ?: ""} ${entry.url ?: ""} (Code: ${entry.code ?: 0}, ${entry.durationMs ?: 0}ms)\n")
+                                if (!entry.message.isNullOrBlank()) append("Msg: ${entry.message}\n")
                                 if (!entry.requestBody.isNullOrBlank()) append("Req: ${entry.requestBody}\n")
                                 if (!entry.responseBody.isNullOrBlank()) append("Resp: ${entry.responseBody}\n")
                                 if (!entry.error.isNullOrBlank()) append("Error: ${entry.error}\n")
@@ -372,6 +373,27 @@ fun DeveloperConsoleScreen(
                                     }
 
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(
+                                            onClick = {
+                                                val singleText = buildString {
+                                                    append("[${entry.timestamp}] [${entry.level}] ${entry.method ?: ""} ${entry.url ?: ""} (Code: ${entry.code ?: 0}, ${entry.durationMs ?: 0}ms)\n")
+                                                    if (!entry.message.isNullOrBlank()) append("Msg: ${entry.message}\n")
+                                                    if (!entry.requestBody.isNullOrBlank()) append("Req: ${entry.requestBody}\n")
+                                                    if (!entry.responseBody.isNullOrBlank()) append("Resp: ${entry.responseBody}\n")
+                                                    if (!entry.error.isNullOrBlank()) append("Error: ${entry.error}\n")
+                                                }
+                                                clipboardManager.setText(AnnotatedString(singleText))
+                                                Toast.makeText(context, "单条日志已复制", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.ContentCopy,
+                                                contentDescription = "复制本条日志",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
                                         Text(text = entry.timestamp, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Icon(
                                             imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
