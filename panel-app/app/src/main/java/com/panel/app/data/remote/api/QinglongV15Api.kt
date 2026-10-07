@@ -755,13 +755,12 @@ interface QinglongV15Api {
     ): Response<QlCommonResp>
 
     // ================= 4. 依赖管理 =================
+    // 官方文档：GET /api/dependencies 无任何查询参数
+    // https://qinglong.apifox.cn/api-419972845
 
     @GET("api/dependencies")
     suspend fun getDependencies(
-        @Header("Authorization") auth: String,
-        @Query("searchValue") search: String? = null,
-        @Query("type") type: String? = null,
-        @Query("status") status: String? = null
+        @Header("Authorization") auth: String
     ): Response<QlDepsResp>
 
     @POST("api/dependencies")

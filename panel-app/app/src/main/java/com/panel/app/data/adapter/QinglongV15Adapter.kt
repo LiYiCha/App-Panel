@@ -1040,7 +1040,7 @@ class QinglongV15Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
-        return api.getDependencies(getAuthHeader(), query, type = "", status = "")
+        return api.getDependencies(getAuthHeader())
             .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data).map { it.toUnifiedDep() } }
     }
 
@@ -1144,7 +1144,7 @@ class QinglongV15Adapter(
     override suspend fun getDepLog(depId: String): Result<String> {
         ensureAuth()
         return try {
-            api.getDependencies(getAuthHeader(), null, type = "", status = "")
+            api.getDependencies(getAuthHeader())
                 .unwrapTo("获取依赖日志失败") { env ->
                     val items = parseDepArray(env.data)
                     items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }
