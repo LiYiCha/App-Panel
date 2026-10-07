@@ -1040,9 +1040,7 @@ class QinglongV15Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
-        // 不传 type 和 status 参数（传 null），让服务端使用默认行为
-        // 传空字符串 "" 会被服务端转为 undefined 导致 500 错误
-        return api.getDependencies(getAuthHeader(), query, type = null, status = null)
+        return api.getDependencies(getAuthHeader(), query, type = "", status = "")
             .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data).map { it.toUnifiedDep() } }
     }
 
@@ -1146,7 +1144,7 @@ class QinglongV15Adapter(
     override suspend fun getDepLog(depId: String): Result<String> {
         ensureAuth()
         return try {
-            api.getDependencies(getAuthHeader(), null, type = null, status = null)
+            api.getDependencies(getAuthHeader(), null, type = "", status = "")
                 .unwrapTo("获取依赖日志失败") { env ->
                     val items = parseDepArray(env.data)
                     items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }
