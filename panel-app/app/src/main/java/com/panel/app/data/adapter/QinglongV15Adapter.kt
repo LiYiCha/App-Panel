@@ -965,13 +965,13 @@ class QinglongV15Adapter(
         val fileName = normalized.substringAfterLast("/")
         val dirPath = normalized.substringBeforeLast("/").takeIf { normalized.contains("/") }
 
-        // /scripts/{file} 在新版已返回 410 下线，只走 /scripts/detail
-        val primary = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath)
+        // path 必须始终传空串而非 null：服务端 getFile(path, file) 对 undefined path
+        // 会抛 "The 'path' argument must be of type string. Received undefined"。
+        val primary = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath ?: "")
         if (primary.isSuccessful && primary.body()?.code.let { it == null || it == 200 }) {
             return primary.unwrapTo("读取脚本内容失败") { it.data ?: "" }
         }
-        // 目录信息可能已包含在 path 里，再用完整路径试一次
-        return api.getScriptDetail(getAuthHeader(), file = normalized, path = null)
+        return api.getScriptDetail(getAuthHeader(), file = normalized, path = "")
             .unwrapTo("读取脚本内容失败") { it.data ?: "" }
     }
 
@@ -1040,7 +1040,10 @@ class QinglongV15Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
-        return api.getDependencies(getAuthHeader(), query)
+        // 必须显式传 type="" 和 status=""：青龙服务端（含 2.15.x）在缺少 type 参数时
+        // 会把 JS undefined 拼进 Sequelize WHERE 子句，导致 500 "invalid undefined value"。
+        // 官方前端始终发送 type=${type}（空过滤时 type 为空串），这里保持一致。
+        return api.getDependencies(getAuthHeader(), query, type = "", status = "")
             .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data).map { it.toUnifiedDep() } }
     }
 
@@ -1144,7 +1147,7 @@ class QinglongV15Adapter(
     override suspend fun getDepLog(depId: String): Result<String> {
         ensureAuth()
         return try {
-            api.getDependencies(getAuthHeader(), null)
+            api.getDependencies(getAuthHeader(), null, type = "", status = "")
                 .unwrapTo("获取依赖日志失败") { env ->
                     val items = parseDepArray(env.data)
                     items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }

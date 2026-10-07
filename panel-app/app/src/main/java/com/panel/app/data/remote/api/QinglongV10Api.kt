@@ -135,14 +135,15 @@ interface QinglongV10Api {
         @Body req: QlSaveConfigReq
     ): Response<QlCommonResp>
 
-    // 4. 脚本文件（旧版路径，新版已 410 下线）
-    @GET("api/scripts")
+    // 4. 脚本文件（v2.10.x 用 /scripts/files 列目录，/scripts/{file}?path= 读内容）
+    @GET("api/scripts/files")
     suspend fun getScripts(@Header("Authorization") auth: String): Response<QlScriptsResp>
 
     @GET("api/scripts/{file}")
     suspend fun getScriptContent(
         @Header("Authorization") auth: String,
-        @Path("file", encoded = true) file: String
+        @Path("file", encoded = true) file: String,
+        @Query("path") path: String? = null
     ): Response<QlScriptContentResp>
 
     @POST("api/scripts")

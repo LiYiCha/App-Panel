@@ -410,7 +410,12 @@ class QinglongV10Adapter(
 
     override suspend fun readScript(path: String): Result<String> {
         ensureAuth()
-        return api.getScriptContent(getAuthHeader(), path)
+        val normalized = path.replace('\\', '/')
+        val fileName = normalized.substringAfterLast("/")
+        val dirPath = normalized.substringBeforeLast("/").takeIf { normalized.contains("/") }
+        // v2.10.x 的 GET /scripts/:file 通过 req.query.path + req.params.file 拼接路径，
+        // 不传 path 查询参数会导致服务端 join(scriptPath, undefined, file) 抛 TypeError。
+        return api.getScriptContent(getAuthHeader(), fileName, dirPath)
             .unwrapTo("读取脚本失败") { it.data ?: "" }
     }
 
@@ -452,6 +457,8 @@ class QinglongV10Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
+        // v2.10.x 使用 NeDB，不传 type 时 condition 不含 type 字段，返回全部；
+        // 传 type="" 反而会让 DependenceTypes[""] → undefined，NeDB 匹配不到任何记录。
         return api.getDependencies(getAuthHeader(), query)
             .unwrapTo("获取依赖失败") { env ->
                 parseDepArray(env.data).map { it.toUnifiedDep() }
