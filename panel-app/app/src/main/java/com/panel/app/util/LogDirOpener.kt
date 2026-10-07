@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.panel.app.data.logger.LogStorage
 import java.io.File
 
@@ -22,19 +23,29 @@ object LogDirOpener {
 
         Log.d(TAG, "日志目录: ${dir.absolutePath}")
 
-        // 使用 file:// URI 直接指向日志目录
-        // external-media 目录（/Android/media/<包名>/）对所有文件管理器开放，无访问隔离
-        val fileUri = android.net.Uri.fromFile(dir)
-        val mimeTypes = listOf("resource/folder", "*/*", "vnd.android.document/directory")
-
-        val baseIntent = Intent(Intent.ACTION_VIEW).apply {
-            data = fileUri
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 使用 FileProvider 生成 content:// URI，避免 file:// 在 Android 7.0+ 触发 FileUriExposedException
+        // 同时避免 *//* MIME 类型触发 APK 安装器
+        val uri = try {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                dir
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "FileProvider 生成 URI 失败: ${e.message}")
+            return
         }
+
+        // 优先使用 resource/folder，回退到 vnd.android.document.directory
+        val mimeTypes = listOf("resource/folder", "vnd.android.document/directory")
 
         for (mime in mimeTypes) {
             try {
-                val chooser = Intent.createChooser(baseIntent.apply { type = mime }, "打开日志目录")
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                val chooser = Intent.createChooser(intent, "打开日志目录")
                 context.startActivity(chooser)
                 Log.d(TAG, "成功弹出选择框 mime=$mime")
                 return

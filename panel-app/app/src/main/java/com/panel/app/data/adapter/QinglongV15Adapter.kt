@@ -1040,10 +1040,9 @@ class QinglongV15Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
-        // 必须显式传 type="" 和 status=""：青龙服务端（含 2.15.x）在缺少 type 参数时
-        // 会把 JS undefined 拼进 Sequelize WHERE 子句，导致 500 "invalid undefined value"。
-        // 官方前端始终发送 type=${type}（空过滤时 type 为空串），这里保持一致。
-        return api.getDependencies(getAuthHeader(), query, type = "", status = "")
+        // 不传 type 和 status 参数（传 null），让服务端使用默认行为
+        // 传空字符串 "" 会被服务端转为 undefined 导致 500 错误
+        return api.getDependencies(getAuthHeader(), query, type = null, status = null)
             .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data).map { it.toUnifiedDep() } }
     }
 
@@ -1147,7 +1146,7 @@ class QinglongV15Adapter(
     override suspend fun getDepLog(depId: String): Result<String> {
         ensureAuth()
         return try {
-            api.getDependencies(getAuthHeader(), null, type = "", status = "")
+            api.getDependencies(getAuthHeader(), null, type = null, status = null)
                 .unwrapTo("获取依赖日志失败") { env ->
                     val items = parseDepArray(env.data)
                     items.firstOrNull { QinglongApiHelpers.cleanId(it.id) == QinglongApiHelpers.cleanId(depId) }
