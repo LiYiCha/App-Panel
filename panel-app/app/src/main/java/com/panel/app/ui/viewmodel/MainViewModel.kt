@@ -77,6 +77,9 @@ data class MainUiState(
     /** 脚本内容缓存：路径 -> 内容 */
     val scriptViewerCache: Map<String, String> = emptyMap(),
     val scriptViewerLoadingPath: String? = null,
+    val scriptViewerErrorPath: String? = null,
+    val scriptViewerError: String? = null,
+    val depsLoadError: String? = null,
     /** 任务/服务器日志缓存：key -> 日志文本 */
     val taskLogCache: Map<String, String> = emptyMap(),
     /** 任务执行耗时缓存：logKey/id/taskId -> 格式化耗时 */
@@ -513,6 +516,8 @@ class MainViewModel @Inject constructor(
                     subscriptions = remoteSubs,
                     envs = remoteEnvs,
                     deps = remoteDeps,
+                    depsLoadError = depsRes?.let { if (it.isSuccess) null else it.exceptionOrNull()?.message }
+                        ?: _uiState.value.depsLoadError,
                     configFiles = fileList,
                     selectedConfigFile = defaultFile,
                     configContent = content,
@@ -734,6 +739,7 @@ class MainViewModel @Inject constructor(
                 onSuccess = { newDeps ->
                     _uiState.value = _uiState.value.copy(
                         deps = newDeps,
+                        depsLoadError = null,
                         isLoading = false
                     )
                     saveDiskCache(
@@ -756,6 +762,7 @@ class MainViewModel @Inject constructor(
                     )
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
+                        depsLoadError = e.message,
                         toastMessage = "依赖列表刷新失败: ${e.message}"
                     )
                 }
@@ -1915,16 +1922,32 @@ class MainViewModel @Inject constructor(
                 onRead(cached)
                 return@launch
             }
-            _uiState.update { it.copy(scriptViewerLoadingPath = path) }
-            val res = repository.getAdapter(getActivePanel()).readScript(path)
-            val content = res.getOrNull() ?: ""
-            // 大于 512KB 的脚本不常驻全局 State，避免反复触发重组造成大对象常驻
-            if (content.length <= 512 * 1024) {
-                _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
-            } else {
-                _uiState.update { it.copy(scriptViewerLoadingPath = null) }
+            _uiState.update {
+                it.copy(scriptViewerLoadingPath = path, scriptViewerErrorPath = null, scriptViewerError = null)
             }
-            onRead(content)
+            val res = repository.getAdapter(getActivePanel()).readScript(path)
+            res.fold(
+                onSuccess = { content ->
+                    // 失败绝不能当成功缓存空串：缓存命中后每次进入都直接返回空，
+                    // 编辑页会永远停在"正在读取"且无法重试
+                    if (content.isNotEmpty() && content.length <= 512 * 1024) {
+                        _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+                    } else {
+                        _uiState.update { it.copy(scriptViewerLoadingPath = null) }
+                    }
+                    onRead(content)
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(
+                            scriptViewerLoadingPath = null,
+                            scriptViewerErrorPath = path,
+                            scriptViewerError = e.message ?: "未知错误",
+                            toastMessage = "脚本读取失败: ${e.message ?: "未知错误"}"
+                        )
+                    }
+                }
+            )
         }
     }
 

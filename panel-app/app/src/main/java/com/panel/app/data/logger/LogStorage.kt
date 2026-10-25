@@ -150,12 +150,9 @@ object LogStorage {
     private fun render(e: LogEntry): String = buildString {
         append(SEPARATOR).append('\n')
         append(e.timestamp).append("  [").append(e.level).append("]  [").append(e.tag).append("]\n")
+        // HTTP 条目的一行摘要 "[GET] 200 (57ms) http://..." 已含全部关键信息，
+        // 不再重复输出 方法/URL/状态码 三行；解析端从该行反解字段
         append(e.message).append('\n')
-        if (!e.method.isNullOrBlank()) append("方法: ").append(e.method).append('\n')
-        if (!e.url.isNullOrBlank()) append("URL: ").append(e.url).append('\n')
-        if (e.code != null) append("状态码: ").append(e.code)
-        if (e.durationMs != null) append("  耗时: ").append(e.durationMs).append("ms")
-        if (e.code != null || e.durationMs != null) append('\n')
         if (!e.requestBody.isNullOrBlank()) append("请求入参:\n").append(e.requestBody).append('\n')
         if (!e.responseBody.isNullOrBlank()) append("响应数据:\n").append(e.responseBody).append('\n')
         if (!e.error.isNullOrBlank()) append("异常报错:\n").append(e.error).append('\n')
@@ -198,6 +195,19 @@ object LogStorage {
         var responseBody: String? = null
         var error: String? = null
 
+        // 新格式：HTTP 条目首行 "[GET] 200 (57ms) http://..." 自带全部字段，直接反解；
+        // 旧格式的 方法:/URL:/状态码: 行仍由下面的 fieldRegex 兼容解析
+        var bodyText = rest
+        val httpLineMatch = Regex("""^\[(\w+)\]\s+(\d+)\s+\((\d+)ms\)\s+(\S+)\s*$""")
+            .find(rest.lines().firstOrNull() ?: "")
+        if (httpLineMatch != null) {
+            method = httpLineMatch.groupValues[1]
+            code = httpLineMatch.groupValues[2].toIntOrNull()
+            durationMs = httpLineMatch.groupValues[3].toLongOrNull()
+            url = httpLineMatch.groupValues[4]
+            bodyText = rest.substringAfter('\n', "")
+        }
+
         val fieldRegex = Regex("""^(方法|URL|状态码|请求入参|响应数据|异常报错):""")
         var currentField: String? = null
         val currentValue = StringBuilder()
@@ -219,7 +229,7 @@ object LogStorage {
             currentValue.clear()
         }
 
-        for (line in rest.lines()) {
+        for (line in bodyText.lines()) {
             val match = fieldRegex.find(line)
             if (match != null) {
                 flushField()

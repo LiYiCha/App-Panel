@@ -53,7 +53,14 @@ fun DashboardScreen(
         // 进入页面与用户主动刷新都强制走网络，不受 TTL 节流影响
         viewModel.loadDashboard(force = true) { result ->
             dashboard = result.getOrNull()
-            errorMessage = result.exceptionOrNull()?.message
+            val raw = result.exceptionOrNull()?.message
+            // 2.15.x 服务端没有 dashboard 模块，整页 404 时给出明确的版本原因
+            errorMessage = when {
+                raw == null -> null
+                raw.contains("404") || raw.contains("Not Found", ignoreCase = true) ->
+                    "当前服务端版本不支持仪表盘接口 (404)"
+                else -> raw
+            }
             isLoading = false
         }
     }

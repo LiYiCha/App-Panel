@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 fun StandaloneScriptEditorScreen(
     scriptName: String,
     initialContent: String = "",
+    loadError: String? = null,
+    onRetry: (() -> Unit)? = null,
     viewModel: MainViewModel? = null,
     onSave: ((String) -> Unit)? = null,
     onAddToTask: ((name: String, command: String, schedule: String) -> Unit)? = null,
@@ -369,12 +371,31 @@ fun StandaloneScriptEditorScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                "正在从服务端读取脚本内容...",
-                                fontSize = fontSizeSp.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (loadError != null) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        "加载失败: $loadError",
+                                        fontSize = fontSizeSp.sp,
+                                        color = MaterialTheme.colorScheme.error,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    if (onRetry != null) {
+                                        OutlinedButton(onClick = onRetry) {
+                                            Text("重试")
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    "正在从服务端读取脚本内容...",
+                                    fontSize = fontSizeSp.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     } else {
                         LazyColumn(

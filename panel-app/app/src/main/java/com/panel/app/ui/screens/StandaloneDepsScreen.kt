@@ -178,6 +178,37 @@ fun StandaloneDepsScreen(
                 }
             }
 
+            // 依赖加载失败横幅：显示真实错误并可直接重试，不再静默空白
+            if (uiState.depsLoadError != null && uiState.deps.isEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "依赖加载失败: ${uiState.depsLoadError}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = { viewModel.refreshDeps() },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text("重试", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
             // 顶部批量操作栏 (置于顶部，绝不占用主体列表空间)
             if (uiState.isDepBatchMode) {
                 Surface(

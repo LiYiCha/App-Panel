@@ -272,6 +272,8 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
             var scriptContent by remember(scriptName) {
                 mutableStateOf(uiStateValue.value.scriptViewerCache[scriptName] ?: "")
             }
+            val loadError = uiStateValue.value.scriptViewerError
+                ?.takeIf { uiStateValue.value.scriptViewerErrorPath == scriptName }
             LaunchedEffect(scriptName) {
                 if (uiStateValue.value.scriptViewerCache[scriptName].isNullOrBlank()) {
                     viewModel.readScript(scriptName) { content -> scriptContent = content }
@@ -282,6 +284,10 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
             StandaloneScriptEditorScreen(
                 scriptName = scriptName,
                 initialContent = scriptContent,
+                loadError = loadError,
+                onRetry = {
+                    viewModel.readScript(scriptName) { content -> scriptContent = content }
+                },
                 viewModel = viewModel,
                 onSave = { updatedContent -> viewModel.saveScript(scriptName, updatedContent) },
                 onAddToTask = { name, command, schedule -> viewModel.createTask(name, command, schedule) },

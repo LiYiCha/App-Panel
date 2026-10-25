@@ -965,12 +965,19 @@ class QinglongV15Adapter(
         val fileName = normalized.substringAfterLast("/")
         val dirPath = normalized.substringBeforeLast("/").takeIf { normalized.contains("/") }
 
-        // path 必须始终传空串而非 null：服务端 getFile(path, file) 对 undefined path
-        // 会抛 "The 'path' argument must be of type string. Received undefined"。
-        val primary = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath ?: "")
-        if (primary.isSuccessful && primary.body()?.code.let { it == null || it == 200 }) {
-            return primary.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+        // path 必须始终传空串而非 null：2.15.x 服务端 join(path, file) 对 undefined 会抛
+        // "The 'path' argument must be of type string. Received undefined"。
+        // 2.15.x 只有 GET /api/scripts/:file?path=；/api/scripts/detail 是 2.16+ 才有的接口，
+        // 在 2.15.x 上会落到 /:file 兜底路由读一个叫 "detail" 的文件而 500，所以旧接口优先。
+        val legacy = api.getScriptFileLegacy(getAuthHeader(), file = fileName, path = dirPath ?: "")
+        if (legacy.isSuccessful && legacy.body()?.code.let { it == null || it == 200 }) {
+            return legacy.unwrapTo("读取脚本内容失败") { it.data ?: "" }
         }
+        val detail = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath ?: "")
+        if (detail.isSuccessful && detail.body()?.code.let { it == null || it == 200 }) {
+            return detail.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+        }
+        // 整路径再试一次（兼容把完整相对路径当 file 的服务端变体）
         return api.getScriptDetail(getAuthHeader(), file = normalized, path = "")
             .unwrapTo("读取脚本内容失败") { it.data ?: "" }
     }
@@ -1040,8 +1047,27 @@ class QinglongV15Adapter(
 
     override suspend fun getDeps(query: String?): Result<List<UnifiedDep>> {
         ensureAuth()
-        return api.getDependencies(getAuthHeader())
-            .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data).map { it.toUnifiedDep() } }
+        // 真机取证（2026-10-25 日志）：2.15.20 fork 服务端不带 type 时
+        // Sequelize 抛 "WHERE parameter \"type\" has invalid \"undefined\" value"（type="" 同样炸）；
+        // 2.16+ 允许不带参数（type 为空即全量）。按三种类型并发拉取合并，两类服务端都兼容；
+        // 三轮全失败才整体报错。
+        val results = coroutineScope {
+            listOf("nodejs", "python3", "linux").map { type ->
+                async {
+                    api.getDependencies(getAuthHeader(), type = type)
+                        .unwrapTo("获取依赖失败") { env -> parseDepArray(env.data) }
+                }
+            }.awaitAll()
+        }
+        val successes = results.mapNotNull { it.getOrNull() }
+        if (successes.isEmpty()) {
+            return Result.failure(
+                results.firstOrNull()?.exceptionOrNull() ?: Exception("获取依赖失败")
+            )
+        }
+        return Result.success(
+            successes.flatten().distinctBy { it.id to it.name }.map { it.toUnifiedDep() }
+        )
     }
 
     private fun parseDepArray(data: com.google.gson.JsonElement?): List<QlDepItem> {
@@ -1233,8 +1259,13 @@ class QinglongV15Adapter(
     override suspend fun getMetrics(): Result<Pair<String, String>> {
         ensureAuth()
         return runCatching {
-            val dashResp = runCatching { api.getDashboardSystem(getAuthHeader()) }.getOrNull()
+            // 2.15.x 无 /api/dashboard/*，已探测到 404 时直接走 /api/system，不再发探测请求
+            val dashResp = if (dashboardEndpointsMissing) null
+            else runCatching { api.getDashboardSystem(getAuthHeader()) }.getOrNull()
             val dashObj = dashResp?.takeIf { it.isSuccessful }?.body()?.data?.takeIf { it.isJsonObject }?.asJsonObject
+            if (dashResp != null && !dashResp.isSuccessful) {
+                dashboardEndpointsMissing = true
+            }
             if (dashObj != null) {
                 val ram = dashObj.get("memUsagePercent")?.asString ?: "--"
                 val load1 = dashObj.getAsJsonArray("loadAvg")?.firstOrNull()?.asDouble ?: 0.0
@@ -1375,6 +1406,11 @@ class QinglongV15Adapter(
 
     // ---------------------------------------------------------------- 9.5 仪表盘
 
+    // 真机取证（2026-10-25 日志）：2.15.20 服务端没有 /api/dashboard/* 模块，六个端点全 404。
+    // 六个探测全空后记住这一点，之后跳过探测直接走 /api/crons + /api/system 回退，
+    // 不再每进一次仪表盘/设置页就打出一串 404。
+    private var dashboardEndpointsMissing = false
+
     /**
      * 聚合仪表盘数据。
      * 青龙的 overview/trend/top/labels 都是独立接口，这里并行拉取后合并；
@@ -1383,43 +1419,50 @@ class QinglongV15Adapter(
     override suspend fun getDashboard(): Result<PanelDashboard> = coroutineScope {
         ensureAuth()
         try {
-                val overviewDef = async {
-                    runCatching {
-                        api.getDashboardOverview(getAuthHeader()).unwrap("获取概览失败").getOrNull()?.data
-                    }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
-                }
-                val trendDef = async {
-                    runCatching {
-                        api.getDashboardTrend(getAuthHeader(), days = 14).unwrap("获取趋势失败").getOrNull()?.data
-                    }.getOrNull()
-                }
-                val topCountDef = async {
-                    runCatching {
-                        api.getDashboardTopCount(getAuthHeader()).unwrap("获取次数排行失败").getOrNull()?.data
-                    }.getOrNull()
-                }
-                val topTimeDef = async {
-                    runCatching {
-                        api.getDashboardTopTime(getAuthHeader()).unwrap("获取耗时排行失败").getOrNull()?.data
-                    }.getOrNull()
-                }
-                val labelsDef = async {
-                    runCatching {
-                        api.getDashboardLabels(getAuthHeader()).unwrap("获取标签统计失败").getOrNull()?.data
-                    }.getOrNull()
-                }
-                val systemDef = async {
-                    runCatching {
-                        api.getDashboardSystem(getAuthHeader()).unwrap("获取系统信息失败").getOrNull()?.data
-                    }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
-                }
+            val overviewDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardOverview(getAuthHeader()).unwrap("获取概览失败").getOrNull()?.data
+                }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            }
+            val trendDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardTrend(getAuthHeader(), days = 14).unwrap("获取趋势失败").getOrNull()?.data
+                }.getOrNull()
+            }
+            val topCountDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardTopCount(getAuthHeader()).unwrap("获取次数排行失败").getOrNull()?.data
+                }.getOrNull()
+            }
+            val topTimeDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardTopTime(getAuthHeader()).unwrap("获取耗时排行失败").getOrNull()?.data
+                }.getOrNull()
+            }
+            val labelsDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardLabels(getAuthHeader()).unwrap("获取标签统计失败").getOrNull()?.data
+                }.getOrNull()
+            }
+            val systemDef = if (dashboardEndpointsMissing) null else async {
+                runCatching {
+                    api.getDashboardSystem(getAuthHeader()).unwrap("获取系统信息失败").getOrNull()?.data
+                }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            }
 
-                val overview = overviewDef.await()
-                val trend = trendDef.await()
-                val topCount = topCountDef.await()
-                val topTime = topTimeDef.await()
-                val labels = labelsDef.await()
-                var system = systemDef.await()
+            val overview = overviewDef?.await()
+            val trend = trendDef?.await()
+            val topCount = topCountDef?.await()
+            val topTime = topTimeDef?.await()
+            val labels = labelsDef?.await()
+            var system = systemDef?.await()
+
+            if (!dashboardEndpointsMissing &&
+                overview == null && trend == null && topCount == null &&
+                topTime == null && labels == null && system == null
+            ) {
+                dashboardEndpointsMissing = true
+            }
 
             // 官方标准青龙回退：若 /api/dashboard/* 404（非标版本特性），自动通过 /api/system 与任务列表聚合真实数据
             var fallbackCrons: List<QlCronItem> = emptyList()

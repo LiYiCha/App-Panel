@@ -757,10 +757,12 @@ interface QinglongV15Api {
     // ================= 4. 依赖管理 =================
     // 官方文档：GET /api/dependencies 无任何查询参数
     // https://qinglong.apifox.cn/api-419972845
-
+    // 但 2.15.20 fork 服务端不带 type 会 500（Sequelize "WHERE parameter type has
+    // invalid undefined value"），所以实际请求按类型发（见 Adapter）
     @GET("api/dependencies")
     suspend fun getDependencies(
-        @Header("Authorization") auth: String
+        @Header("Authorization") auth: String,
+        @Query("type") type: String? = null
     ): Response<QlDepsResp>
 
     @POST("api/dependencies")
@@ -817,6 +819,14 @@ interface QinglongV15Api {
         @Header("Authorization") auth: String,
         @Query("path") path: String? = null
     ): Response<QlScriptsResp>
+
+    // 2.15.x 的读文件接口：file 为不含路径的文件名，子目录用 path 查询参数
+    @GET("api/scripts/{file}")
+    suspend fun getScriptFileLegacy(
+        @Header("Authorization") auth: String,
+        @Path("file") file: String,
+        @Query("path") path: String? = null
+    ): Response<QlScriptContentResp>
 
     @GET("api/scripts/detail")
     suspend fun getScriptDetail(
