@@ -15,7 +15,7 @@ import com.panel.app.data.remote.api.BaihuApi
 
 // ---------------------------------------------------------------- 扩展方法（作用于 BaihuApi）
 
-/** 获取登录审计日志（最多 50 条） */
+/** 获取登录日志（最多 50 条） */
 suspend fun BaihuApi.getLoginLogsHelper(): Result<List<Map<String, Any>>> {
     return try {
         getLoginLogs(pageSize = 50)

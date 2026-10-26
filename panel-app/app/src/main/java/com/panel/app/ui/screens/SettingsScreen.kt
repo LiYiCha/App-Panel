@@ -314,8 +314,8 @@ fun SettingsScreen(
             }
         }
 
-        // ==================== 2. 功能中心 (8个二级页面/功能紧凑卡片，两列布局) ====================
-        Text("功能与二级服务", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        // ==================== 2. 面板功能（面板侧二级页面，两列布局；应用侧条目归入下方「应用设置」） ====================
+        Text("面板功能", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 
         val failedDeps = uiState.deps.count { it.status == 2 || it.status == 4 }
 
@@ -376,8 +376,8 @@ fun SettingsScreen(
             )
             ModernNavTile(
                 icon = Icons.Default.Shield,
-                title = "登录审计日志",
-                desc = "鉴权历史与 IP",
+                title = "登录日志",
+                desc = "登录历史与 IP",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
@@ -385,32 +385,21 @@ fun SettingsScreen(
             )
         }
 
-        // Row 4: 订阅管理 + 系统高级配置
+        // Row 4: 系统高级配置 + 调试日志（应用权限入口只保留在下方「应用设置」，不再重复出现）
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModernNavTile(
                 icon = Icons.Default.Tune,
-                title = "系统高级配置",
+                title = "系统配置",
                 desc = if (currentPanel.type == PanelType.BAIHU) "宿主机硬件与调度" else "并发上限与日志清理",
                 badge = null,
                 badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenSystemSettings
             )
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ModernNavTile(
-                icon = Icons.Default.Shield,
-                title = "应用权限管理",
-                desc = "应用的权限设置",
-                badge = null,
-                badgeColor = null,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenPermissions
-            )
             ModernNavTile(
                 icon = Icons.Default.Terminal,
-                title = "开发者控制台",
-                desc = if (uiState.isDevMode) "已开启调试捕获" else "点击开启请求抓包",
+                title = "调试日志",
+                desc = if (uiState.isDevMode) "已开启调试模式" else "点击开启",
                 badge = if (uiState.isDevMode) "ON" else "OFF",
                 badgeColor = if (uiState.isDevMode) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -420,8 +409,8 @@ fun SettingsScreen(
             )
         }
 
-        // ==================== 3. 底部轻量通用设置卡片 ====================
-        Text("常规设置", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        // ==================== 3. 应用设置（应用侧：超时/更新/缓存/权限/关于） ====================
+        Text("应用设置", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(10.dp),

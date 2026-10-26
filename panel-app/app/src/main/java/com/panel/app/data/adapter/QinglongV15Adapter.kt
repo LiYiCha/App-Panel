@@ -341,32 +341,54 @@ class QinglongV15Adapter(
             }
         }
 
-        // 2. 从已有执行记录的任务生成历史记录
+        // 2. 对最近活跃的任务并行拉取**完整**执行历史。
+        // 旧方案只给每个任务合成一条"最近一次执行"记录，导致设置页历史日志
+        // 每个任务只显示 1 条，而任务详情页有完整多条 —— 现在与详情页同口径。
         val executedCrons = crons.filter {
             it.status == 0 || it.lastExecutionTimeLong > 0
         }.sortedByDescending { it.lastExecutionTimeLong }
 
-        for (cron in executedCrons.take(40)) {
-            val cid = QinglongApiHelpers.cleanId(cron.id) ?: continue
-            if (records.any { it.id == cid }) continue
-            val timeMs = QinglongApiHelpers.parseTimestampToMillis(cron.last_execution_time)
-            val timeStr = if (timeMs != null && timeMs > 0) {
-                sdf.format(java.util.Date(timeMs))
-            } else "--"
-            val runningSec = QinglongApiHelpers.parseSeconds(cron.last_running_time)
-            records.add(
-                TaskInstanceRecord(
-                    id = cid,
-                    taskId = cid,
-                    taskName = cron.name ?: "任务 #$cid",
-                    startTime = timeStr,
-                    endTime = null,
-                    duration = runningSec?.takeIf { it > 0 }?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--",
-                    exitCode = 0,
-                    statusText = if (cron.status == 0) "运行中" else "已完成",
-                    logPath = null
+        val historyLists = coroutineScope {
+            executedCrons.take(12).map { cron ->
+                async {
+                    val cid = QinglongApiHelpers.cleanId(cron.id)
+                        ?: return@async emptyList<TaskInstanceRecord>()
+                    loadTaskInstancesInternal(cid).getOrNull() ?: emptyList()
+                }
+            }.awaitAll()
+        }
+        historyLists.forEach { list ->
+            list.forEach { rec ->
+                if (records.none { it.id == rec.id && it.taskId == rec.taskId }) {
+                    records.add(rec)
+                }
+            }
+        }
+
+        // 3. 兜底：并行拉取全部失败时，至少保留"每任务最近一次执行"的合成记录
+        if (historyLists.all { it.isEmpty() }) {
+            for (cron in executedCrons.take(40)) {
+                val cid = QinglongApiHelpers.cleanId(cron.id) ?: continue
+                if (records.any { it.id == cid }) continue
+                val timeMs = QinglongApiHelpers.parseTimestampToMillis(cron.last_execution_time)
+                val timeStr = if (timeMs != null && timeMs > 0) {
+                    sdf.format(java.util.Date(timeMs))
+                } else "--"
+                val runningSec = QinglongApiHelpers.parseSeconds(cron.last_running_time)
+                records.add(
+                    TaskInstanceRecord(
+                        id = cid,
+                        taskId = cid,
+                        taskName = cron.name ?: "任务 #$cid",
+                        startTime = timeStr,
+                        endTime = null,
+                        duration = runningSec?.takeIf { it > 0 }?.let { QinglongApiHelpers.formatSeconds(it) } ?: "--",
+                        exitCode = 0,
+                        statusText = if (cron.status == 0) "运行中" else "已完成",
+                        logPath = null
+                    )
                 )
-            )
+            }
         }
         return Result.success(records)
     }
@@ -1406,10 +1428,11 @@ class QinglongV15Adapter(
 
     // ---------------------------------------------------------------- 9.5 仪表盘
 
-    // 真机取证（2026-10-25 日志）：2.15.20 服务端没有 /api/dashboard/* 模块，六个端点全 404。
-    // 六个探测全空后记住这一点，之后跳过探测直接走 /api/crons + /api/system 回退，
-    // 不再每进一次仪表盘/设置页就打出一串 404。
-    private var dashboardEndpointsMissing = false
+    // 真机取证（2026-10-26 log.log）：青龙官方（含 2.20.2）根本没有 /api/dashboard/* 模块。
+    // 未知 API 路径会被青龙前端 SPA 兜底返回 index.html —— HTTP 200 + HTML，
+    // 每次冷启动都白打 6 个请求再逐个失败。因此青龙侧直接跳过探测，
+    // 永远走 /api/crons + /api/system 本地聚合，不再请求 dashboard 端点。
+    private var dashboardEndpointsMissing = true
 
     /**
      * 聚合仪表盘数据。

@@ -1365,9 +1365,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val adapter = repository.getAdapter(getActivePanel())
             adapter.moveEnv(envId, fromIndex, toIndex)
-                .onSuccess { _ ->
-                    _uiState.value = _uiState.value.copy(toastMessage = "排序已同步")
-                }
+                // 成功静默：本地列表已经排好了，成功再弹 toast 只会打扰；失败才提示
                 .onFailure { e ->
                     val msg = e.message ?: ""
                     val friendlyMsg = if (msg.contains("不支持移动") || msg.contains("不支持")) {
@@ -1930,8 +1928,22 @@ class MainViewModel @Inject constructor(
                 onSuccess = { content ->
                     // 失败绝不能当成功缓存空串：缓存命中后每次进入都直接返回空，
                     // 编辑页会永远停在"正在读取"且无法重试
-                    if (content.isNotEmpty() && content.length <= 512 * 1024) {
-                        _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+                    if (content.isNotEmpty()) {
+                        if (content.length <= 512 * 1024) {
+                            _uiState.update { it.copy(scriptViewerCache = it.scriptViewerCache + (path to content), scriptViewerLoadingPath = null) }
+                        } else {
+                            // 大文件（如 14MB 脚本）同样必须缓存——文件越大越不能每次全量重下。
+                            // 内存护栏：大文件条目累计超 48MB 时淘汰最大的一条
+                            val big = _uiState.value.scriptViewerCache.filterValues { it.length > 512 * 1024 }
+                            var updated = _uiState.value.scriptViewerCache + (path to content)
+                            if (big.values.sumOf { it.length } + content.length > 48 * 1024 * 1024) {
+                                val evict = big.entries
+                                    .sortedByDescending { it.value.length }
+                                    .firstOrNull()?.key
+                                if (evict != null && evict != path) updated = updated - evict
+                            }
+                            _uiState.update { it.copy(scriptViewerCache = updated, scriptViewerLoadingPath = null) }
+                        }
                     } else {
                         _uiState.update { it.copy(scriptViewerLoadingPath = null) }
                     }

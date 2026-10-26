@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.ScriptNode
 import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.SearchPillField
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,22 +83,11 @@ fun ScriptsScreen(
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        // 顶部极简搜索栏
-        OutlinedTextField(
+        // 顶部药丸形搜索栏（三页统一组件）
+        SearchPillField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索脚本文件或目录名称...", fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, contentDescription = "清除", modifier = Modifier.size(14.dp))
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            maxLines = 1
+            placeholder = "搜索脚本文件或目录名称..."
         )
 
         // 2. 脚本与目录虚拟列表 (树形结构扁平化，按需复用视口条目，彻底杜绝大量脚本展开引发的 ANR)
@@ -406,15 +396,118 @@ fun FlatScriptRowItem(
     val level = flatNode.depth
     val isExpanded = flatNode.isExpanded
 
+    // 行内容（目录/文件共用渲染）；仅文件行包右滑删除
+    val rowContent: @Composable () -> Unit = {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (node.isDir) {
+                        onToggleExpand(node.path)
+                    } else {
+                        onOpenEditor(node.path)
+                    }
+                },
+            shape = RoundedCornerShape(6.dp),
+            color = if (node.isDir) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp, bottom = 2.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // 每级一根竖向引导线（12dp 一格），替代纯缩进，深层目录也能看清归属
+                    repeat(level) {
+                        Spacer(Modifier.width(5.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Icon(
+                        imageVector = if (node.isDir) {
+                            if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder
+                        } else {
+                            when {
+                                node.name.endsWith(".py") -> Icons.Default.Code
+                                node.name.endsWith(".js") -> Icons.Default.Javascript
+                                node.name.endsWith(".sh") -> Icons.Default.Terminal
+                                else -> Icons.Default.Description
+                            }
+                        },
+                        contentDescription = null,
+                        tint = if (node.isDir) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = node.name,
+                        fontSize = 12.sp,
+                        fontWeight = if (node.isDir) FontWeight.SemiBold else null,
+                        fontFamily = if (node.isDir) FontFamily.Default else FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (node.size != null && !node.isDir) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = node.size,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(0.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!node.isDir) {
+                        RowActionButton(
+                            icon = Icons.Default.AddAlarm,
+                            label = "定时",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            onClick = { onAddToTask(node) }
+                        )
+                    }
+                    RowActionButton(
+                        icon = Icons.Default.DriveFileRenameOutline,
+                        label = "重命名",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = { onRename(node) }
+                    )
+                }
+            }
+        }
+    }
+
+    // 目录与文件统一右滑删除（都有确认弹窗）。
+    // 注意 confirmValueChange 必须放行 Settled：若对所有值都返回 false，
+    // 状态会永久卡在滑动方向上 —— 这正是之前"没滑也显示删除红底"的根因。
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+            if (value == SwipeToDismissBoxValue.Settled) {
+                true
+            } else {
                 onDelete(node)
                 false
-            } else false
+            }
         }
     )
-
+    // 防御：SwipeToDismissBoxState 是 rememberSaveable，LazyColumn 回收/恢复
+    // 可能把滑动中间状态带回来，表现为"未滑动就显示删除红底"，组合时强制归位
+    LaunchedEffect(node.path) {
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+            dismissState.snapTo(SwipeToDismissBoxValue.Settled)
+        }
+    }
     SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
@@ -435,92 +528,26 @@ fun FlatScriptRowItem(
             }
         }
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    if (node.isDir) {
-                        onToggleExpand(node.path)
-                    } else {
-                        onOpenEditor(node.path)
-                    }
-                },
-            shape = RoundedCornerShape(6.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = (level * 12 + 8).dp, top = 2.dp, bottom = 2.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = if (node.isDir) {
-                            if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder
-                        } else {
-                            when {
-                                node.name.endsWith(".py") -> Icons.Default.Code
-                                node.name.endsWith(".js") -> Icons.Default.Javascript
-                                node.name.endsWith(".sh") -> Icons.Default.Terminal
-                                else -> Icons.Default.Description
-                            }
-                        },
-                        contentDescription = null,
-                        tint = if (node.isDir) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = node.name,
-                        fontSize = 12.sp,
-                        fontFamily = if (node.isDir) FontFamily.Default else FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (node.size != null && !node.isDir) {
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = node.size,
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+        rowContent()
+    }
+}
 
-                Row(horizontalArrangement = Arrangement.spacedBy(0.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (!node.isDir) {
-                        IconButton(
-                            onClick = { onAddToTask(node) },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.AddAlarm,
-                                contentDescription = "定时",
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = { onRename(node) },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.DriveFileRenameOutline,
-                            contentDescription = "重命名",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
+/** 树行内「图标 + 下方小字」 */
+@Composable
+private fun RowActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 2.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
+        Text(label, fontSize = 8.sp, color = tint)
     }
 }
 

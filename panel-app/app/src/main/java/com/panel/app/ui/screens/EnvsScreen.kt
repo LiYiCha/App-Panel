@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedEnv
 import com.panel.app.data.parser.UniversalEnvParser
 import com.google.gson.Gson
+import com.panel.app.ui.components.SearchPillField
+import com.panel.app.ui.components.StatusBadge
+import com.panel.app.ui.components.StatusTone
 import com.panel.app.ui.viewmodel.MainViewModel
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -95,14 +98,11 @@ fun EnvsScreen(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        OutlinedTextField(
+        // 药丸形搜索框（三页统一组件）
+        SearchPillField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索变量名称或备注...", fontSize = 11.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            maxLines = 1
+            placeholder = "搜索变量名称或备注..."
         )
 
         // 顶部批量操作栏 (置于顶部，绝不占用主体列表空间)
@@ -184,16 +184,19 @@ fun EnvsScreen(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         modifier = Modifier.fillMaxHeight()
                     ) {
-                        items(sortedEnvs, key = { it.id }) { env ->
-                            val currentIndex = sortedEnvs.indexOf(env)
-                            val isThisDragging = draggingIndex == currentIndex
+                        itemsIndexed(sortedEnvs, key = { _, env -> env.id }) { index, env ->
+                            val isThisDragging = draggingIndex == index
 
                             val handleModifier = if (!uiState.isEnvBatchMode) {
                                 Modifier.pointerInput(Unit) {
                                     detectDragGesturesAfterLongPress(
                                         onDragStart = {
-                                            initialIndex = currentIndex
-                                            draggingIndex = currentIndex
+                                            // 动态取实时索引：pointerInput(Unit) 闭包不随重组更新，
+                                            // 服务端同步后列表重排，若沿用旧闭包捕获的 currentIndex
+                                            // 会出现"长按最后一个，拖动的却是第一个"的错位
+                                            val idx = sortedEnvs.indexOf(env)
+                                            initialIndex = idx
+                                            draggingIndex = idx
                                             draggingOffset = 0f
                                         },
                                         onDrag = { change, dragAmount ->
@@ -443,21 +446,21 @@ fun EnvCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 5.dp),
+                .padding(horizontal = 8.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 拖拽把手：长按拖拽排序
+            // 拖拽把手：小号低对比「⋮⋮」样式，长按拖动排序（批量模式置灰）
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(20.dp)
                     .then(dragModifier),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.DragHandle,
-                    contentDescription = "拖拽排序",
-                    tint = if (isBatchMode) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
+                    contentDescription = "长按拖拽排序",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isBatchMode) 0.2f else 0.45f),
+                    modifier = Modifier.size(13.dp)
                 )
             }
             if (isBatchMode) {
@@ -470,9 +473,9 @@ fun EnvCard(
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // 第一行：变量名（14sp 加粗）、状态微型徽标、备注标签、开关
+                // 第一行：变量名（13sp 加粗）、状态微型徽标、备注标签、开关
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -485,23 +488,15 @@ fun EnvCard(
                     ) {
                         Text(
                             text = env.name,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Surface(
-                            color = if (env.enabled) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = if (env.enabled) "启用" else "禁用",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = if (env.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                            )
-                        }
+                        StatusBadge(
+                            text = if (env.enabled) "启用" else "已禁用",
+                            tone = if (env.enabled) StatusTone.SECONDARY else StatusTone.NEUTRAL
+                        )
                         if (!env.remarks.isNullOrBlank()) {
                             Text(
                                 text = "(${env.remarks})",
@@ -536,7 +531,7 @@ fun EnvCard(
                         Text(
                             text = env.value.trimStart('=').ifEmpty { "(空值)" },
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -546,22 +541,73 @@ fun EnvCard(
 
                     Spacer(Modifier.width(6.dp))
 
+                    // 常驻主价值动作「分段」+「更多」溢出菜单（复制/编辑/置顶/删除），行内不再铺 5 个按钮
+                    var showEnvMoreMenu by remember { mutableStateOf(false) }
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(1.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         EnvsActionButton(icon = Icons.Default.Tune, label = "分段", tint = MaterialTheme.colorScheme.primary, onClick = onSubEdit)
-                        EnvsActionButton(icon = Icons.Default.ContentCopy, label = "复制", tint = MaterialTheme.colorScheme.onSurfaceVariant, onClick = onCopy)
-                        EnvsActionButton(icon = Icons.Default.Edit, label = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant, onClick = onEdit)
-                        if (!isBatchMode) {
+                        Box {
                             EnvsActionButton(
-                                icon = if (env.isPinned) Icons.Default.Pin else Icons.Default.PushPin,
-                                label = if (env.isPinned) "已置顶" else "置顶",
-                                tint = if (env.isPinned) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                onClick = onPin
+                                icon = Icons.Default.MoreVert,
+                                label = "更多",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                onClick = { showEnvMoreMenu = true }
                             )
+                            DropdownMenu(
+                                expanded = showEnvMoreMenu,
+                                onDismissRequest = { showEnvMoreMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("复制值", fontSize = 12.sp) },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    },
+                                    onClick = {
+                                        showEnvMoreMenu = false
+                                        onCopy()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("编辑", fontSize = 12.sp) },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    },
+                                    onClick = {
+                                        showEnvMoreMenu = false
+                                        onEdit()
+                                    }
+                                )
+                                if (!isBatchMode) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (env.isPinned) "取消置顶" else "置顶", fontSize = 12.sp) },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (env.isPinned) Icons.Default.Pin else Icons.Default.PushPin,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        },
+                                        onClick = {
+                                            showEnvMoreMenu = false
+                                            onPin()
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("删除", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                                    },
+                                    onClick = {
+                                        showEnvMoreMenu = false
+                                        onDelete()
+                                    }
+                                )
+                            }
                         }
-                        EnvsActionButton(icon = Icons.Default.Delete, label = "删除", tint = MaterialTheme.colorScheme.error, onClick = onDelete)
                     }
                 }
             }
