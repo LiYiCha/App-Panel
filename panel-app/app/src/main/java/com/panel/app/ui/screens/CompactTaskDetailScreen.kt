@@ -25,8 +25,11 @@ import androidx.compose.ui.unit.sp
 import com.panel.app.data.adapter.QinglongApiHelpers
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.StatusBadge
+import com.panel.app.ui.components.StatusTone
 import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.CronExpressionDescriber
+import com.panel.app.util.CronNextRun
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -244,26 +247,15 @@ fun CompactTaskDetailScreen(
                         Column {
                             Text("任务状态", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Surface(
-                                    color = when {
-                                        task.isRunning -> MaterialTheme.colorScheme.secondaryContainer
-                                        task.isDisabled -> MaterialTheme.colorScheme.errorContainer
-                                        else -> MaterialTheme.colorScheme.primaryContainer
+                                StatusBadge(
+                                    text = task.statusText,
+                                    tone = when {
+                                        task.isRunning -> StatusTone.PRIMARY
+                                        task.isDisabled -> StatusTone.NEUTRAL
+                                        else -> StatusTone.SECONDARY
                                     },
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = task.statusText,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = when {
-                                            task.isRunning -> MaterialTheme.colorScheme.secondary
-                                            task.isDisabled -> MaterialTheme.colorScheme.error
-                                            else -> MaterialTheme.colorScheme.primary
-                                        },
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                                    pulsing = task.isRunning
+                                )
                                 if (task.isPinned) {
                                     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp)) {
                                         Text("已置顶 📌", fontSize = 10.sp, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
@@ -426,10 +418,13 @@ fun CompactTaskDetailScreen(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                    // 下次运行时间 (补全字段)
+                    // 下次运行时间：优先服务端值（白虎）；青龙不下发该字段，
+                    // 本地按 cron 表达式推算（CronNextRun），算不出再降级为 "--"
                     DetailRow(
                         label = "下次计划运行",
-                        value = task.nextRunTime?.ifBlank { null } ?: "等待调度服务计算"
+                        value = task.nextRunTime?.ifBlank { null }
+                            ?: remember(task.schedule) { CronNextRun.computeNext(task.schedule) }
+                            ?: "--"
                     )
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))

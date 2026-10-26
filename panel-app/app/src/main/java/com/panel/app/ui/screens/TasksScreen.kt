@@ -1,4 +1,4 @@
-package com.panel.app.ui.screens
+﻿package com.panel.app.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -38,7 +38,30 @@ import androidx.compose.foundation.shape.CircleShape
 import com.panel.app.data.model.ScriptNode
 import com.panel.app.data.model.UnifiedTask
 import com.panel.app.data.model.extractScriptFiles
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.snapTo
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.panel.app.ui.components.ScriptFilePickerSection
+import com.panel.app.ui.components.SearchPillField
+import com.panel.app.ui.components.StatusBadge
+import com.panel.app.ui.components.StatusTone
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import com.panel.app.ui.viewmodel.MainViewModel
+
+/** 任务卡右滑开合状态（右滑露出 启动/停止 + 启用/禁用 两枚动作） */
+private enum class TaskSwipeValue { Closed, Open }
 
 enum class TaskSortType(val label: String) {
     DEFAULT("默认排序"),
@@ -57,13 +80,14 @@ fun TasksScreen(
     onDismissCreateDialog: () -> Unit = {},
     onOpenTaskDetail: (String) -> Unit,
     onOpenLog: (String) -> Unit,
-    currentSubTab: Int = 0
+    currentSubTab: Int = 0,
+    sortType: TaskSortType = TaskSortType.DEFAULT,
+    onSortTypeChange: (TaskSortType) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("all") }
-    var sortType by remember { mutableStateOf(TaskSortType.DEFAULT) }
     var localShowCreateDialog by remember { mutableStateOf(false) }
     var editingTask by remember { mutableStateOf<UnifiedTask?>(null) }
     var deletingTask by remember { mutableStateOf<UnifiedTask?>(null) }
@@ -129,27 +153,14 @@ fun TasksScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
 
-        // 2. 全宽搜索框
-        OutlinedTextField(
+        // 2. 药丸形搜索框（三页统一组件）
+        SearchPillField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索任务名称、执行命令或 Cron 规则...", fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            singleLine = true
+            placeholder = "搜索任务名称、执行命令或 Cron 规则..."
         )
 
-        // 3. 任务状态筛选与效率工具栏（集成交互式状态药丸与排序/批量/新建）
-        var showSortMenu by remember { mutableStateOf(false) }
-
+        // 3. 任务状态筛选药丸（排序/批量/新建已收进顶栏，本行只留筛选）
         val totalCount = uiState.tasks.size
         val runningCount = uiState.tasks.count { it.isRunning }
         val enabledCount = uiState.tasks.count { !it.isDisabled }
@@ -159,13 +170,12 @@ fun TasksScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧：状态筛选药丸（可点击快速筛选，同时显示实时统计与动态指示）
+            // 状态筛选药丸（可点击快速筛选，同时显示实时统计与动态指示）
             Row(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -173,7 +183,7 @@ fun TasksScreen(
                 // 全部
                 val isAllSelected = selectedFilter == "all"
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(50),
                     color = if (isAllSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = if (isAllSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
                     modifier = Modifier.clickable { selectedFilter = "all" }
@@ -183,7 +193,7 @@ fun TasksScreen(
                         fontSize = 11.sp,
                         fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isAllSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
                     )
                 }
 
@@ -200,7 +210,7 @@ fun TasksScreen(
                     label = "pulseAlpha"
                 )
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(50),
                     color = when {
                         isRunningSelected -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)
                         runningCount > 0 -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
@@ -214,7 +224,7 @@ fun TasksScreen(
                     modifier = Modifier.clickable { selectedFilter = "running" }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -240,7 +250,7 @@ fun TasksScreen(
                 // 已启用
                 val isEnabledSelected = selectedFilter == "enabled"
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(50),
                     color = if (isEnabledSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = if (isEnabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
                     modifier = Modifier.clickable { selectedFilter = "enabled" }
@@ -250,14 +260,14 @@ fun TasksScreen(
                         fontSize = 11.sp,
                         fontWeight = if (isEnabledSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isEnabledSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
                     )
                 }
 
                 // 已禁用
                 val isDisabledSelected = selectedFilter == "disabled"
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(50),
                     color = if (isDisabledSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = if (isDisabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)) else null,
                     modifier = Modifier.clickable { selectedFilter = "disabled" }
@@ -267,146 +277,8 @@ fun TasksScreen(
                         fontSize = 11.sp,
                         fontWeight = if (isDisabledSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isDisabledSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
                     )
-                }
-            }
-
-            Spacer(Modifier.width(6.dp))
-
-            // 右侧：效率工具栏 (多维排序 / 批量模式 / 快捷新建)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                // 排序下拉菜单
-                Box {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (sortType != TaskSortType.DEFAULT)
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        else
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        border = if (sortType != TaskSortType.DEFAULT)
-                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                        else null,
-                        modifier = Modifier.clickable { showSortMenu = true }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.SwapVert,
-                                contentDescription = "排序",
-                                modifier = Modifier.size(13.dp),
-                                tint = if (sortType != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = sortType.label,
-                                fontSize = 11.sp,
-                                fontWeight = if (sortType != TaskSortType.DEFAULT) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (sortType != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { showSortMenu = false }
-                    ) {
-                        TaskSortType.entries.forEach { type ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        type.label,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (sortType == type) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (sortType == type) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                },
-                                leadingIcon = {
-                                    if (sortType == type) {
-                                        Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                    } else {
-                                        Spacer(Modifier.size(16.dp))
-                                    }
-                                },
-                                onClick = {
-                                    sortType = type
-                                    showSortMenu = false
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // 批量模式切换
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (uiState.isTaskBatchMode)
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                    else
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    border = if (uiState.isTaskBatchMode)
-                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                    else null,
-                    modifier = Modifier.clickable {
-                        viewModel.setTaskBatchMode(!uiState.isTaskBatchMode)
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Checklist,
-                            contentDescription = "批量操作",
-                            modifier = Modifier.size(13.dp),
-                            tint = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = if (uiState.isTaskBatchMode) "退出" else "批量",
-                            fontSize = 11.sp,
-                            fontWeight = if (uiState.isTaskBatchMode) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                // 快捷新建按钮
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable {
-                        localShowCreateDialog = true
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "新建任务",
-                            modifier = Modifier.size(13.dp),
-                            tint = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Text(
-                            text = "新建",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
                 }
             }
         }
@@ -540,6 +412,7 @@ fun TasksScreen(
     if (editingTask != null) {
         EditTaskDialog(
             task = editingTask!!,
+            scriptFiles = uiState.scriptTree.extractScriptFiles(),
             onDismiss = { editingTask = null },
             onConfirm = { updated ->
                 viewModel.updateTask(updated)
@@ -571,6 +444,7 @@ fun TasksScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TaskCard(
     task: UnifiedTask,
@@ -593,18 +467,91 @@ fun TaskCard(
         task.statusText == "排队中" -> TaskVisualState.Queued
         else -> TaskVisualState.Ready
     }
-    // 禁用不是删除：标题保持全对比度保证可读，只让次要信息退后
-    val mutedAlpha = if (state == TaskVisualState.Disabled) 0.45f else 1f
+    // 禁用不是删除：整卡半透明置灰（名称/徽标/内容一起退后），红色只留给真正失败
+    val mutedAlpha = if (state == TaskVisualState.Disabled) 0.75f else 1f
+    val cardAlpha = if (state == TaskVisualState.Disabled) 0.55f else 1f
 
-    ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                if (isBatchMode) onSelect() else onClick()
-            },
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    // 上次执行时间：统一走 TimeFormat.short（今天 HH:mm / 更早 MM-dd HH:mm / 无 "-"）
+    val timeText = remember(task.lastExecutionTime) {
+        com.panel.app.util.TimeFormat.short(task.lastExecutionTime)
+    }
+
+    // 注意：remember 不能放在条件分支里（批量模式切换会导致槽位错位），
+    // 状态始终创建，仅在非批量模式下应用滑动
+    val swipeState = rememberTaskSwipeState()
+    val scope = rememberCoroutineScope()
+
+    // 防御：列表回收/复用可能把滑动中间状态带回来，表现为"未滑动就露出动作层"
+    LaunchedEffect(task.id) {
+        if (swipeState.currentValue != TaskSwipeValue.Closed) {
+            swipeState.snapTo(TaskSwipeValue.Closed)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // 右滑呼出的动作层：启动/停止 + 启用/禁用 + 删除（行内不再放常驻按钮与开关）
+        if (!isBatchMode) {
+            Row(
+                modifier = Modifier.matchParentSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                SwipeAction(
+                    container = if (task.isRunning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                    content = if (task.isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                    icon = if (task.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    label = if (task.isRunning) "停止" else "启动",
+                    onClick = {
+                        onRunOrStop()
+                        scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                    }
+                )
+                Spacer(Modifier.width(6.dp))
+                SwipeAction(
+                    container = if (task.isDisabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    content = if (task.isDisabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    icon = if (task.isDisabled) Icons.Default.CheckCircle else Icons.Default.Block,
+                    label = if (task.isDisabled) "启用" else "禁用",
+                    onClick = {
+                        onToggle(task.isDisabled)
+                        scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                    }
+                )
+                Spacer(Modifier.width(6.dp))
+                // 删除：仍走确认弹窗，防误删
+                SwipeAction(
+                    container = MaterialTheme.colorScheme.errorContainer,
+                    content = MaterialTheme.colorScheme.error,
+                    icon = Icons.Default.Delete,
+                    label = "删除",
+                    onClick = {
+                        scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                        onDelete()
+                    }
+                )
+            }
+        }
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { alpha = cardAlpha }
+                .then(
+                    if (!isBatchMode) Modifier
+                        .offset { IntOffset(swipeState.requireOffset().roundToInt(), 0) }
+                        .anchoredDraggable(swipeState, Orientation.Horizontal)
+                    else Modifier
+                )
+                .clickable {
+                    when {
+                        !isBatchMode && swipeState.currentValue == TaskSwipeValue.Open ->
+                            scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                        isBatchMode -> onSelect()
+                        else -> onClick()
+                    }
+                },
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -646,704 +593,183 @@ fun TaskCard(
                                 style = MaterialTheme.typography.titleMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                color = if (state == TaskVisualState.Disabled) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
                             StateBadge(state)
                         }
-                        if (!isBatchMode) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp, 22.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) { onToggle(task.isDisabled) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Switch(
-                                    checked = !task.isDisabled,
-                                    onCheckedChange = onToggle,
-                                    modifier = Modifier.scale(0.68f)
-                                )
-                            }
-                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = timeText,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(3.dp))
+                    // Cron 规则条：时钟图标 + 等宽表达式
                     Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            Icon(
+                                Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(11.dp)
+                            )
                             Text(
-                                text = task.command,
+                                text = task.schedule,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = mutedAlpha)
                             )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (task.lastRunningTime != null && task.lastRunningTime > 0) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
-                                        shape = RoundedCornerShape(3.dp)
-                                    ) {
-                                        Text(
-                                            text = QinglongApiHelpers.formatSeconds(task.lastRunningTime),
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 9.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                        )
-                                    }
-                                }
-                                if (!scriptSize.isNullOrBlank()) {
-                                    if (task.lastRunningTime != null && task.lastRunningTime > 0) {
-                                        Spacer(Modifier.width(4.dp))
-                                    }
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                        shape = RoundedCornerShape(3.dp)
-                                    ) {
-                                        Text(
-                                            text = scriptSize,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                        )
-                                    }
-                                }
+                        }
+                    }
+
+                    // 命令行：终端图标 + 命令 + 耗时/脚本大小徽章
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Code,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = task.command,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = mutedAlpha)
+                        )
+                        if (task.lastRunningTime != null && task.lastRunningTime > 0) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+                                shape = RoundedCornerShape(3.dp)
+                            ) {
+                                Text(
+                                    text = QinglongApiHelpers.formatSeconds(task.lastRunningTime),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        if (!scriptSize.isNullOrBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(3.dp)
+                            ) {
+                                Text(
+                                    text = scriptSize,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
                             }
                         }
                     }
 
-                    // 紧凑操作按钮行 (保持列表卡片紧凑整洁、高密度呈现)
-                    if (!isBatchMode) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = onTogglePin,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
-                                        contentDescription = if (task.isPinned) "已置顶" else "置顶",
-                                        tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = onRunOrStop,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    if (task.isRunning) {
-                                        Icon(
-                                            Icons.Default.Stop,
-                                            contentDescription = "停止任务",
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Default.PlayArrow,
-                                            contentDescription = "立即执行",
-                                            tint = MaterialTheme.colorScheme.secondary,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                }
-                                IconButton(
-                                    onClick = onOpenLog,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.Notes,
-                                        contentDescription = "查看日志",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = onEdit,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = "编辑任务",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = onDelete,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "删除任务",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    // 具体操作（日志/编辑/删除/置顶）已收敛到任务详情页顶栏与日志历史 Tab，
+                    // 行内只保留右滑快捷动作，保持列表高密度
                 }
             }
         }
     }
+}
+
+/** 右滑动作宽度：72dp 动作 × 3（启动/停止、启用/禁用、删除）+ 6dp 间距 × 2 */
+private val TaskSwipeOpenWidth = 228.dp
+
+/** 任务卡右滑状态：Closed(0) / Open(-150dp)，松手吸附，无 dismiss 语义 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun rememberTaskSwipeState(): AnchoredDraggableState<TaskSwipeValue> {
+    val density = LocalDensity.current
+    val state = remember {
+        AnchoredDraggableState(
+            initialValue = TaskSwipeValue.Closed,
+            positionalThreshold = { totalDistance -> totalDistance * 0.4f },
+            velocityThreshold = { with(density) { 80.dp.toPx() } },
+            snapAnimationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            decayAnimationSpec = exponentialDecay()
+        )
+    }
+    SideEffect {
+        state.updateAnchors(
+            DraggableAnchors {
+                TaskSwipeValue.Closed at 0f
+                TaskSwipeValue.Open at -with(density) { TaskSwipeOpenWidth.toPx() }
+            }
+        )
+    }
+    return state
+}
+
+/** 右滑露出的单枚动作块 */
+@Composable
+private fun SwipeAction(
+    container: Color,
+    content: Color,
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = container,
+        modifier = Modifier
+            .width(72.dp)
+            .heightIn(min = 52.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = content, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.height(2.dp))
+            Text(label, fontSize = 10.sp, color = content)
+        }
+    }
+}
 
 private enum class TaskVisualState { Running, Queued, Disabled, Ready }
 
-/** 状态徽章：已启用(绿色)、已禁用(红色)、运行中(主色/脉冲) */
+/** 状态徽章：已启用(绿)、已禁用(中性灰)、运行中(主色/脉冲) —— 公共组件薄映射 */
 @Composable
 private fun StateBadge(state: TaskVisualState) {
-    val (label, container, content) = when (state) {
-        TaskVisualState.Running -> Triple(
-            "运行中",
-            MaterialTheme.colorScheme.primaryContainer,
-            MaterialTheme.colorScheme.onPrimaryContainer
-        )
-        TaskVisualState.Queued -> Triple("排队中", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-        TaskVisualState.Disabled -> Triple(
-            "已禁用",
-            MaterialTheme.colorScheme.errorContainer,
-            MaterialTheme.colorScheme.error
-        )
-        TaskVisualState.Ready -> Triple(
-            "已启用",
-            MaterialTheme.colorScheme.secondaryContainer,
-            MaterialTheme.colorScheme.secondary
-        )
+    when (state) {
+        TaskVisualState.Running -> StatusBadge("运行中", StatusTone.PRIMARY, pulsing = true)
+        TaskVisualState.Queued -> StatusBadge("排队中", StatusTone.TERTIARY)
+        TaskVisualState.Disabled -> StatusBadge("已禁用", StatusTone.NEUTRAL)
+        TaskVisualState.Ready -> StatusBadge("已启用", StatusTone.SECONDARY)
     }
-    Surface(color = container, shape = RoundedCornerShape(4.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-        ) {
-            if (state == TaskVisualState.Running) {
-                PulsingDot()
-            }
-            Text(label, fontSize = 9.sp, color = content)
-        }
-    }
-}
-
-/** 双层脉冲点：外圈扩散 + 内芯实心，替代原来用 "●" 字符假装动画 */
-@Composable
-private fun PulsingDot() {
-    val transition = rememberInfiniteTransition(label = "pulseDot")
-    val progress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "pulse"
-    )
-    val color = MaterialTheme.colorScheme.primary
-    Canvas(modifier = Modifier.size(8.dp)) {
-        val r = size.minDimension / 2
-        drawCircle(
-            color = color.copy(alpha = (1f - progress) * 0.35f),
-            radius = r * (1f + progress),
-            center = center
-        )
-        drawCircle(color = color, radius = r * 0.5f, center = center)
-    }
-}
-
-@Composable
-fun CreateTaskDialog(
-    scriptFiles: List<String>,
-    onDismiss: () -> Unit,
-    onConfirm: (UnifiedTask) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var command by remember { mutableStateOf("") }
-    var schedule by remember { mutableStateOf("0 8 * * *") }
-    var showFilePicker by remember { mutableStateOf(false) }
-    var showAdvanced by remember { mutableStateOf(false) }
-
-    // 白虎与青龙高级配置项
-    var preCommand by remember { mutableStateOf("") }
-    var postCommand by remember { mutableStateOf("") }
-    var timeoutStr by remember { mutableStateOf("30") }
-    var workDir by remember { mutableStateOf("") }
-    var retryCountStr by remember { mutableStateOf("0") }
-    var retryIntervalStr by remember { mutableStateOf("0") }
-    var randomRangeStr by remember { mutableStateOf("0") }
-    var labelsStr by remember { mutableStateOf("") }
-
-    val scrollState = rememberScrollState()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("新建定时任务", fontSize = 15.sp) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("选择脚本文件:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(
-                        onClick = { showFilePicker = !showFilePicker },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(12.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (showFilePicker) "收起列表" else "浏览脚本库", fontSize = 10.sp)
-                    }
-                }
-
-                if (showFilePicker) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 120.dp)
-                    ) {
-                        LazyColumn(modifier = Modifier.padding(4.dp)) {
-                            items(scriptFiles) { file ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            val baseName = file.substringAfterLast("/")
-                                            name = baseName.substringBeforeLast(".")
-                                            command = when {
-                                                file.endsWith(".py") -> "python3 $file"
-                                                file.endsWith(".js") -> "node $file"
-                                                file.endsWith(".sh") -> "bash $file"
-                                                else -> "python3 $file"
-                                            }
-                                            showFilePicker = false
-                                        }
-                                        .padding(vertical = 4.dp, horizontal = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(file, fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("任务名称", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = command,
-                    onValueChange = { command = it },
-                    label = { Text("执行命令 (例如 python3 checkin.py)", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = schedule,
-                    onValueChange = { schedule = it },
-                    label = { Text("定时规则 (Cron)", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                val cronDesc = remember(schedule) {
-                    com.panel.app.util.CronExpressionDescriber.describe(schedule)
-                }
-                if (cronDesc.isNotBlank()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-
-                val presets = remember {
-                    com.panel.app.util.CronExpressionDescriber.PRESETS_5_PART
-                }
-                Text("常用预设:", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
-                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(presets) { p ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (schedule == p.expression) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable { schedule = p.expression }
-                        ) {
-                            Text(
-                                text = p.label,
-                                fontSize = 10.sp,
-                                color = if (schedule == p.expression) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-                }
-
-                // 高级配置切换按钮
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAdvanced = !showAdvanced }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (showAdvanced) "收起高级配置 ▲" else "展开白虎更多配置 ▼",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                if (showAdvanced) {
-                    OutlinedTextField(
-                        value = preCommand,
-                        onValueChange = { preCommand = it },
-                        label = { Text("前置命令 (选填)", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = postCommand,
-                        onValueChange = { postCommand = it },
-                        label = { Text("后置命令 (选填)", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = timeoutStr,
-                            onValueChange = { timeoutStr = it },
-                            label = { Text("超时(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = workDir,
-                            onValueChange = { workDir = it },
-                            label = { Text("工作目录(选填)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = retryCountStr,
-                            onValueChange = { retryCountStr = it },
-                            label = { Text("重试次数", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = retryIntervalStr,
-                            onValueChange = { retryIntervalStr = it },
-                            label = { Text("重试间隔(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = randomRangeStr,
-                            onValueChange = { randomRangeStr = it },
-                            label = { Text("随机延时(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    OutlinedTextField(
-                        value = labelsStr,
-                        onValueChange = { labelsStr = it },
-                        label = { Text("标签 (逗号分隔)", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (name.isNotBlank() && command.isNotBlank()) {
-                        val task = UnifiedTask(
-                            id = "",
-                            name = name.trim(),
-                            command = command.trim(),
-                            schedule = schedule.trim(),
-                            statusText = "已就绪",
-                            preCommand = preCommand.trim().ifBlank { null },
-                            postCommand = postCommand.trim().ifBlank { null },
-                            timeout = timeoutStr.toIntOrNull() ?: 30,
-                            workDir = workDir.trim().ifBlank { null },
-                            retryCount = retryCountStr.toIntOrNull() ?: 0,
-                            retryInterval = retryIntervalStr.toIntOrNull() ?: 0,
-                            randomRange = randomRangeStr.toIntOrNull() ?: 0,
-                            labels = if (labelsStr.isBlank()) emptyList() else labelsStr.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
-                        )
-                        onConfirm(task)
-                    }
-                },
-                enabled = name.isNotBlank() && command.isNotBlank()
-            ) {
-                Text("创建")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        }
-    )
-}
-
-@Composable
-fun EditTaskDialog(
-    task: UnifiedTask,
-    onDismiss: () -> Unit,
-    onConfirm: (UnifiedTask) -> Unit
-) {
-    var name by remember { mutableStateOf(task.name) }
-    var command by remember { mutableStateOf(task.command) }
-    var schedule by remember { mutableStateOf(task.schedule) }
-    var showAdvanced by remember { mutableStateOf(false) }
-
-    var preCommand by remember { mutableStateOf(task.preCommand ?: "") }
-    var postCommand by remember { mutableStateOf(task.postCommand ?: "") }
-    var timeoutStr by remember { mutableStateOf(task.timeout.toString()) }
-    var workDir by remember { mutableStateOf(task.workDir ?: "") }
-    var retryCountStr by remember { mutableStateOf(task.retryCount.toString()) }
-    var retryIntervalStr by remember { mutableStateOf(task.retryInterval.toString()) }
-    var randomRangeStr by remember { mutableStateOf(task.randomRange.toString()) }
-    var labelsStr by remember { mutableStateOf(task.labels.joinToString(", ")) }
-
-    val scrollState = rememberScrollState()
-
-    val cronDesc = remember(schedule) {
-        com.panel.app.util.CronExpressionDescriber.describe(schedule)
-    }
-
-    val presets = remember(schedule) {
-        if (schedule.trim().split("\\s+".toRegex()).size == 6)
-            com.panel.app.util.CronExpressionDescriber.PRESETS_6_PART
-        else
-            com.panel.app.util.CronExpressionDescriber.PRESETS_5_PART
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("编辑任务", fontSize = 15.sp) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("任务名称", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = command,
-                    onValueChange = { command = it },
-                    label = { Text("执行命令", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = schedule,
-                    onValueChange = { schedule = it },
-                    label = { Text("Cron 规则", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (cronDesc.isNotBlank()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(cronDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-
-                Text("常用预设:", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
-                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(presets) { p ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (schedule == p.expression) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable { schedule = p.expression }
-                        ) {
-                            Text(
-                                text = p.label,
-                                fontSize = 10.sp,
-                                color = if (schedule == p.expression) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-                }
-
-                // 高级配置切换按钮
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAdvanced = !showAdvanced }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (showAdvanced) "收起高级配置 ▲" else "展开白虎更多配置 ▼",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                if (showAdvanced) {
-                    OutlinedTextField(
-                        value = preCommand,
-                        onValueChange = { preCommand = it },
-                        label = { Text("前置命令", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = postCommand,
-                        onValueChange = { postCommand = it },
-                        label = { Text("后置命令", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = timeoutStr,
-                            onValueChange = { timeoutStr = it },
-                            label = { Text("超时(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = workDir,
-                            onValueChange = { workDir = it },
-                            label = { Text("工作目录", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = retryCountStr,
-                            onValueChange = { retryCountStr = it },
-                            label = { Text("重试次数", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = retryIntervalStr,
-                            onValueChange = { retryIntervalStr = it },
-                            label = { Text("重试间隔(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = randomRangeStr,
-                            onValueChange = { randomRangeStr = it },
-                            label = { Text("随机延时(秒)", fontSize = 11.sp) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    OutlinedTextField(
-                        value = labelsStr,
-                        onValueChange = { labelsStr = it },
-                        label = { Text("标签 (逗号分隔)", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val updated = task.copy(
-                        name = name.trim(),
-                        command = command.trim(),
-                        schedule = schedule.trim(),
-                        preCommand = preCommand.trim().ifBlank { null },
-                        postCommand = postCommand.trim().ifBlank { null },
-                        timeout = timeoutStr.toIntOrNull() ?: task.timeout,
-                        workDir = workDir.trim().ifBlank { null },
-                        retryCount = retryCountStr.toIntOrNull() ?: task.retryCount,
-                        retryInterval = retryIntervalStr.toIntOrNull() ?: task.retryInterval,
-                        randomRange = randomRangeStr.toIntOrNull() ?: task.randomRange,
-                        labels = if (labelsStr.isBlank()) emptyList() else labelsStr.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
-                    )
-                    onConfirm(updated)
-                }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        }
-    )
 }
 
 /**

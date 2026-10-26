@@ -244,25 +244,6 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
         }
 
         composable(
-            route = "standalone_log/{taskName}",
-            arguments = listOf(navArgument("taskName") { type = NavType.StringType })
-        ) { backStackEntry ->
-            val rawArg = backStackEntry.arguments?.getString("taskName") ?: ""
-            val taskIdentifier = Uri.decode(rawArg)
-            val allTasks = viewModel.uiState.collectAsState().value.tasks
-            val displayName = allTasks.firstOrNull { it.id == taskIdentifier }?.name ?: taskIdentifier
-            var logContent by remember(taskIdentifier) { mutableStateOf("正在拉取实时执行日志...") }
-            LaunchedEffect(taskIdentifier) {
-                viewModel.getTaskLog(taskIdentifier) { log -> logContent = log }
-            }
-            StandaloneLogScreen(
-                taskName = displayName,
-                initialLog = logContent,
-                onBack = { safePopBack() }
-            )
-        }
-
-        composable(
             route = "standalone_editor/{scriptName}",
             arguments = listOf(navArgument("scriptName") { type = NavType.StringType })
         ) { backStackEntry ->

@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedDep
@@ -290,6 +291,8 @@ fun StandaloneDepsScreen(
                                                 viewModel.toggleDepSelection(dep.id)
                                             } else {
                                                 viewingLogDep = dep
+                                                // 先用列表自带的 log 立即显示，再异步刷新兜底
+                                                depLogContent = dep.log ?: ""
                                                 viewModel.getDepLog(dep.id) { log -> depLogContent = log }
                                             }
                                         },
@@ -350,6 +353,36 @@ fun StandaloneDepsScreen(
                                             if (!dep.remarks.isNullOrEmpty()) {
                                                 Text(text = dep.remarks, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                                             }
+                                            // 安装/构建日志直接内嵌卡片（log 字段随 /api/dependencies 一起下发），
+                                            // 展示末尾 4 行 —— 最新进度在最后
+                                            if (!dep.log.isNullOrBlank()) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 6.dp)
+                                                ) {
+                                                    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                                        dep.log.trim().lines().takeLast(4).forEach { line ->
+                                                            Text(
+                                                                text = line,
+                                                                fontSize = 10.sp,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        Text(
+                                                            text = "⋯ 点击卡片查看完整日志",
+                                                            fontSize = 9.sp,
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.padding(top = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -388,6 +421,7 @@ fun StandaloneDepsScreen(
                                             IconButton(
                                                 onClick = {
                                                     viewingLogDep = dep
+                                                    depLogContent = dep.log ?: ""
                                                     viewModel.getDepLog(dep.id) { log -> depLogContent = log }
                                                 },
                                                 modifier = Modifier.size(32.dp)

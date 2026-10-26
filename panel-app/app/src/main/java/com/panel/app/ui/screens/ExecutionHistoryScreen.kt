@@ -24,6 +24,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.adapter.QinglongApiHelpers
+import com.panel.app.ui.components.ExitCodeBadge
+import com.panel.app.ui.components.SearchPillField
 import com.panel.app.data.model.RunningTaskInfo
 import com.panel.app.data.model.TaskInstanceRecord
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -220,22 +222,11 @@ fun ExecutionHistoryScreen(
                 }
             }
 
-            // 1. 搜索框与显示模式切换
-            OutlinedTextField(
+            // 1. 搜索框（三页统一药丸组件）与显示模式切换
+            SearchPillField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("搜索脚本名称、执行日期或记录 ID...", fontSize = 12.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                singleLine = true
+                placeholder = "搜索脚本名称、执行日期或记录 ID..."
             )
 
             // 2. 状态过滤 Chip 与 视图模式切换栏
@@ -443,7 +434,9 @@ fun ExecutionHistoryScreen(
 
                                                 records.forEach { record ->
                                                     val isSuccess = record.exitCode == 0 || record.statusText == "成功"
-                                                    val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: record.id
+                                                    // logPath 为空时绝不能拿 record.id 冒充路径（getLogDetail 必失败），
+                                                    // 留空让 LogViewer 走 taskId 兜底（getTaskLog），与任务详情页同口径
+                                                    val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: ""
                                                     val recTaskId = record.taskId?.takeIf { it.isNotBlank() } ?: taskId ?: ""
                                                     val isRunning = record.statusText == "运行中"
                                                     Surface(
@@ -467,18 +460,7 @@ fun ExecutionHistoryScreen(
                                                                 verticalAlignment = Alignment.CenterVertically,
                                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                             ) {
-                                                                Surface(
-                                                                    color = if (isSuccess) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                                                                    shape = RoundedCornerShape(3.dp)
-                                                                ) {
-                                                                    Text(
-                                                                        text = if (isSuccess) "成功" else "失败(${record.exitCode})",
-                                                                        fontSize = 9.sp,
-                                                                        fontWeight = FontWeight.Bold,
-                                                                        color = if (isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-                                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                                    )
-                                                                }
+                                                                ExitCodeBadge(isSuccess = isSuccess, exitCode = record.exitCode)
                                                                 Text(
                                                                     text = record.startTime,
                                                                     fontSize = 11.sp,
@@ -520,7 +502,7 @@ fun ExecutionHistoryScreen(
                             items(filteredList, key = { it.id }) { record ->
                                 val isSuccess = record.exitCode == 0 || record.statusText == "成功"
                                 val title = record.taskName.ifBlank { "执行记录 #${record.id}" }
-                                val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: record.id
+                                val logPath = record.logPath?.takeIf { it.isNotBlank() } ?: ""
                                 val recTaskId = record.taskId?.takeIf { it.isNotBlank() } ?: taskId ?: ""
                                 val isRunning = record.statusText == "运行中"
                                 val dispDuration = resolveRecordDuration(record)
@@ -544,17 +526,7 @@ fun ExecutionHistoryScreen(
                                                 style = MaterialTheme.typography.titleMedium,
                                                 modifier = Modifier.weight(1f)
                                             )
-                                            Surface(
-                                                color = if (isSuccess) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (isSuccess) "成功 (0)" else "失败 (${record.exitCode})",
-                                                    fontSize = 10.sp,
-                                                    color = if (isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
+                                            ExitCodeBadge(isSuccess = isSuccess, exitCode = record.exitCode)
                                         }
 
                                         Row(

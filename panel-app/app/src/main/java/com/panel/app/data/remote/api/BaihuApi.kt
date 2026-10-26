@@ -632,7 +632,7 @@ interface BaihuApi {
     @DELETE("api/v1/scripts/{id}")
     suspend fun deleteScript(@Path("id") id: String): Response<BaihuCommonResp>
 
-    // ---------------- 8. 登录审计日志 ----------------
+    // ---------------- 8. 登录日志 ----------------
     @GET("api/v1/settings/loginlogs")
     suspend fun getLoginLogs(
         @Query("username") username: String? = null,

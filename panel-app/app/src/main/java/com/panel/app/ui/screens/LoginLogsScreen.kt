@@ -64,7 +64,7 @@ fun LoginLogsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("登录审计日志 (${filteredLogs.size})", fontSize = 16.sp, style = MaterialTheme.typography.titleMedium) },
+                title = { Text("登录日志 (${filteredLogs.size})", fontSize = 16.sp, style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -73,7 +73,7 @@ fun LoginLogsScreen(
                 actions = {
                     IconButton(onClick = {
                         loadLogs()
-                        Toast.makeText(context, "正在刷新登录审计日志...", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "正在刷新登录日志...", Toast.LENGTH_SHORT).show()
                     }) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新")
                     }
@@ -115,7 +115,7 @@ fun LoginLogsScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text(if (searchQuery.isEmpty()) "暂无登录审计日志记录" else "未匹配到相关登录日志", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (searchQuery.isEmpty()) "暂无登录日志记录" else "未匹配到相关登录日志", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else {

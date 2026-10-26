@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.components.CodeSyntaxVisualTransformation
 import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.CronExpressionDescriber
@@ -153,35 +154,28 @@ fun StandaloneScriptEditorScreen(
                     }
                 },
                 actions = {
-                    // 添加为定时任务
-                    IconButton(
-                        onClick = { showAddToTaskDialog = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(Icons.Default.AddAlarm, contentDescription = "添加为定时任务", modifier = Modifier.size(18.dp))
-                    }
-                    // 复制全文
-                    IconButton(
+                    // 顶栏图标统一带下方精简文言（ActionButtonSmall：图标 + 9sp 标签）
+                    ActionButtonSmall(
+                        icon = Icons.Default.AddAlarm,
+                        label = "定时",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = { showAddToTaskDialog = true }
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.Default.ContentCopy,
+                        label = "复制",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         onClick = {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(codeText))
                             Toast.makeText(context, "代码已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "复制", modifier = Modifier.size(18.dp))
-                    }
-                    // 搜索开关
-                    IconButton(
-                        onClick = { showSearchBar = !showSearchBar },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = "搜索",
-                            tint = if (showSearchBar) MaterialTheme.colorScheme.primary else LocalContentColor.current,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                        }
+                    )
+                    ActionButtonSmall(
+                        icon = Icons.Default.Search,
+                        label = "搜索",
+                        tint = if (showSearchBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = { showSearchBar = !showSearchBar }
+                    )
                     // 缩放字号
                     IconButton(onClick = { if (fontSizeSp > 10) fontSizeSp -= 1 }, modifier = Modifier.size(28.dp)) {
                         Text("A-", fontSize = 10.sp)
