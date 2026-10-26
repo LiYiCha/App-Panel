@@ -534,7 +534,7 @@ fun TaskCard(
         ElevatedCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer { alpha = cardAlpha }
+                // 卡片本体必须不透明：半透明会让底下的右滑动作层透出来（禁用态曾因此"未滑先露按钮"）
                 .then(
                     if (!isBatchMode) Modifier
                         .offset { IntOffset(swipeState.requireOffset().roundToInt(), 0) }
@@ -552,9 +552,11 @@ fun TaskCard(
             shape = RoundedCornerShape(10.dp),
             colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
+        // 置灰只作用于内容层，不作用于卡片容器：容器半透明会让右滑动作层从底下透出来
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .graphicsLayer { alpha = cardAlpha }
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

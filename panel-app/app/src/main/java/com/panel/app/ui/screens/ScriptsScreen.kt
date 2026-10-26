@@ -511,7 +511,11 @@ fun FlatScriptRowItem(
     SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
-            val color = if (dismissState.dismissDirection != null) MaterialTheme.colorScheme.errorContainer else Color.Transparent
+            // 只在真正滑开（含拖动中）时显示红底。不能用 dismissDirection 判断：
+            // Material3 1.3 里它恒为非 null，红底会常驻在行底下，透过半透明文件夹行显形
+            val isOpen = dismissState.currentValue != SwipeToDismissBoxValue.Settled ||
+                dismissState.targetValue != SwipeToDismissBoxValue.Settled
+            val color = if (isOpen) MaterialTheme.colorScheme.errorContainer else Color.Transparent
             Box(
                 modifier = Modifier
                     .fillMaxSize()

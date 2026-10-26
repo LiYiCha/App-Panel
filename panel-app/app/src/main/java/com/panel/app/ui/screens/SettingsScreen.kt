@@ -49,6 +49,41 @@ data class DownloadStateHolder(
     var dlDownloading: Boolean = false,
 )
 
+/** 一类可单独清理的应用缓存 */
+data class AppCacheEntry(
+    val title: String,
+    val desc: String,
+    val sizeBytes: Long,
+    val clear: () -> Unit,
+)
+
+// 分类盘点应用缓存：更新安装包 / 面板数据快照 / 仪表盘缓存 / 其他临时文件，各自可独立清理
+fun collectAppCacheEntries(context: android.content.Context): List<AppCacheEntry> {
+    val apkFiles = listOf(
+        File(context.cacheDir, "Panel-App-download.apk"),
+        File(context.cacheDir, "Panel-App-download.apk.url")
+    )
+    val dataCacheDir = File(context.filesDir, "cache")
+    val allDataFiles = dataCacheDir.listFiles()?.toList() ?: emptyList()
+    val snapshotFiles = allDataFiles.filter { it.name.startsWith("panel_cache_") }
+    val dashboardFiles = allDataFiles.filter { it.name.startsWith("dashboard_cache_") }
+    val knownApkNames = apkFiles.map { it.name }.toSet()
+    val otherFiles = mutableListOf<File>()
+    context.cacheDir.listFiles()?.forEach { if (it.name !in knownApkNames) otherFiles.add(it) }
+    context.externalCacheDir?.listFiles()?.forEach { otherFiles.add(it) }
+
+    fun sizeOf(files: List<File>) = files.filter { it.exists() }.sumOf { if (it.isDirectory) it.walk().filter { f -> f.isFile }.sumOf { f -> f.length() } else it.length() }
+
+    return listOf(
+        AppCacheEntry("更新安装包缓存", "应用更新下载的 APK 安装包", sizeOf(apkFiles)) { apkFiles.forEach { it.delete() } },
+        AppCacheEntry("面板数据快照", "任务/变量离线快照（重新进入面板后自动重建）", sizeOf(snapshotFiles)) { snapshotFiles.forEach { it.delete() } },
+        AppCacheEntry("仪表盘缓存", "面板仪表盘离线数据", sizeOf(dashboardFiles)) { dashboardFiles.forEach { it.delete() } },
+        AppCacheEntry("其他临时缓存", "网络/Web 运行时临时文件", sizeOf(otherFiles)) {
+            otherFiles.forEach { if (it.isDirectory) it.deleteRecursively() else it.delete() }
+        }
+    )
+}
+
 /**
  * 现代化紧凑型控制台/设置主页。
  * 遵循“一页即全览，深层下沉二级页”设计准则，核心面板状态与高频二级入口在一屏内完全呈现。
@@ -91,23 +126,13 @@ fun SettingsScreen(
     val dlHolder = remember { mutableStateOf(DownloadStateHolder()) }
     var dlJob by remember { mutableStateOf<Job?>(null) }
 
-    // 缓存大小（APK + 面板数据缓存）
-    var cacheSizeText by remember { mutableStateOf<String>("计算中...") }
-    fun refreshCacheSize() {
-        val apkFile = File(context.cacheDir, "Panel-App-download.apk")
-        val apkUrl = File(context.cacheDir, "Panel-App-download.apk.url")
-        val dataCacheDir = File(context.filesDir, "cache")
-        var total = 0L
-        if (apkFile.exists()) total += apkFile.length()
-        if (apkUrl.exists()) total += apkUrl.length()
-        if (dataCacheDir.exists()) dataCacheDir.listFiles()?.forEach { total += it.length() }
-        cacheSizeText = when {
-            total >= 1024 * 1024 -> "${String.format("%.1f", total.toDouble() / 1024 / 1024)} MB"
-            total >= 1024 -> "${String.format("%.1f", total.toDouble() / 1024)} KB"
-            else -> "${total} B"
-        }
+    // 缓存明细（分类识别，支持单独清理）
+    var cacheEntries by remember { mutableStateOf<List<AppCacheEntry>>(emptyList()) }
+    var showCacheDialog by remember { mutableStateOf(false) }
+    fun refreshCacheEntries() {
+        cacheEntries = collectAppCacheEntries(context)
     }
-    LaunchedEffect(Unit) { refreshCacheSize() }
+    LaunchedEffect(Unit) { refreshCacheEntries() }
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
@@ -317,8 +342,6 @@ fun SettingsScreen(
         // ==================== 2. 面板功能（面板侧二级页面，两列布局；应用侧条目归入下方「应用设置」） ====================
         Text("面板功能", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 
-        val failedDeps = uiState.deps.count { it.status == 2 || it.status == 4 }
-
         // Row 1
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModernNavTile(
@@ -347,8 +370,8 @@ fun SettingsScreen(
                 icon = Icons.Default.Extension,
                 title = "环境依赖管理",
                 desc = "${uiState.deps.size} 个依赖包",
-                badge = if (failedDeps > 0) "失败 $failedDeps" else null,
-                badgeColor = MaterialTheme.colorScheme.error,
+                badge = null,
+                badgeColor = null,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenDeps
             )
@@ -385,31 +408,18 @@ fun SettingsScreen(
             )
         }
 
-        // Row 4: 系统高级配置 + 调试日志（应用权限入口只保留在下方「应用设置」，不再重复出现）
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ModernNavTile(
-                icon = Icons.Default.Tune,
-                title = "系统配置",
-                desc = if (currentPanel.type == PanelType.BAIHU) "宿主机硬件与调度" else "并发上限与日志清理",
-                badge = null,
-                badgeColor = null,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenSystemSettings
-            )
-            ModernNavTile(
-                icon = Icons.Default.Terminal,
-                title = "调试日志",
-                desc = if (uiState.isDevMode) "已开启调试模式" else "点击开启",
-                badge = if (uiState.isDevMode) "ON" else "OFF",
-                badgeColor = if (uiState.isDevMode) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    if (uiState.isDevMode) onOpenDevConsole() else viewModel.toggleDevMode(true)
-                }
-            )
-        }
+        // Row 4: 系统配置（调试日志是应用侧功能，已归入下方「应用设置」组）
+        ModernNavTile(
+            icon = Icons.Default.Tune,
+            title = "系统配置",
+            desc = if (currentPanel.type == PanelType.BAIHU) "宿主机硬件与调度" else "并发上限与日志清理",
+            badge = null,
+            badgeColor = null,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onOpenSystemSettings
+        )
 
-        // ==================== 3. 应用设置（应用侧：超时/更新/缓存/权限/关于） ====================
+        // ==================== 3. 应用设置（应用侧：超时/缓存/权限/调试/更新/关于，面板侧条目归入上方「面板功能」） ====================
         Text("应用设置", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -429,6 +439,55 @@ fun SettingsScreen(
                 ) {
                     Text("网络超时设置", fontSize = 12.sp)
                     Text("${selectedTimeout}s >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 清除缓存（点击弹出分类明细，可按类单独清理）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCacheDialog = true }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("清除缓存", fontSize = 12.sp)
+                    val totalBytes = cacheEntries.sumOf { it.sizeBytes }
+                    Text("${formatBytes(totalBytes)} 分类清理 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 应用权限管理入口
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenPermissions() }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("应用权限管理", fontSize = 12.sp)
+                    Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 调试日志（应用侧调试功能，从「面板功能」归并至此）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (uiState.isDevMode) onOpenDevConsole() else viewModel.toggleDevMode(true)
+                        }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("调试日志", fontSize = 12.sp)
+                    Text(
+                        if (uiState.isDevMode) "已开启，点击查看 >" else "点击开启 >",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
@@ -464,43 +523,6 @@ fun SettingsScreen(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-                // 清除缓存（APK 安装包 + 面板数据缓存）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val apkFile = File(context.cacheDir, "Panel-App-download.apk")
-                            val apkUrl = File(context.cacheDir, "Panel-App-download.apk.url")
-                            apkFile.delete()
-                            apkUrl.delete()
-                            val dataCacheDir = File(context.filesDir, "cache")
-                            if (dataCacheDir.exists()) dataCacheDir.listFiles()?.forEach { it.delete() }
-                            refreshCacheSize()
-                            Toast.makeText(context, "缓存已清除", Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("清除缓存", fontSize = 12.sp)
-                    Text("$cacheSizeText 清除 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 应用权限管理入口
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenPermissions() }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("应用权限管理", fontSize = 12.sp)
-                    Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
                 // 关于
                 Row(
                     modifier = Modifier
@@ -532,6 +554,49 @@ fun SettingsScreen(
             },
             confirmButton = {
                 Button(onClick = { showAboutDialog = false }) { Text("确认", fontSize = 12.sp) }
+            }
+        )
+    }
+
+    // 缓存分类明细弹窗：逐类展示大小，可单独清理或全部清理
+    if (showCacheDialog) {
+        AlertDialog(
+            onDismissRequest = { showCacheDialog = false },
+            title = { Text("清除缓存", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    cacheEntries.forEach { entry ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(entry.title, fontSize = 12.sp)
+                                Text(
+                                    "${entry.desc} · ${formatBytes(entry.sizeBytes)}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = {
+                                entry.clear()
+                                refreshCacheEntries()
+                                Toast.makeText(context, "已清理${entry.title}", Toast.LENGTH_SHORT).show()
+                            }) { Text("清理", fontSize = 11.sp) }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    cacheEntries.forEach { it.clear() }
+                    refreshCacheEntries()
+                    Toast.makeText(context, "缓存已全部清除", Toast.LENGTH_SHORT).show()
+                }) { Text("全部清理", fontSize = 12.sp) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCacheDialog = false }) { Text("关闭", fontSize = 12.sp) }
             }
         )
     }
