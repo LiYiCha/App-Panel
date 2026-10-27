@@ -1,4 +1,4 @@
-﻿package com.panel.app.ui.screens
+﻿﻿package com.panel.app.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
