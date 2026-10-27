@@ -69,6 +69,8 @@ fun DeveloperConsoleScreen(
                     entry.error?.contains(searchQuery, ignoreCase = true) == true
             matchFilter && matchSearch
         }
+        // 最新日志在最上面（timestamp 为统一格式字符串，倒序即时间倒序）
+            .sortedByDescending { it.timestamp }
     }
 
     fun copyText(text: String?, label: String) {

@@ -3,6 +3,7 @@ package com.panel.app.data.adapter
 import com.panel.app.data.backup.*
 import com.panel.app.data.model.*
 import com.panel.app.data.remote.NetworkClient
+import com.panel.app.data.remote.TwoFactorRequiredException
 import com.panel.app.data.remote.api.*
 import com.panel.app.data.remote.unwrap
 import com.panel.app.data.remote.unwrapTo
@@ -99,12 +100,52 @@ class QinglongV15Adapter(
             return Result.failure(Exception("连接失败: ${e.message ?: "无法连接青龙面板"}"))
         }
 
+        // 青龙开启两步验证：普通登录返回 {code:420, message:''}（源码 back/services/user.ts）。
+        // 必须在 unwrap 之前识别，否则会被当成普通登录失败提示出去。
+        if (resp.body()?.code == 420) {
+            return Result.failure(TwoFactorRequiredException())
+        }
+
         val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
         val rawToken = envelope.data?.token
             ?: return Result.failure(Exception("登录失败: 服务端未返回 token (${envelope.message ?: ""})"))
         val token = cleanToken(rawToken)
         if (token.isBlank()) {
             return Result.failure(Exception("登录失败: 服务端返回无效的空 token"))
+        }
+        currentToken = token
+        return Result.success(token)
+    }
+
+    /**
+     * 两步验证第二步：PUT /api/user/two-factor/login（code + username + password 重新提交）。
+     * 成功 200 + data.token；验证码错 430 "验证失败"；限流 410 —— 全部经 unwrap 透传给 UI。
+     */
+    suspend fun loginTwoFactor(code: String): Result<String> {
+        val user = instance.username?.trim().orEmpty()
+        val pass = instance.password?.trim().orEmpty()
+        if (user.isEmpty() || pass.isEmpty()) {
+            return Result.failure(Exception("验证会话缺少账号密码，请返回重新登录"))
+        }
+
+        val resp = try {
+            api.loginTwoFactor(
+                mapOf(
+                    "code" to code,
+                    "username" to user,
+                    "password" to pass
+                )
+            )
+        } catch (e: Exception) {
+            return Result.failure(Exception("连接失败: ${e.message ?: "无法连接青龙面板"}"))
+        }
+
+        val envelope = resp.unwrap("验证码校验失败").getOrElse { return Result.failure(it) }
+        val rawToken = envelope.data?.token
+            ?: return Result.failure(Exception("验证码校验失败: 服务端未返回 token"))
+        val token = cleanToken(rawToken)
+        if (token.isBlank()) {
+            return Result.failure(Exception("验证码校验失败: 服务端返回无效的空 token"))
         }
         currentToken = token
         return Result.success(token)
@@ -979,6 +1020,13 @@ class QinglongV15Adapter(
                     }.awaitAll()
                 }
             }
+    }
+
+    /** 目录懒加载：青龙脚本接口原生支持 path 参数（与 getScriptTree 顶层补拉同源） */
+    override suspend fun listDirectory(path: String): Result<List<ScriptNode>> {
+        ensureAuth()
+        return api.getScripts(getAuthHeader(), path = path)
+            .unwrapTo("获取目录内容失败") { env -> env.data.orEmpty().map { mapScriptNode(it) } }
     }
 
     override suspend fun readScript(path: String): Result<String> {

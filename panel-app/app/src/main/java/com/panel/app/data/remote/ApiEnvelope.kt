@@ -60,6 +60,15 @@ class ApiError(
 class OtpRequiredException(val pendingToken: String) :
     Exception("该账号已开启两步验证，请输入动态验证码")
 
+/**
+ * 青龙要求两步验证（TOTP）。
+ * 青龙开启两步验证后，普通登录（POST /user/login）返回 `{code:420, message:''}`，
+ * 必须再调一次 `PUT /user/two-factor/login`（code+username+password）才能换取 token。
+ * 与白虎不同：青龙没有 pendingToken 中间凭证，第二步要重新提交账号密码。
+ */
+class TwoFactorRequiredException :
+    Exception("面板已开启两步验证，请输入动态验证码")
+
 private const val HTTP_UNAUTHORIZED = 401
 private const val CODE_OK = 200
 

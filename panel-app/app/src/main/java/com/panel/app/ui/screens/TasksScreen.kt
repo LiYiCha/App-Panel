@@ -557,9 +557,25 @@ fun TaskCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer { alpha = cardAlpha }
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+                // 左缘状态色条：扫一眼列表即可按颜色区分 运行/启用/禁用
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(38.dp)
+                        .background(
+                            when (state) {
+                                TaskVisualState.Running -> MaterialTheme.colorScheme.primary
+                                TaskVisualState.Queued -> MaterialTheme.colorScheme.tertiary
+                                TaskVisualState.Disabled -> MaterialTheme.colorScheme.outlineVariant
+                                TaskVisualState.Ready -> MaterialTheme.colorScheme.secondary
+                            },
+                            RoundedCornerShape(2.dp)
+                        )
+                )
+                Spacer(Modifier.width(7.dp))
                 if (isBatchMode) {
                     Checkbox(
                         checked = task.selected,
@@ -608,7 +624,7 @@ fun TaskCard(
                         )
                     }
 
-                    Spacer(Modifier.height(3.dp))
+                    Spacer(Modifier.height(2.dp))
                     // Cron 规则条：时钟图标 + 等宽表达式
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -618,7 +634,7 @@ fun TaskCard(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -644,7 +660,7 @@ fun TaskCard(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 3.dp),
+                            .padding(top = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -763,14 +779,14 @@ private fun SwipeAction(
 
 private enum class TaskVisualState { Running, Queued, Disabled, Ready }
 
-/** 状态徽章：已启用(绿)、已禁用(中性灰)、运行中(主色/脉冲) —— 公共组件薄映射 */
+/** 状态徽章：已启用(绿+勾)、已禁用(中性灰+禁止)、运行中(主色/脉冲) —— 公共组件薄映射 */
 @Composable
 private fun StateBadge(state: TaskVisualState) {
     when (state) {
         TaskVisualState.Running -> StatusBadge("运行中", StatusTone.PRIMARY, pulsing = true)
         TaskVisualState.Queued -> StatusBadge("排队中", StatusTone.TERTIARY)
-        TaskVisualState.Disabled -> StatusBadge("已禁用", StatusTone.NEUTRAL)
-        TaskVisualState.Ready -> StatusBadge("已启用", StatusTone.SECONDARY)
+        TaskVisualState.Disabled -> StatusBadge("已禁用", StatusTone.NEUTRAL, icon = Icons.Default.Block)
+        TaskVisualState.Ready -> StatusBadge("已启用", StatusTone.SECONDARY, icon = Icons.Default.CheckCircle)
     }
 }
 

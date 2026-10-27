@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -446,9 +447,20 @@ fun EnvCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 3.dp),
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 左缘状态色条：启用=绿 / 禁用=灰，与任务卡同一套视觉语言
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(34.dp)
+                    .background(
+                        if (env.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant,
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+            Spacer(Modifier.width(5.dp))
             // 拖拽把手：小号低对比「⋮⋮」样式，长按拖动排序（批量模式置灰）
             Box(
                 modifier = Modifier
@@ -495,7 +507,8 @@ fun EnvCard(
                         )
                         StatusBadge(
                             text = if (env.enabled) "启用" else "已禁用",
-                            tone = if (env.enabled) StatusTone.SECONDARY else StatusTone.NEUTRAL
+                            tone = if (env.enabled) StatusTone.SECONDARY else StatusTone.NEUTRAL,
+                            icon = if (env.enabled) Icons.Default.CheckCircle else Icons.Default.Block
                         )
                         if (!env.remarks.isNullOrBlank()) {
                             Text(
@@ -854,10 +867,11 @@ private fun EnvsActionButton(
     tint: Color,
     onClick: () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onClick, modifier = Modifier.size(24.dp)) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 1.dp)) {
+        // 图标+文字紧凑化：按钮列是变量卡的最高元素，决定整卡高度
+        IconButton(onClick = onClick, modifier = Modifier.size(20.dp)) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(12.dp))
         }
-        Text(label, fontSize = 8.sp, color = tint)
+        Text(label, fontSize = 7.sp, color = tint)
     }
 }

@@ -475,6 +475,13 @@ interface QinglongV15Api {
     @POST("api/user/login")
     suspend fun login(@Body req: Map<String, String>): Response<QlTokenResp>
 
+    /**
+     * 两步验证登录：body {code, username, password}（账号密码要重新提交）。
+     * 成功 200 + data.token；验证码错 430 "验证失败"；限流 410。
+     */
+    @PUT("api/user/two-factor/login")
+    suspend fun loginTwoFactor(@Body req: Map<String, String>): Response<QlTokenResp>
+
     @POST("api/user/logout")
     suspend fun logout(@Header("Authorization") auth: String): Response<QlCommonResp>
 

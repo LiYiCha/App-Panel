@@ -546,8 +546,11 @@ interface BaihuApi {
     ): Response<BaihuDepsResp>
 
     // ---------------- 4. 文件与配置 ----------------
+    // 官方 OpenAPI 契约（docs/BAIHU_SWAGGER.json，open2api 层）：GET /files/tree?path=
+    // 为懒加载设计——path 留空返回根列表，目录项带 hasChildren 标记、不下发 children；
+    // 传 path 返回该目录单层子项
     @GET("api/v1/files/tree")
-    suspend fun getFileTree(): Response<BaihuFileTreeResp>
+    suspend fun getFileTree(@Query("path") path: String? = null): Response<BaihuFileTreeResp>
 
     @GET("api/v1/files/content")
     suspend fun getFileContent(@Query("path") path: String): Response<BaihuFileContentResp>
@@ -639,7 +642,97 @@ interface BaihuApi {
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 50
     ): Response<BaihuLoginLogsResp>
+
+    // ---------------- 9. 应用市场（open2api 对外层，Bearer OpenAPI Token） ----------------
+    // 契约来源：docs/BAIHU_SWAGGER.json（basePath /open2api/v1）
+
+    /** 用 JWT 现场生成 OpenAPI Token（面板设置页同名功能），data 为 {token: "..."} */
+    @POST("api/v1/settings/site/openapi-token/generate")
+    suspend fun generateOpenapiToken(): Response<BaihuOpenTokenResp>
+
+    @GET("open2api/v1/apps")
+    suspend fun getOpenApps(@Header("Authorization") auth: String): Response<BaihuOpenAppListResp>
+
+    @GET("open2api/v1/apps/store")
+    suspend fun getOpenAppStore(@Header("Authorization") auth: String): Response<BaihuOpenAppListResp>
+
+    /** 一键更新；409 表示存在未填写的必填环境变量 */
+    @POST("open2api/v1/apps/{id}/update")
+    suspend fun updateOpenApp(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Body req: Map<String, String> = emptyMap()
+    ): Response<BaihuCommonResp>
+
+    @POST("open2api/v1/apps/{id}/rollback")
+    suspend fun rollbackOpenApp(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String
+    ): Response<BaihuCommonResp>
+
+    @POST("open2api/v1/apps/{id}/auto-update")
+    suspend fun setAppAutoUpdate(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Body req: BaihuAutoUpdateReq
+    ): Response<BaihuCommonResp>
+
+    /** 部署/安装应用（path_or_url：清单地址或 Git 仓库；完整能力见 swagger ApplyAppRequest） */
+    @POST("open2api/v1/apps/apply")
+    suspend fun applyOpenApp(
+        @Header("Authorization") auth: String,
+        @Body req: BaihuApplyAppReq
+    ): Response<BaihuCommonResp>
 }
+
+data class BaihuAutoUpdateReq(val enabled: Boolean)
+
+data class BaihuApplyAppReq(
+    val path_or_url: String,
+    val overwrite_env: Boolean = true,
+    val overwrite_task: Boolean = true,
+    val skip_setup: Boolean = false
+)
+
+data class BaihuOpenApp(
+    val id: String? = null,
+    val name: String? = null,
+    val version: String? = null,
+    val status: String? = null,
+    val description: String? = null,
+    val author: String? = null,
+    val category: String? = null,
+    val homepage: String? = null,
+    val auto_update: Boolean? = null,
+    val tasks_count: Int? = null,
+    val scenarios_count: Int? = null,
+    val current_scenario: String? = null,
+    val previous: BaihuAppPrevious? = null,
+    val updated_at: String? = null
+)
+
+data class BaihuAppPrevious(
+    val version: String? = null,
+    val updated_at: String? = null
+)
+
+data class BaihuOpenAppListResp(
+    override val code: Int?,
+    override val msg: String?,
+    val data: List<BaihuOpenApp>?
+) : ApiEnvelope {
+    override val message: String? get() = null
+}
+
+data class BaihuOpenTokenResp(
+    override val code: Int?,
+    override val msg: String?,
+    val data: BaihuOpenTokenData?
+) : ApiEnvelope {
+    override val message: String? get() = null
+}
+
+data class BaihuOpenTokenData(val token: String? = null)
 
 data class BaihuClearLogsReq(val taskId: String? = null)
 

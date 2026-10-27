@@ -33,6 +33,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
 import com.panel.app.data.model.PanelInstance
 
+/** 从面板地址提取 host（2FA 持久化标记的 key） */
+private fun hostOf(url: String): String = try {
+    java.net.URI(url).host ?: ""
+} catch (e: Exception) {
+    ""
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
@@ -56,10 +63,36 @@ fun LoginScreen(
     var password by remember(editPanel) { mutableStateOf(editPanel?.password ?: "") }
     var isPasswordVisible by remember { mutableStateOf(false) }
 
+    // 两步验证：内联在登录表单里（不再弹独立对话框）。
+    // 已知开启 2FA 的面板（持久化标记）直接带出验证码框；首次撞到 420 后同样展开，
+    // 与账密共用同一个「登录」按钮完成两段接力。
+    var twoFactorCode by remember { mutableStateOf("") }
+    var showTwoFactorField by remember(baseUrl) {
+        mutableStateOf(viewModel.isTwoFactorKnown(hostOf(baseUrl)))
+    }
+    val twoFactorPending = uiState.otpPendingPanel != null
+
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val isSwitchAccount = editPanel != null
 
     fun doLogin() {
+        // 第二段：账号密码已被服务端确认，此时同一个按钮提交动态验证码
+        if (twoFactorPending) {
+            if (twoFactorCode.isBlank()) {
+                errorMessage = "请输入验证器中的动态验证码"
+                return
+            }
+            focusManager.clearFocus()
+            viewModel.submitOtp(twoFactorCode) { success, msg ->
+                if (success) {
+                    Toast.makeText(context, if (isSwitchAccount) "账号切换成功" else "登录成功", Toast.LENGTH_SHORT).show()
+                    onLoginSuccess()
+                } else {
+                    errorMessage = msg
+                }
+            }
+            return
+        }
         if (baseUrl.isBlank()) {
             errorMessage = "请输入面板服务地址"
             return
@@ -90,31 +123,32 @@ fun LoginScreen(
                 Toast.makeText(context, if (isSwitchAccount) "账号切换成功" else "登录成功", Toast.LENGTH_SHORT).show()
                 onLoginSuccess()
             } else if (uiState.otpPendingPanel != null) {
-                // 两步验证：由下面的对话框接管，不再当成普通错误提示
+                // 两步验证：展开内联验证码框，由同一个登录按钮完成第二段提交；
+                // 同时持久化"该面板已开启 2FA"标记，下次登录直接带出验证码框
+                showTwoFactorField = true
                 errorMessage = null
+                hostOf(baseUrl).takeIf { it.isNotEmpty() }?.let { viewModel.markTwoFactorKnown(it) }
+                // 预填场景：验证码已填则自动续跑第二段，无需再点一次登录
+                if (twoFactorCode.isNotBlank()) {
+                    viewModel.submitOtp(twoFactorCode) { success, msg ->
+                        if (success) {
+                            Toast.makeText(context, if (isSwitchAccount) "账号切换成功" else "登录成功", Toast.LENGTH_SHORT).show()
+                            onLoginSuccess()
+                        } else {
+                            errorMessage = msg
+                        }
+                    }
+                }
             } else {
                 errorMessage = msg
             }
         }
     }
 
-    // 两步验证输入框：开启 OTP 的账号必须再验一次动态码才能拿到登录凭据
-    if (uiState.otpPendingPanel != null) {
-        OtpVerifyDialog(
-            panelName = uiState.otpPendingPanel!!.name,
-            isVerifying = uiState.isAuthenticating,
-            onDismiss = { viewModel.cancelOtp() },
-            onConfirm = { code ->
-                viewModel.submitOtp(code) { success, msg ->
-                    if (success) {
-                        Toast.makeText(context, "登录成功", Toast.LENGTH_SHORT).show()
-                        onLoginSuccess()
-                    } else {
-                        errorMessage = msg
-                    }
-                }
-            }
-        )
+    fun resetTwoFactor() {
+        viewModel.cancelOtp()
+        twoFactorCode = ""
+        errorMessage = null
     }
 
     Scaffold(
@@ -265,6 +299,52 @@ fun LoginScreen(
                         shape = RoundedCornerShape(10.dp)
                     )
 
+                    // 两步验证（内联）：白虎 OTP / 青龙 TOTP 通用，账密确认后在此输入动态码
+                    if (twoFactorPending && showTwoFactorField) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    "「${uiState.otpPendingPanel?.name}」已开启两步验证，请输入验证器中的 6 位动态验证码",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = twoFactorCode,
+                            onValueChange = { if (it.length <= 8) twoFactorCode = it.filter { c -> c.isDigit() }; errorMessage = null },
+                            label = { Text("动态验证码", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.Password, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            singleLine = true,
+                            enabled = !uiState.isAuthenticating,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { doLogin() }),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        TextButton(
+                            onClick = { resetTwoFactor() },
+                            enabled = !uiState.isAuthenticating,
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("返回修改账号密码", fontSize = 11.sp)
+                        }
+                    }
+
                     if (!errorMessage.isNullOrEmpty()) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
@@ -306,7 +386,12 @@ fun LoginScreen(
                             Spacer(Modifier.width(8.dp))
                             Text("正在登录...", fontSize = 14.sp)
                         } else {
-                            Text(if (isSwitchAccount) "登录并保存" else "登 录", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (twoFactorPending) "验证并登录"
+                                else if (isSwitchAccount) "登录并保存" else "登 录",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -314,60 +399,4 @@ fun LoginScreen(
         }
     }
 }
-}
-
-/**
- * 两步验证输入框。
- * 白虎开启 OTP 后，首次登录只返回临时凭证而不下发 Cookie，
- * 必须再用 authenticator 里的 6 位动态码调一次 /auth/login/otp 才算真正登录。
- */
-@Composable
-private fun OtpVerifyDialog(
-    panelName: String,
-    isVerifying: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var code by remember { mutableStateOf("") }
-    val isValid = code.trim().length >= 6
-
-    AlertDialog(
-        onDismissRequest = { if (!isVerifying) onDismiss() },
-        title = { Text("两步验证", fontSize = 16.sp) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "面板 [$panelName] 已开启两步验证，请输入验证器 App 中的 6 位动态验证码。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { if (it.length <= 8) code = it.filter { c -> c.isDigit() } },
-                    label = { Text("动态验证码", fontSize = 12.sp) },
-                    singleLine = true,
-                    enabled = !isVerifying,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { if (isValid && !isVerifying) onConfirm(code) }),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(code) },
-                enabled = isValid && !isVerifying
-            ) {
-                Text(if (isVerifying) "验证中..." else "验证并登录")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isVerifying) {
-                Text("取消")
-            }
-        }
-    )
 }

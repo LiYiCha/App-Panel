@@ -174,7 +174,7 @@ fun CompactTaskDetailScreen(
             // ================= 1. 三大二级页面直达入口 =================
             item {
                 Text(
-                    text = "快速直达二级页面",
+                    text = "直达二级页面",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,

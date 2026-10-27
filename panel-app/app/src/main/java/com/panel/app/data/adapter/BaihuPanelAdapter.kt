@@ -66,11 +66,33 @@ class BaihuPanelAdapter(
         return msg.contains("401") ||
                 msg.contains("鉴权") ||
                 msg.contains("未登录") ||
+                msg.contains("请先登录") ||
                 msg.contains("登录失效") ||
                 msg.contains("登录已过期") ||
+                msg.contains("登录已失效") ||
                 msg.contains("unauthorized") ||
                 msg.contains("bhtoken") ||
                 msg.contains("凭据已失效")
+    }
+
+    /**
+     * 鉴权重试包装：白虎 Cookie 失效时首波请求会 401（服务端也可能在重登后使旧 Cookie 失效）。
+     * 失败且判定为鉴权错误时，重新登录并重试一次。
+     * getTasks 一直有这段重试所以从来看不到它的 401，而 getScriptTree 等没有——这就是
+     * "其他请求都正常、唯独文件树 401"的原因。
+     */
+    private suspend fun <T> withAuthRetry(call: suspend () -> Result<T>): Result<T> {
+        ensureAuth()
+        val res = call()
+        if (res.isFailure && isAuthError(res.exceptionOrNull()) &&
+            !instance.username.isNullOrEmpty() && !instance.password.isNullOrEmpty()
+        ) {
+            val authRes = authenticate()
+            if (authRes.isSuccess) {
+                return call()
+            }
+        }
+        return res
     }
 
     private suspend fun ensureAuth(): Boolean {
@@ -824,12 +846,13 @@ class BaihuPanelAdapter(
     }
 
     override suspend fun readConfig(path: String): Result<String> {
-        ensureAuth()
-        return try {
-            api.getFileContent(path)
-                .unwrapTo("读取配置文件失败") { it.data?.content ?: "" }
-        } catch (e: Exception) {
-            Result.failure(e)
+        return withAuthRetry {
+            try {
+                api.getFileContent(path)
+                    .unwrapTo("读取配置文件失败") { it.data?.content ?: "" }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 
@@ -855,14 +878,40 @@ class BaihuPanelAdapter(
     )
 
     override suspend fun getScriptTree(): Result<List<ScriptNode>> {
-        ensureAuth()
-        return try {
-            api.getFileTree()
-                .unwrapTo("获取脚本文件树失败") { env ->
-                    env.data.orEmpty().map { mapFileNode(it) }
-                }
-        } catch (e: Exception) {
-            Result.failure(e)
+        return withAuthRetry {
+            try {
+                api.getFileTree()
+                    .unwrapTo("获取脚本文件树失败") { env ->
+                        env.data.orEmpty().map { mapFileNode(it) }
+                    }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    /**
+     * 目录懒加载。官方契约（docs/BAIHU_SWAGGER.json）：
+     * GET /files/tree?path= —— path 留空返回根列表（目录项带 hasChildren、不下发 children），
+     * 传 path 返回该目录单层子项；另有 /files/trees?paths=a,b 批量版与 /files/search。
+     * 保留根列表误注入防御：子项路径必须以请求目录为前缀，否则视为服务端不支持并放弃注入。
+     */
+    override suspend fun listDirectory(path: String): Result<List<ScriptNode>> {
+        return withAuthRetry {
+            val trimmed = path.trimEnd('/')
+            try {
+                api.getFileTree(path = trimmed)
+                    .unwrapTo("获取目录内容失败") { env ->
+                        env.data.orEmpty().map { mapFileNode(it) }
+                    }
+                    .mapCatching { items ->
+                        val valid = items.isEmpty() || items.all { it.path.startsWith("$trimmed/") }
+                        if (!valid) throw Exception("服务端未按目录返回子项（返回的疑似根列表）")
+                        items
+                    }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 
@@ -933,6 +982,85 @@ class BaihuPanelAdapter(
         return try {
             api.copyFile(BaihuFileCopyReq(path, newPath))
                 .unwrap("复制失败").map { true }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ---------------------------------------------------------------- 应用市场（open2api）
+
+    /** OpenAPI Token：优先复用已存的，否则用 JWT 现场生成（面板设置页同名功能） */
+    suspend fun ensureOpenApiToken(existing: String?): Result<String> {
+        if (!existing.isNullOrBlank()) return Result.success(existing)
+        ensureAuth()
+        return try {
+            api.generateOpenapiToken()
+                .unwrapTo("生成 OpenAPI Token 失败") { it.data?.token.orEmpty() }
+                .mapCatching { t ->
+                    if (t.isBlank()) throw Exception("服务端未返回 Token，请到面板 Web 端设置中手动生成")
+                    t
+                }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun bearer(token: String) = "Bearer $token"
+
+    suspend fun listInstalledApps(openApiToken: String): Result<List<BaihuOpenApp>> {
+        ensureAuth()
+        return try {
+            api.getOpenApps(bearer(openApiToken)).unwrapTo("获取应用列表失败") { it.data.orEmpty() }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun listStoreApps(openApiToken: String): Result<List<BaihuOpenApp>> {
+        ensureAuth()
+        return try {
+            api.getOpenAppStore(bearer(openApiToken)).unwrapTo("获取应用市场失败") { it.data.orEmpty() }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** 一键更新；409 = 存在未填写的必填环境变量（提示去面板 Web 端补值） */
+    suspend fun updateApp(openApiToken: String, appId: String): Result<Boolean> {
+        ensureAuth()
+        return try {
+            api.updateOpenApp(bearer(openApiToken), appId)
+                .unwrap("更新失败").map { true }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun rollbackApp(openApiToken: String, appId: String): Result<Boolean> {
+        ensureAuth()
+        return try {
+            api.rollbackOpenApp(bearer(openApiToken), appId)
+                .unwrap("回滚失败").map { true }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun setAppAutoUpdate(openApiToken: String, appId: String, enabled: Boolean): Result<Boolean> {
+        ensureAuth()
+        return try {
+            api.setAppAutoUpdate(bearer(openApiToken), appId, BaihuAutoUpdateReq(enabled))
+                .unwrap("设置自动更新失败").map { true }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun applyApp(openApiToken: String, pathOrUrl: String): Result<Boolean> {
+        ensureAuth()
+        return try {
+            api.applyOpenApp(bearer(openApiToken), BaihuApplyAppReq(path_or_url = pathOrUrl))
+                .unwrap("部署失败").map { true }
         } catch (e: Exception) {
             Result.failure(e)
         }

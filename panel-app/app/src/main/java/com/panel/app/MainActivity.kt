@@ -120,7 +120,15 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
                 onOpenSystemSettingsScreen = { navController.navigate("system_settings") },
                 onOpenPermissionsScreen = { navController.navigate("app_permissions") },
                 onOpenSubscriptionsScreen = { navController.navigate("subscriptions") },
+                onOpenAppsScreen = { navController.navigate("baihu_apps") },
                 onNavigateToCreateScript = { navController.navigate("create_script") }
+            )
+        }
+
+        composable("baihu_apps") {
+            BaihuAppsScreen(
+                viewModel = viewModel,
+                onBack = { safePopBack() }
             )
         }
 

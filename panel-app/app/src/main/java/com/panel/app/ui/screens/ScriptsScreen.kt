@@ -409,7 +409,9 @@ fun FlatScriptRowItem(
                     }
                 },
             shape = RoundedCornerShape(6.dp),
-            color = if (node.isDir) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface
+            // 目录行必须不透明：半透明底色会让 SwipeToDismissBox 的红底/恢复残留透出来，
+            // 表现为"一行里同时看到侧滑状态与未侧滑状态"
+            color = if (node.isDir) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
         ) {
             Row(
                 modifier = Modifier
@@ -502,9 +504,14 @@ fun FlatScriptRowItem(
         }
     )
     // 防御：SwipeToDismissBoxState 是 rememberSaveable，LazyColumn 回收/恢复
-    // 可能把滑动中间状态带回来，表现为"未滑动就显示删除红底"，组合时强制归位
+    // 可能带回 currentValue / targetValue / offset 任意一种残留 —— 只查 currentValue
+    // 不够（target 残留会让红底常驻，透过半透明目录行显形，看起来像"侧滑与未侧滑两个状态"）。
+    // 组合时无条件归位，对正常行是 no-op。
     LaunchedEffect(node.path) {
-        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled ||
+            dismissState.targetValue != SwipeToDismissBoxValue.Settled
+        ) {
+            // snapTo 同时把偏移归零
             dismissState.snapTo(SwipeToDismissBoxValue.Settled)
         }
     }

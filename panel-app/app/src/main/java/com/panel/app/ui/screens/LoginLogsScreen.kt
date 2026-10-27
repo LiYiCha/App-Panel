@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,12 +72,15 @@ fun LoginLogsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        loadLogs()
-                        Toast.makeText(context, "正在刷新登录日志...", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
+                    ActionButtonSmall(
+                        icon = Icons.Default.Refresh,
+                        label = "刷新",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = {
+                            loadLogs()
+                            Toast.makeText(context, "正在刷新登录日志...", Toast.LENGTH_SHORT).show()
+                        }
+                    )
                 }
             )
         }

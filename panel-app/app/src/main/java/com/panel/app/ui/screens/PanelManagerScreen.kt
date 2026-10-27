@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelInstance
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
 
@@ -62,12 +63,12 @@ fun PanelManagerScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onNavigateToAddPanel) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "添加面板"
-                        )
-                    }
+                    ActionButtonSmall(
+                        icon = Icons.Default.Add,
+                        label = "添加",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = onNavigateToAddPanel
+                    )
                 }
             )
         }

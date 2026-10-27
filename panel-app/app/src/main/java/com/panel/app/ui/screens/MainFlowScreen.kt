@@ -1,12 +1,18 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -19,6 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelType
+import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.TwoFactorVerifyDialog
 import com.panel.app.ui.viewmodel.MainViewModel
 
 enum class BottomNavScreen(val title: String, val icon: ImageVector) {
@@ -47,6 +55,7 @@ fun MainFlowScreen(
     onOpenSystemSettingsScreen: () -> Unit = {},
     onOpenPermissionsScreen: () -> Unit = {},
     onOpenSubscriptionsScreen: () -> Unit = {},
+    onOpenAppsScreen: () -> Unit = {},
     onNavigateToCreateScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -77,6 +86,22 @@ fun MainFlowScreen(
         }
     }
 
+    // 面板 token 过期 + 两步验证（青龙 420 / 白虎 require_otp）：
+    // 自愈链路挂起 otpPendingPanel 后，在此全局弹窗继续验证码流程，
+    // 验证成功 submitOtp 会保存新凭据并自动重新刷新数据
+    if (uiState.otpPendingPanel != null) {
+        TwoFactorVerifyDialog(
+            panelName = uiState.otpPendingPanel!!.name,
+            isVerifying = uiState.isAuthenticating,
+            onDismiss = { viewModel.cancelOtp() },
+            onConfirm = { code, onError ->
+                viewModel.submitOtp(code) { success, msg ->
+                    if (!success) onError(msg)
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -96,7 +121,7 @@ fun MainFlowScreen(
                     }
                 },
                 actions = {
-                    // 统一置于顶部右上角，绝不占用内容主体高度
+                    // 统一置于顶部右上角，绝不占用内容主体高度；图标按钮统一带下方精简文言
                     when (selectedTab) {
                         BottomNavScreen.Tasks -> {
                             // 多维排序（从筛选行收进顶栏）
@@ -106,98 +131,92 @@ fun MainFlowScreen(
                                 onExpandedChange = { showTaskSortMenu = it },
                                 onSelect = { taskSortType = it }
                             )
-                            TextButton(
+                            ActionButtonSmall(
+                                icon = Icons.Default.Checklist,
+                                label = if (uiState.isTaskBatchMode) "完成" else "批量",
+                                tint = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                 onClick = { viewModel.setTaskBatchMode(!uiState.isTaskBatchMode) }
-                            ) {
-                                Text(
-                                    text = if (uiState.isTaskBatchMode) "完成" else "批量",
-                                    fontSize = 13.sp,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                                    color = if (uiState.isTaskBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            IconButton(onClick = { showCreateTaskDialog = true }) {
-                                Icon(Icons.Default.Add, contentDescription = "新建任务")
-                            }
+                            )
+                            ActionButtonSmall(
+                                icon = Icons.Default.Add,
+                                label = "新建",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                onClick = { showCreateTaskDialog = true }
+                            )
                         }
                         BottomNavScreen.Envs -> {
-                            TextButton(
+                            ActionButtonSmall(
+                                icon = Icons.Default.Checklist,
+                                label = if (uiState.isEnvBatchMode) "完成" else "批量",
+                                tint = if (uiState.isEnvBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                 onClick = { viewModel.setEnvBatchMode(!uiState.isEnvBatchMode) }
-                            ) {
-                                Text(
-                                    text = if (uiState.isEnvBatchMode) "完成" else "批量",
-                                    fontSize = 13.sp,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                                    color = if (uiState.isEnvBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            IconButton(onClick = { showImportEnvDialog = true }) {
-                                Icon(Icons.Default.PostAdd, contentDescription = "智能导入")
-                            }
-                            IconButton(onClick = { showCreateEnvDialog = true }) {
-                                Icon(Icons.Default.Add, contentDescription = "新建变量")
-                            }
+                            )
+                            ActionButtonSmall(
+                                icon = Icons.Default.PostAdd,
+                                label = "导入",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                onClick = { showImportEnvDialog = true }
+                            )
+                            ActionButtonSmall(
+                                icon = Icons.Default.Add,
+                                label = "新建",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                onClick = { showCreateEnvDialog = true }
+                            )
                         }
                         BottomNavScreen.Scripts -> {
                             if (scriptsSubTab == 0) {
-                                IconButton(onClick = { showCreateScriptDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "新建脚本")
-                                }
+                                ActionButtonSmall(
+                                    icon = Icons.Default.Add,
+                                    label = "新建",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    onClick = { showCreateScriptDialog = true }
+                                )
                             } else {
-                                IconButton(onClick = { showDirectoryDrawer = true }) {
-                                    Icon(Icons.Default.FolderOpen, contentDescription = "文件目录")
-                                }
-                                IconButton(onClick = {
-                                    viewModel.saveConfigFile(uiState.selectedConfigFile, uiState.configContent)
-                                }) {
-                                    Icon(Icons.Default.Save, contentDescription = "保存配置")
-                                }
+                                ActionButtonSmall(
+                                    icon = Icons.Default.FolderOpen,
+                                    label = "目录",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    onClick = { showDirectoryDrawer = true }
+                                )
+                                ActionButtonSmall(
+                                    icon = Icons.Default.Save,
+                                    label = "保存",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    onClick = {
+                                        viewModel.saveConfigFile(uiState.selectedConfigFile, uiState.configContent)
+                                    }
+                                )
                             }
                         }
                         BottomNavScreen.Settings -> {
-                            IconButton(onClick = { viewModel.toggleTheme() }) {
-                                Icon(
-                                    if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "切换主题",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            IconButton(onClick = onOpenPanelManager) {
-                                Icon(Icons.Default.Dns, contentDescription = "面板管理")
-                            }
+                            ActionButtonSmall(
+                                icon = if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                label = "主题",
+                                tint = MaterialTheme.colorScheme.primary,
+                                onClick = { viewModel.toggleTheme() }
+                            )
+                            ActionButtonSmall(
+                                icon = Icons.Default.Dns,
+                                label = "面板",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                onClick = onOpenPanelManager
+                            )
                         }
                     }
                 }
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
-            ) {
-                BottomNavScreen.entries.forEach { screen ->
-                    val isSelected = selectedTab == screen
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = { viewModel.selectTab(screen) },
-                        icon = {
-                            Icon(
-                                imageVector = screen.icon,
-                                contentDescription = screen.title,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        label = { Text(text = screen.title, fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    )
-                }
-            }
+            NavigationDock(
+                current = selectedTab,
+                onSelect = { viewModel.selectTab(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(bottom = 10.dp)
+            )
         }
     ) { innerPadding ->
         Column(
@@ -273,8 +292,72 @@ fun MainFlowScreen(
                         onOpenLogHistory = onOpenLogHistoryScreen,
                         onOpenSystemSettings = onOpenSystemSettingsScreen,
                         onOpenPermissions = onOpenPermissionsScreen,
-                        onOpenSubscriptionsScreen = onOpenSubscriptionsScreen
+                        onOpenSubscriptionsScreen = onOpenSubscriptionsScreen,
+                        onOpenApps = onOpenAppsScreen
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 浮动 Dock 导航：底部悬浮胶囊条（大圆角 + 阴影 + 描边），与内容区视觉分离。
+ * 选中项展开为「主色胶囊 + 图标 + 文字」，未选中仅图标；切换时胶囊宽度有过渡动画。
+ */
+@Composable
+private fun NavigationDock(
+    current: BottomNavScreen,
+    onSelect: (BottomNavScreen) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+        ),
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomNavScreen.entries.forEach { screen ->
+                val selected = screen == current
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else Color.Transparent
+                        )
+                        .clickable { onSelect(screen) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = screen.icon,
+                        contentDescription = screen.title,
+                        tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    if (selected) {
+                        Text(
+                            text = screen.title,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
         }
@@ -290,13 +373,12 @@ private fun TaskSortMenu(
     onSelect: (TaskSortType) -> Unit
 ) {
     Box {
-        IconButton(onClick = { onExpandedChange(true) }) {
-            Icon(
-                Icons.Default.SwapVert,
-                contentDescription = "排序",
-                tint = if (current != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-            )
-        }
+        ActionButtonSmall(
+            icon = Icons.Default.SwapVert,
+            label = "排序",
+            tint = if (current != TaskSortType.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            onClick = { onExpandedChange(true) }
+        )
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { onExpandedChange(false) }

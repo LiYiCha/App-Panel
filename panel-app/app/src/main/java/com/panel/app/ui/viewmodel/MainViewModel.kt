@@ -9,11 +9,13 @@ import com.panel.app.data.adapter.BaihuPanelAdapter
 import com.panel.app.data.adapter.QinglongApiHelpers
 import com.panel.app.data.adapter.QinglongV10Adapter
 import com.panel.app.data.adapter.QinglongV15Adapter
+import com.panel.app.data.remote.api.BaihuOpenApp
 import com.panel.app.data.remote.api.QinglongV15Api
 import com.panel.app.data.backup.*
 import com.panel.app.data.model.*
 import com.panel.app.data.model.RunningTaskInfo
 import com.panel.app.data.remote.OtpRequiredException
+import com.panel.app.data.remote.TwoFactorRequiredException
 import com.panel.app.data.repository.PanelRepository
 import com.panel.app.ui.screens.BottomNavScreen
 import com.panel.app.util.PanelUrl
@@ -70,6 +72,8 @@ data class MainUiState(
     val isDepBatchMode: Boolean = false,
     val isDatabaseReady: Boolean = false,
     val expandedScriptFolders: Set<String> = emptySet(),
+    /** 正在懒加载子目录的目录路径集合（展开时空目录的目录项会临时显示为空） */
+    val loadingScriptDirs: Set<String> = emptySet(),
     val expandedHistoryScripts: Set<String> = emptySet(),
     val toastMessage: String? = null,
     /** 非空表示该面板开启了两步验证，等待用户输入动态验证码 */
@@ -112,6 +116,96 @@ class MainViewModel @Inject constructor(
     /** 仪表盘上次成功拉取时间 panelId -> 时间戳，配合 TTL 复用缓存 */
     private val dashboardFetchedAt = mutableMapOf<String, Long>()
     private val dashboardTtlMs = 60_000L
+
+    /** 配置文件失效记忆 panelId -> 确认读不到的文件名（列表有名字、磁盘没有），持久化到 prefs 跨重启生效 */
+    private fun brokenConfigSet(panelId: String): MutableSet<String> =
+        (prefs.getStringSet("broken_cfg_$panelId", emptySet()) ?: emptySet()).toMutableSet()
+
+    private fun saveBrokenConfigSet(panelId: String, set: Set<String>) {
+        prefs.edit { putStringSet("broken_cfg_$panelId", set) }
+    }
+
+    /** 本次进程已完成静默预重登的面板（每面板一次，避免冷启动首刷的 401 噪声） */
+    private val sessionReauthedPanels = mutableSetOf<String>()
+
+    /** 面板 host 是否已知开启了两步验证（持久化；登录页据此直接带出验证码框） */
+    fun isTwoFactorKnown(host: String): Boolean =
+        host.isNotEmpty() && prefs.getBoolean("2fa_$host", false)
+
+    fun markTwoFactorKnown(host: String) {
+        if (host.isNotEmpty()) prefs.edit { putBoolean("2fa_$host", true) }
+    }
+
+    // ==================== 白虎应用市场（open2api，Bearer OpenAPI Token） ====================
+
+    private fun openApiTokenKey(panelId: String) = "openapi_token_$panelId"
+
+    /** OpenAPI Token：无则现场生成并持久化（生成接口走 JWT，无需用户操作） */
+    private suspend fun baihuOpenApiToken(panel: PanelInstance): Result<String> {
+        val adapter = repository.getAdapter(panel)
+        if (adapter !is BaihuPanelAdapter) return Result.failure(Exception("仅白虎面板支持应用市场"))
+        val existing = prefs.getString(openApiTokenKey(panel.id), null)
+        val res = adapter.ensureOpenApiToken(existing)
+        res.onSuccess { prefs.edit { putString(openApiTokenKey(panel.id), it) } }
+        return res
+    }
+
+    private fun baihuAppsCall(onResult: (Result<List<BaihuOpenApp>>) -> Unit, call: suspend (BaihuPanelAdapter, String) -> Result<List<BaihuOpenApp>>) {
+        viewModelScope.launch {
+            val panel = getActivePanel()
+            baihuOpenApiToken(panel)
+                .onSuccess { token ->
+                    val adapter = repository.getAdapter(panel)
+                    if (adapter is BaihuPanelAdapter) onResult(call(adapter, token)) else onResult(Result.failure(Exception("仅白虎面板支持")))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun loadBaihuInstalledApps(onResult: (Result<List<BaihuOpenApp>>) -> Unit) =
+        baihuAppsCall(onResult) { a, t -> a.listInstalledApps(t) }
+
+    fun loadBaihuStoreApps(onResult: (Result<List<BaihuOpenApp>>) -> Unit) =
+        baihuAppsCall(onResult) { a, t -> a.listStoreApps(t) }
+
+    fun updateBaihuApp(appId: String, onResult: (Result<Boolean>) -> Unit) =
+        baihuAppAction(appId, onResult) { a, t, id -> a.updateApp(t, id) }
+
+    fun rollbackBaihuApp(appId: String, onResult: (Result<Boolean>) -> Unit) =
+        baihuAppAction(appId, onResult) { a, t, id -> a.rollbackApp(t, id) }
+
+    fun toggleBaihuAutoUpdate(appId: String, enabled: Boolean, onResult: (Result<Boolean>) -> Unit) =
+        baihuAppAction(appId, onResult) { a, t, id -> a.setAppAutoUpdate(t, id, enabled) }
+
+    fun applyBaihuApp(pathOrUrl: String, onResult: (Result<Boolean>) -> Unit) {
+        viewModelScope.launch {
+            val panel = getActivePanel()
+            baihuOpenApiToken(panel)
+                .onSuccess { token ->
+                    val adapter = repository.getAdapter(panel)
+                    if (adapter is BaihuPanelAdapter) onResult(adapter.applyApp(token, pathOrUrl))
+                    else onResult(Result.failure(Exception("仅白虎面板支持")))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    private fun baihuAppAction(
+        appId: String,
+        onResult: (Result<Boolean>) -> Unit,
+        action: suspend (BaihuPanelAdapter, String, String) -> Result<Boolean>
+    ) {
+        viewModelScope.launch {
+            val panel = getActivePanel()
+            baihuOpenApiToken(panel)
+                .onSuccess { token ->
+                    val adapter = repository.getAdapter(panel)
+                    if (adapter is BaihuPanelAdapter) onResult(action(adapter, token, appId))
+                    else onResult(Result.failure(Exception("仅白虎面板支持")))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
 
     private fun loadDiskCache(panelId: String) {
         try {
@@ -224,7 +318,11 @@ class MainViewModel @Inject constructor(
                         subscriptions = if (isPanelChanged) emptyList() else _uiState.value.subscriptions,
                         envs = if (isPanelChanged) emptyList() else _uiState.value.envs,
                         deps = if (isPanelChanged) emptyList() else _uiState.value.deps,
-                        scriptTree = if (isPanelChanged) emptyList() else _uiState.value.scriptTree
+                        scriptTree = if (isPanelChanged) emptyList() else _uiState.value.scriptTree,
+                        // 面板切换必须同步清空配置文件清单：否则旧面板的 config.sh 等会被
+                        // 带到新面板上当作读取目标，产生跨面板污染
+                        configFiles = if (isPanelChanged) emptyList() else _uiState.value.configFiles,
+                        selectedConfigFile = if (isPanelChanged) "" else _uiState.value.selectedConfigFile
                     )
                     // 1. 先恢复磁盘缓存（IO线程），让 UI 立刻显示上次的数据
                     viewModelScope.launch(Dispatchers.IO) {
@@ -407,6 +505,32 @@ class MainViewModel @Inject constructor(
                 }
                 val effectiveAdapter = repository.getAdapter(activePanel)
 
+                // 冷启动首刷预重登：Cookie/token 可能已过期，先静默换取新凭据再发批量请求，
+                // 消除每轮刷新第一跳的 401 噪声（每进程每个面板只做一次；2FA 面板静默失败后由请求级自愈兜底）
+                if (activePanel.id !in sessionReauthedPanels &&
+                    !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()
+                ) {
+                    sessionReauthedPanels.add(activePanel.id)
+                    val reauth = runSafely { repository.testAuthenticate(activePanel) }
+                        .getOrElse { Result.failure(it) }
+                    val newToken = reauth.getOrNull()
+                    if (!newToken.isNullOrEmpty()) {
+                        activePanel = activePanel.copy(token = newToken)
+                        repository.savePanel(activePanel)
+                    } else if (reauth.exceptionOrNull() is TwoFactorRequiredException) {
+                        // 青龙 2FA 面板 token 过期：authenticate 撞 420，自动重登走不通，
+                        // 挂起验证码流程（主界面全局弹窗），验证成功后 submitOtp 会重新触发刷新
+                        if (getActivePanel().id == panel.id) {
+                            _uiState.value = _uiState.value.copy(
+                                otpPendingPanel = activePanel,
+                                isLoading = false,
+                                toastMessage = "登录已过期，请输入两步验证码继续"
+                            )
+                        }
+                        return@launch
+                    }
+                }
+
                 // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s。
                 // scopes 非空时只发起真正需要的请求，其余类别沿用内存中已有数据。
                 fun wants(scope: RefreshScope) = scopes == null || scope in scopes
@@ -444,18 +568,56 @@ class MainViewModel @Inject constructor(
                 val remoteDeps = depsRes?.getOrNull() ?: previous.deps
                 val remoteScriptTree = scriptTreeRes?.getOrNull() ?: previous.scriptTree
 
-                val fileList = configFilesRes?.getOrNull()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: previous.configFiles.takeIf { it.isNotEmpty() }
-                    ?: listOf(if (activePanel.type == PanelType.BAIHU) "config.json" else "config.sh")
+                // 过滤以 "-" 开头的非法文件名（服务端 ls 参数残留等解析产物）
+                val fileList = (configFilesRes?.getOrNull() ?: previous.configFiles)
+                    .filter { !it.startsWith("-") }
                 val defaultFile = fileList.firstOrNull { it.equals("config.sh", ignoreCase = true) || it.equals("config.json", ignoreCase = true) }
                     ?: fileList.firstOrNull { !it.contains("/") && (it.endsWith(".sh") || it.endsWith(".json") || it.endsWith(".js")) }
                     ?: fileList.firstOrNull()
                     ?: "config.sh"
-                val configContentRes = if (configFilesRes?.isSuccess == true) {
-                    safeCall { effectiveAdapter.readConfig(defaultFile) }
-                } else {
-                    Result.failure(configFilesRes?.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
+                var effectiveFile = defaultFile
+                val configContentRes = when {
+                    // 服务端明确返回空列表（如 demo 站文件树里没有任何配置类文件）：
+                    // 跳过读取，不再用兜底文件名打注定 404/500 的请求
+                    configFilesRes?.isSuccess == true && fileList.isEmpty() ->
+                        Result.failure(Exception("该面板没有可用的配置文件"))
+                    configFilesRes?.isSuccess == true -> {
+                        // 失效文件记忆：上次确认读不到的文件（列表有名字、磁盘没有）直接跳过，
+                        // 避免每次刷新都打一遍 500 日志；成功读到时从名单移除（服务端可能已重建）
+                        val broken = brokenConfigSet(activePanel.id)
+                        if (effectiveFile in broken) {
+                            effectiveFile = fileList.firstOrNull { it !in broken } ?: effectiveFile
+                        }
+                        val primary = safeCall { effectiveAdapter.readConfig(effectiveFile) }
+                        if (primary.isSuccess) {
+                            broken.remove(effectiveFile)
+                            saveBrokenConfigSet(activePanel.id, broken)
+                            primary
+                        } else {
+                            broken.add(effectiveFile)
+                            // 按列表顺序自动回退到下一个可读配置（最多再试 5 个）
+                            var picked: Pair<String, Result<String>>? = null
+                            var tried = 1
+                            for (f in fileList) {
+                                if (f == effectiveFile || f in broken || tried >= 5) continue
+                                tried++
+                                val r = safeCall { effectiveAdapter.readConfig(f) }
+                                if (r.isSuccess) {
+                                    picked = f to r
+                                    break
+                                }
+                            }
+                            if (picked != null) {
+                                effectiveFile = picked.first
+                                saveBrokenConfigSet(activePanel.id, broken)
+                                picked.second
+                            } else {
+                                saveBrokenConfigSet(activePanel.id, broken)
+                                primary
+                            }
+                        }
+                    }
+                    else -> Result.failure(configFilesRes?.exceptionOrNull() ?: Exception("配置文件列表加载失败"))
                 }
                 val content = configContentRes.getOrNull() ?: previous.configContent
 
@@ -488,6 +650,16 @@ class MainViewModel @Inject constructor(
                         refreshPanelRemoteData(updatedPanel, notifyOnNoCredential, scopes)
                         return@launch
                     }
+                    // 青龙 2FA 面板：重登撞 420，重新走验证码流程（验证成功后 submitOtp 会重新触发刷新）
+                    if (reauthRes.exceptionOrNull() is TwoFactorRequiredException) {
+                        if (getActivePanel().id == activePanel.id) {
+                            _uiState.value = _uiState.value.copy(
+                                otpPendingPanel = activePanel,
+                                toastMessage = "登录已过期，请输入两步验证码继续"
+                            )
+                        }
+                        return@launch
+                    }
                 }
 
                 if (errorMsg != null) {
@@ -507,7 +679,7 @@ class MainViewModel @Inject constructor(
                 ).any { it.isSuccess }
                 if (hasSuccess) {
                     hasNetworkDataLoaded = true
-                    saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, defaultFile, content)
+                    saveDiskCache(activePanel.id, remoteTasks, remoteEnvs, remoteSubs, remoteDeps, remoteScriptTree, fileList, effectiveFile, content)
                 }
 
                 _uiState.value = _uiState.value.copy(
@@ -519,11 +691,22 @@ class MainViewModel @Inject constructor(
                     depsLoadError = depsRes?.let { if (it.isSuccess) null else it.exceptionOrNull()?.message }
                         ?: _uiState.value.depsLoadError,
                     configFiles = fileList,
-                    selectedConfigFile = defaultFile,
+                    selectedConfigFile = effectiveFile,
                     configContent = content,
                     scriptTree = remoteScriptTree,
                     toastMessage = errorMsg ?: _uiState.value.toastMessage
                 )
+
+                // 懒加载树刷新后 children 被重置：已展开目录逐个自动补拉，
+                // 否则刷新一次已展开的白虎目录就全部变空
+                _uiState.value.expandedScriptFolders.forEach { p ->
+                    val n = findScriptNode(remoteScriptTree, p)
+                    if (n?.isDir == true && n.children.isNullOrEmpty() &&
+                        p !in _uiState.value.loadingScriptDirs
+                    ) {
+                        loadScriptDirectory(p)
+                    }
+                }
             } finally {
                 if (getActivePanel().id == activePanel.id) {
                     _uiState.value = _uiState.value.copy(isLoading = false)
@@ -843,7 +1026,8 @@ class MainViewModel @Inject constructor(
             } else {
                 val err = authResult.exceptionOrNull()
                 // 两步验证：把待验证的面板挂到状态上，由登录页弹出验证码输入框
-                if (err is OtpRequiredException) {
+                // （白虎 = OtpRequiredException，青龙 = TwoFactorRequiredException）
+                if (err is OtpRequiredException || err is TwoFactorRequiredException) {
                     _uiState.value = _uiState.value.copy(otpPendingPanel = candidate)
                     onResult(false, err.message ?: "请输入动态验证码")
                     return@launch
@@ -864,13 +1048,16 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true)
             val adapter = repository.getAdapter(panel)
-            if (adapter !is BaihuPanelAdapter) {
-                _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                onResult(false, "当前面板不支持两步验证")
-                return@launch
-            }
-            val res = runSafely { adapter.submitOtp(code.trim()) }
-                .getOrElse { Result.failure(it) }
+            val res = when (adapter) {
+                is BaihuPanelAdapter -> runSafely { adapter.submitOtp(code.trim()) }
+                // 青龙：PUT /user/two-factor/login（code+username+password 重新提交）
+                is QinglongV15Adapter -> runSafely { adapter.loginTwoFactor(code.trim()) }
+                else -> {
+                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                    onResult(false, "当前面板不支持两步验证")
+                    return@launch
+                }
+            }.getOrElse { Result.failure(it) }
             _uiState.value = _uiState.value.copy(isAuthenticating = false)
             if (res.isSuccess) {
                 val saved = panel.copy(token = res.getOrNull())
@@ -1274,8 +1461,64 @@ class MainViewModel @Inject constructor(
 
     fun toggleScriptFolderExpanded(path: String) {
         val current = _uiState.value.expandedScriptFolders
-        val next = if (current.contains(path)) current - path else current + path
-        _uiState.value = _uiState.value.copy(expandedScriptFolders = next)
+        if (current.contains(path)) {
+            _uiState.value = _uiState.value.copy(expandedScriptFolders = current - path)
+            return
+        }
+        _uiState.value = _uiState.value.copy(expandedScriptFolders = current + path)
+
+        // 目录懒加载：白虎文件树目录只带 hasChildren 标记不下发 children，
+        // 展开时若子节点为空且未在加载中，按需补拉并注入本地树（青龙深层目录同样受益）
+        val node = findScriptNode(_uiState.value.scriptTree, path)
+        if (node?.isDir == true && node.children.isNullOrEmpty() &&
+            path !in _uiState.value.loadingScriptDirs
+        ) {
+            loadScriptDirectory(path)
+        }
+    }
+
+    private fun findScriptNode(nodes: List<ScriptNode>, path: String): ScriptNode? {
+        for (n in nodes) {
+            if (n.path == path) return n
+            n.children?.let { findScriptNode(it, path)?.let { hit -> return hit } }
+        }
+        return null
+    }
+
+    private fun loadScriptDirectory(path: String) {
+        viewModelScope.launch {
+            val panel = getActivePanel()
+            _uiState.update { it.copy(loadingScriptDirs = it.loadingScriptDirs + path) }
+            var res = repository.getAdapter(panel).listDirectory(path)
+            // 鉴权自愈：白虎 Cookie 失效时懒加载请求会 401（与刷新流程同款自愈，否则展开目录静默失败）
+            if (res.isFailure && isAuthException(res.exceptionOrNull())) {
+                repository.invalidateAdapter(panel.id)
+                val reauth = runSafely { repository.testAuthenticate(panel) }
+                if (reauth.isSuccess) {
+                    res = repository.getAdapter(panel).listDirectory(path)
+                }
+            }
+            _uiState.update { it.copy(loadingScriptDirs = it.loadingScriptDirs - path) }
+            res.onSuccess { children ->
+                if (children.isEmpty()) return@onSuccess
+                _uiState.update { st ->
+                    st.copy(scriptTree = injectScriptChildren(st.scriptTree, path, children))
+                }
+            }
+        }
+    }
+
+    /** 把拉到的子项注入树中对应目录节点（递归替换） */
+    private fun injectScriptChildren(
+        nodes: List<ScriptNode>,
+        path: String,
+        children: List<ScriptNode>
+    ): List<ScriptNode> = nodes.map { n ->
+        when {
+            n.path == path -> n.copy(children = children)
+            n.children != null -> n.copy(children = injectScriptChildren(n.children, path, children))
+            else -> n
+        }
     }
 
     fun setScriptFoldersExpanded(paths: Set<String>) {

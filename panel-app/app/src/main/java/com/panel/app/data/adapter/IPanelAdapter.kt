@@ -220,6 +220,15 @@ interface IPanelAdapter {
 
     // 6. 脚本文件 (Scripts)
     suspend fun getScriptTree(): Result<List<ScriptNode>>
+
+    /**
+     * 目录懒加载：拉取指定目录的子项列表。
+     * 白虎文件树接口是懒加载设计（目录只带 hasChildren 标记、不下发 children），
+     * 展开子目录为空的场景靠它补拉。不支持的面板走默认失败（UI 保持原状）。
+     */
+    suspend fun listDirectory(path: String): Result<List<ScriptNode>> =
+        Result.failure(Exception("当前面板不支持目录懒加载"))
+
     suspend fun readScript(path: String): Result<String>
     suspend fun saveScript(path: String, content: String): Result<Boolean>
     suspend fun createScript(path: String, content: String): Result<Boolean>

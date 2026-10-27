@@ -34,7 +34,8 @@ fun StatusBadge(
     text: String,
     tone: StatusTone,
     modifier: Modifier = Modifier,
-    pulsing: Boolean = false
+    pulsing: Boolean = false,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null
 ) {
     val (container, content) = when (tone) {
         StatusTone.PRIMARY ->
@@ -56,6 +57,14 @@ fun StatusBadge(
         ) {
             if (pulsing) {
                 PulsingDot(color = content)
+            }
+            icon?.let {
+                androidx.compose.material3.Icon(
+                    it,
+                    contentDescription = null,
+                    tint = content,
+                    modifier = Modifier.size(9.dp)
+                )
             }
             Text(text, fontSize = 9.sp, color = content)
         }

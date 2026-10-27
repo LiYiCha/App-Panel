@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.adapter.QinglongApiHelpers
+import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.components.ExitCodeBadge
 import com.panel.app.ui.components.SearchPillField
 import com.panel.app.data.model.RunningTaskInfo
@@ -145,9 +146,12 @@ fun ExecutionHistoryScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { loadData() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
+                    ActionButtonSmall(
+                        icon = Icons.Default.Refresh,
+                        label = "刷新",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = { loadData() }
+                    )
                 }
             )
         }
