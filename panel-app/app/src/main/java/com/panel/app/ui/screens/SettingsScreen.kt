@@ -56,6 +56,9 @@ fun SettingsScreen(
     onOpenPermissions: () -> Unit = {},
     onOpenSubscriptionsScreen: () -> Unit = {},
     onOpenApps: () -> Unit = {},
+    onOpenLocalScripts: () -> Unit = {},
+    onOpenMirrorSettings: () -> Unit = {},
+    localScriptEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -429,6 +432,36 @@ fun SettingsScreen(
                 ) {
                     Text("应用权限管理", fontSize = 12.sp)
                     Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 本地脚本引擎（应用侧：JS / Python 本地运行；standard 变体不显示入口）
+                if (localScriptEnabled) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenLocalScripts() }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("本地脚本（JS / Python）", fontSize = 12.sp)
+                        Text("本机运行与依赖 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                }
+
+                // 下载加速镜像（更新 APK + Python 依赖下载源管理）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenMirrorSettings() }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("下载加速镜像", fontSize = 12.sp)
+                    Text("更新与依赖源 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 

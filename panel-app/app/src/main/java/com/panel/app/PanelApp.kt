@@ -4,15 +4,25 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.panel.app.data.logger.AppLogger
+import com.panel.app.script.LocalScriptFeature
+import com.panel.app.util.MirrorManager
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 @HiltAndroidApp
 class PanelApp : Application() {
+
+    @Inject
+    lateinit var localScriptFeature: LocalScriptFeature
 
     override fun onCreate() {
         super.onCreate()
         // 初始化日志落盘目录并回灌上次会话的日志尾部（冷启动也能看到上次崩溃）
         AppLogger.init(this)
+        // 下载加速镜像管理中心（须先于 LocalScriptKit，PyPI 镜像 provider 依赖其 SP）
+        MirrorManager.init(this)
+        // 本地脚本引擎（JS/Python）与依赖管理装配（standard 变体为空实现）
+        localScriptFeature.init(this)
 
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

@@ -16,16 +16,21 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.panel.app.data.model.PanelType
+import com.panel.app.script.LocalScriptFeature
 import com.panel.app.ui.screens.*
 import com.panel.app.ui.theme.PanelAppTheme
 import com.panel.app.ui.viewmodel.MainUiState
 import com.panel.app.ui.viewmodel.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+
+    @Inject
+    lateinit var localScriptFeature: LocalScriptFeature
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +42,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavHost(viewModel = viewModel, uiState = uiState)
+                    AppNavHost(viewModel = viewModel, uiState = uiState, localScriptFeature = localScriptFeature)
                 }
             }
         }
@@ -45,7 +50,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
+private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScriptFeature: LocalScriptFeature) {
     val navController = rememberNavController()
 
     val hasLoggedInPanel = uiState.panels.any {
@@ -121,6 +126,12 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
                 onOpenPermissionsScreen = { navController.navigate("app_permissions") },
                 onOpenSubscriptionsScreen = { navController.navigate("subscriptions") },
                 onOpenAppsScreen = { navController.navigate("baihu_apps") },
+                onOpenLocalScriptsScreen = {
+                    // standard 变体未启用本地脚本，入口不响应
+                    if (localScriptFeature.enabled) navController.navigate("local_scripts")
+                },
+                onOpenMirrorSettingsScreen = { navController.navigate("mirror_settings") },
+                localScriptEnabled = localScriptFeature.enabled,
                 onNavigateToCreateScript = { navController.navigate("create_script") }
             )
         }
@@ -288,6 +299,13 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
             StandaloneDepsScreen(viewModel = viewModel, onBack = { safePopBack() })
         }
 
+        // 本地脚本路由由变体 feature 注册（full：完整路由；standard：空实现）
+        localScriptFeature.installRoutes(
+            nav = this,
+            openRoute = { route -> navController.navigate(route) },
+            popBack = { safePopBack() }
+        )
+
         composable("system_settings") {
             val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
             SystemSettingsScreen(
@@ -295,6 +313,13 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState) {
                 panelType = currentPanel?.type ?: PanelType.BAIHU,
                 dashboard = viewModel.getCachedDashboard(),
                 onBack = { safePopBack() }
+            )
+        }
+
+        composable("mirror_settings") {
+            MirrorSettingsScreen(
+                onBack = { safePopBack() },
+                localScriptEnabled = localScriptFeature.enabled
             )
         }
 

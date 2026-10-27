@@ -25,6 +25,12 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # Chaquopy 构建期需要本机 Python 3.13 打包 CPython 运行时
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
 
@@ -45,14 +51,14 @@ jobs:
           sed -i 's/\r$//' panel-app/gradlew
           chmod +x panel-app/gradlew
 
-      - name: Build Release APK
+      - name: Build Release APKs (standard + full)
         working-directory: panel-app
         env:
           RELEASE_STORE_FILE: ../key/ycKey.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleStandardRelease assembleFullRelease --no-daemon
 
       - name: Generate CHANGELOG.md
         id: changelog
@@ -72,6 +78,12 @@ jobs:
             echo "# Panel App v$VERSION 更新日志"
             echo ""
             echo "> 发布日期：$(date '+%Y-%m-%d') · 版本范围：$RANGE"
+            echo ""
+            echo "### 📦 下载说明"
+            echo ""
+            echo "- \`Panel-App-v$VERSION-full.apk\`：完整版（含 JS / Python 本地脚本引擎，体积较大）"
+            echo "- \`Panel-App-v$VERSION-standard.apk\`：精简版（不含本地脚本引擎，体积小）"
+            echo "- 应用内更新会自动匹配已安装的版本，请下载对应 APK 升级"
             echo ""
           } > CHANGELOG.md
 
@@ -125,7 +137,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            panel-app/app/build/outputs/apk/release/*.apk
+            panel-app/app/build/outputs/apk/standard/release/*.apk
+            panel-app/app/build/outputs/apk/full/release/*.apk
             CHANGELOG.md
           body_path: CHANGELOG.md
           generate_release_notes: false

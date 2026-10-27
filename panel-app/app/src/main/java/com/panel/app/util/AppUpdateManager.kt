@@ -48,11 +48,16 @@ object AppUpdateManager {
             if (resp.isSuccessful && resp.body() != null) {
                 val release = resp.body()!!
                 val currentVer = BuildConfig.VERSION_NAME
+                val flavor = BuildConfig.FLAVOR
                 val latestTag = release.tag_name.trim().removePrefix("v").removePrefix("V")
                 val cleanCurrent = currentVer.trim().removePrefix("v").removePrefix("V")
 
                 val hasNew = isVersionNewer(cleanCurrent, latestTag)
-                val apkAsset = release.assets?.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+                // 双 flavor 发布（standard/full）：优先匹配当前变体的 APK，兼容旧版无 flavor 后缀的单 APK
+                val apkAsset = release.assets?.firstOrNull { asset ->
+                    asset.name.endsWith(".apk", ignoreCase = true) &&
+                        asset.name.contains(flavor, ignoreCase = true)
+                } ?: release.assets?.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
                 val downloadUrl = apkAsset?.browser_download_url ?: release.html_url
 
                 Result.success(

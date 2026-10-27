@@ -76,11 +76,24 @@ android {
         }
     }
 
+    // 双版本发布：
+    // standard —— 精简版，不含本地脚本引擎（不打包 CPython/QuickJS，体积小）
+    // full     —— 完整版，包含 JS / Python 本地脚本与运行时依赖管理
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+        }
+        create("full") {
+            dimension = "edition"
+        }
+    }
+
     applicationVariants.all {
-        if (name == "release") {
+        if (name.endsWith("Release")) {
             outputs.forEach { output ->
                 (output as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
-                    "Panel-App-v${versionName}.apk"
+                    "Panel-App-v${versionName}-${productFlavors.joinToString("-") { it.name }}.apk"
             }
         }
     }
@@ -138,4 +151,9 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.ui.tooling)
+}
+
+// 本地脚本引擎仅进入 full 变体；standard 不打包 CPython / QuickJS
+dependencies {
+    "fullImplementation"(project(":core-script"))
 }

@@ -29,3 +29,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "PanelApp"
 include(":app")
+include(":core-script")

@@ -99,13 +99,16 @@ object DownloadManager {
         synchronized(lock) {
             // 下载器是单任务模型：重复点击只复用当前任务，不再创建并发请求。
             if (activeJob?.isActive == true) return
+            // 起点 URL 由镜像管理中心的当前选中源决定；镜像源失败时回退 GitHub 直链
+            val startUrl = MirrorManager.applyUpdate(url)
+            val fallbackUrl = if (startUrl != url) url else null
             val resumedOffset = if (outputFile.exists() && outputFile.length() > 0) outputFile.length() else 0L
             val initialState = State(url, outputFile, downloaded = resumedOffset)
             _states[url] = initialState
             activeUrl = url
             activeJob = scope.launch {
                 try {
-                    doDownload(url, initialState, onProgress, onSuccess, onFailure, onRetry)
+                    doDownload(url, initialState, onProgress, onSuccess, onFailure, onRetry, startUrl, fallbackUrl)
                 } catch (t: Throwable) {
                     if (t !is kotlinx.coroutines.CancellationException) {
                         _states.remove(url)
@@ -200,6 +203,8 @@ object DownloadManager {
         onSuccess: (File) -> Unit,
         onFailure: (String) -> Unit,
         onRetry: () -> Unit,
+        effectiveUrl: String = url,
+        fallbackUrl: String? = null,
     ) {
         val file = initial.file
         val resumeFrom = initial.downloaded
@@ -213,7 +218,7 @@ object DownloadManager {
 
         var response: okhttp3.Response? = null
         try {
-            val requestBuilder = Request.Builder().url(url).header("User-Agent", GITHUB_UA)
+            val requestBuilder = Request.Builder().url(effectiveUrl).header("User-Agent", GITHUB_UA)
             if (resumeFrom > 0L) requestBuilder.header("Range", "bytes=$resumeFrom-")
             response = httpClient.newCall(requestBuilder.build()).execute()
             when (response.code) {
@@ -274,11 +279,21 @@ object DownloadManager {
                 _states[url] = cur
                 onRetry()
                 // 递归重试
-                doDownload(url, cur, onProgress, onSuccess, onFailure, onRetry)
+                doDownload(url, cur, onProgress, onSuccess, onFailure, onRetry, effectiveUrl)
             } else {
-                _states.remove(url)
-                file.delete()
-                onFailure(e.message ?: "下载失败")
+                if (fallbackUrl != null && fallbackUrl != effectiveUrl) {
+                    // 镜像源重试耗尽：回退原始直链再来一轮（清空进度从头下）
+                    delay(RETRY_BASE_DELAY_MS)
+                    runCatching { file.delete() }
+                    val cur = State(url, file, downloaded = 0L)
+                    _states[url] = cur
+                    onRetry()
+                    doDownload(url, cur, onProgress, onSuccess, onFailure, onRetry, fallbackUrl)
+                } else {
+                    _states.remove(url)
+                    file.delete()
+                    onFailure(e.message ?: "下载失败")
+                }
             }
         } finally {
             response?.close()

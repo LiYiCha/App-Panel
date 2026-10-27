@@ -56,6 +56,9 @@ fun MainFlowScreen(
     onOpenPermissionsScreen: () -> Unit = {},
     onOpenSubscriptionsScreen: () -> Unit = {},
     onOpenAppsScreen: () -> Unit = {},
+    onOpenLocalScriptsScreen: () -> Unit = {},
+    onOpenMirrorSettingsScreen: () -> Unit = {},
+    localScriptEnabled: Boolean = false,
     onNavigateToCreateScript: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -293,7 +296,10 @@ fun MainFlowScreen(
                         onOpenSystemSettings = onOpenSystemSettingsScreen,
                         onOpenPermissions = onOpenPermissionsScreen,
                         onOpenSubscriptionsScreen = onOpenSubscriptionsScreen,
-                        onOpenApps = onOpenAppsScreen
+                        onOpenApps = onOpenAppsScreen,
+                        onOpenLocalScripts = onOpenLocalScriptsScreen,
+                        onOpenMirrorSettings = onOpenMirrorSettingsScreen,
+                        localScriptEnabled = localScriptEnabled
                     )
                 }
             }
