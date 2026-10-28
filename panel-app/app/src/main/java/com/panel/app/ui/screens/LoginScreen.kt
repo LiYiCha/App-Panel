@@ -46,6 +46,7 @@ fun LoginScreen(
     viewModel: MainViewModel,
     editPanel: PanelInstance? = null,
     onBack: (() -> Unit)? = null,
+    onEnterLocalMode: (() -> Unit)? = null,
     onLoginSuccess: () -> Unit
 ) {
     // 从面板管理等上级页面进入时，返回键应回到上一页；
@@ -64,11 +65,14 @@ fun LoginScreen(
     var isPasswordVisible by remember { mutableStateOf(false) }
 
     // 两步验证：内联在登录表单里（不再弹独立对话框）。
-    // 已知开启 2FA 的面板（持久化标记）直接带出验证码框；首次撞到 420 后同样展开，
-    // 与账密共用同一个「登录」按钮完成两段接力。
+    // 青龙（420）/白虎（require_otp）默认直接显示验证码框（未开启 2FA 时留空即可）；
+    // 已撞过 420 的面板同样带出，与账密共用同一个「登录」按钮完成两段接力。
     var twoFactorCode by remember { mutableStateOf("") }
-    var showTwoFactorField by remember(baseUrl) {
-        mutableStateOf(viewModel.isTwoFactorKnown(hostOf(baseUrl)))
+    var showTwoFactorField by remember(baseUrl, panelType) {
+        mutableStateOf(
+            panelType == PanelType.QINGLONG_V15 || panelType == PanelType.BAIHU ||
+                    viewModel.isTwoFactorKnown(hostOf(baseUrl))
+        )
     }
     val twoFactorPending = uiState.otpPendingPanel != null
 
@@ -198,7 +202,7 @@ fun LoginScreen(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = "Panel Hub",
+                text = "烛龙",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
@@ -299,35 +303,39 @@ fun LoginScreen(
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 两步验证（内联）：白虎 OTP / 青龙 TOTP 通用，账密确认后在此输入动态码
-                    if (twoFactorPending && showTwoFactorField) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    // 两步验证（内联）：白虎 OTP / 青龙 TOTP 通用。
+                    // 青龙/白虎面板默认直接带出验证码框（未开启 2FA 留空即可）；
+                    // 已撞过 420 的面板用提示条标识第二段状态。
+                    if (showTwoFactorField) {
+                        if (twoFactorPending) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(
-                                    Icons.Default.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    "「${uiState.otpPendingPanel?.name}」已开启两步验证，请输入验证器中的 6 位动态验证码",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Shield,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        "「${uiState.otpPendingPanel?.name}」已开启两步验证，请输入验证器中的 6 位动态验证码",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
                             }
                         }
                         OutlinedTextField(
                             value = twoFactorCode,
                             onValueChange = { if (it.length <= 8) twoFactorCode = it.filter { c -> c.isDigit() }; errorMessage = null },
-                            label = { Text("动态验证码", fontSize = 12.sp) },
+                            label = { Text("动态验证码（未开启 2FA 可留空）", fontSize = 12.sp) },
                             leadingIcon = { Icon(Icons.Default.Password, contentDescription = null, modifier = Modifier.size(18.dp)) },
                             singleLine = true,
                             enabled = !uiState.isAuthenticating,
@@ -336,12 +344,14 @@ fun LoginScreen(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp)
                         )
-                        TextButton(
-                            onClick = { resetTwoFactor() },
-                            enabled = !uiState.isAuthenticating,
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("返回修改账号密码", fontSize = 11.sp)
+                        if (twoFactorPending) {
+                            TextButton(
+                                onClick = { resetTwoFactor() },
+                                enabled = !uiState.isAuthenticating,
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("返回修改账号密码", fontSize = 11.sp)
+                            }
                         }
                     }
 
@@ -392,6 +402,20 @@ fun LoginScreen(
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
+                        }
+                    }
+                    // 本地模式：跳过面板登录直接使用本地脚本能力（standard 变体不显示）
+                    if (onEnterLocalMode != null) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = onEnterLocalMode,
+                            enabled = !uiState.isAuthenticating,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                        ) {
+                            Text("本地模式（无需登录面板）", fontSize = 13.sp)
                         }
                     }
                 }

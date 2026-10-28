@@ -11,14 +11,17 @@ import java.util.Date
  * - 配置文件因面板结构不同，只在同类型面板间恢复
  */
 data class PanelBackup(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val exportedAt: String,
     val sourcePanelType: String? = null,
     val sourcePanelName: String? = null,
     val tasks: List<BackupTask> = emptyList(),
     val envs: List<BackupEnv> = emptyList(),
     val scripts: List<BackupScript> = emptyList(),
-    val configFiles: List<BackupConfigFile> = emptyList()
+    val configFiles: List<BackupConfigFile> = emptyList(),
+    // v2 新增：本地数据
+    val localScripts: List<BackupLocalScript> = emptyList(),
+    val panels: List<BackupPanelInstance> = emptyList()
 )
 
 data class BackupTask(
@@ -48,6 +51,23 @@ data class BackupConfigFile(
     val content: String
 )
 
+/** 本地脚本库条目（v2）：folder 为虚拟文件夹归属，空表示未分类 */
+data class BackupLocalScript(
+    val name: String,
+    val folder: String = "",
+    val content: String
+)
+
+/** 面板实例（v2）：含登录凭据，备份文件为明文，需用户自行妥善保管 */
+data class BackupPanelInstance(
+    val name: String,
+    val type: String,
+    val baseUrl: String,
+    val username: String? = null,
+    val password: String? = null,
+    val token: String? = null
+)
+
 /** 恢复结果逐项报告 */
 data class RestoreReport(
     val category: String,
@@ -66,7 +86,9 @@ fun buildBackupJson(
     tasks: List<BackupTask>,
     envs: List<BackupEnv>,
     scripts: List<BackupScript>,
-    configFiles: List<BackupConfigFile>
+    configFiles: List<BackupConfigFile>,
+    localScripts: List<BackupLocalScript> = emptyList(),
+    panels: List<BackupPanelInstance> = emptyList()
 ): String {
     val backup = PanelBackup(
         exportedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(Date()),
@@ -75,7 +97,9 @@ fun buildBackupJson(
         tasks = tasks,
         envs = envs,
         scripts = scripts,
-        configFiles = configFiles
+        configFiles = configFiles,
+        localScripts = localScripts,
+        panels = panels
     )
     return com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(backup)
 }
@@ -96,7 +120,10 @@ data class PreviewRestoreData(
     val tasks: List<BackupTask> = emptyList(),
     val envs: List<BackupEnv> = emptyList(),
     val scripts: List<BackupScript> = emptyList(),
-    val configFiles: List<BackupConfigFile> = emptyList()
+    val configFiles: List<BackupConfigFile> = emptyList(),
+    val localScripts: List<BackupLocalScript> = emptyList(),
+    val panels: List<BackupPanelInstance> = emptyList()
 ) {
-    val hasData get() = tasks.isNotEmpty() || envs.isNotEmpty() || scripts.isNotEmpty() || configFiles.isNotEmpty()
+    val hasData get() = tasks.isNotEmpty() || envs.isNotEmpty() || scripts.isNotEmpty() ||
+            configFiles.isNotEmpty() || localScripts.isNotEmpty() || panels.isNotEmpty()
 }

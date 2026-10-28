@@ -540,6 +540,10 @@ class QinglongV10Adapter(
         // V10 无 offset 参数，每轮都是全量拉取，代价更高，因此空闲时退避得更激进
         val backoffSteps = longArrayOf(2000L, 4000L, 8000L, 10000L, 15000L)
         var idleStep = 0
+        // 标准青龙 log 接口响应不含 logStatus 字段（恒为 null），不能据此判定任务结束，
+        // 否则首轮就退出、日志永远不更新。回退：查任务自身状态（10s 节流，避免每轮全量拉列表）
+        var lastStatusCheckAt = 0L
+        var lastStatusRunning = true
         while (currentCoroutineContext().isActive) {
             if (System.currentTimeMillis() - startAt > MAX_LOG_STREAM_DURATION_MS) {
                 emit("$last\n[INFO] 日志流已达 10 分钟上限，已自动停止。")
@@ -557,10 +561,38 @@ class QinglongV10Adapter(
                 last = content
                 emit(content)
             }
-            if (chunk?.logStatus != "running") return@flow
+            if (chunk?.logStatus == "running") {
+                delay(backoffSteps[idleStep])
+                continue
+            }
+            if (chunk?.logStatus != null) return@flow // 明确的非运行状态
+            // logStatus 缺失（标准青龙）：节流查询任务自身状态，0=运行中 3=排队中
+            val now = System.currentTimeMillis()
+            if (now - lastStatusCheckAt > 10_000L) {
+                lastStatusCheckAt = now
+                lastStatusRunning = isCronRunning(logId)
+            }
+            if (!lastStatusRunning) return@flow
             delay(backoffSteps[idleStep])
         }
     }
+
+    /**
+     * 查询任务自身是否运行中：GET /api/crons → 遍历匹配 id（CrontabStatus 0=运行中 3=排队中）。
+     * V10 无 /api/crons/detail 接口，只能全量列表后匹配；请求失败按"未运行"处理（与旧行为一致）。
+     */
+    private suspend fun isCronRunning(cronId: String): Boolean = runCatching {
+        val arr = api.getCrons(getAuthHeader(), null)
+            .unwrap("查询任务状态失败").getOrNull()?.data
+            ?.takeIf { it.isJsonArray }?.asJsonArray
+        arr?.any { elem ->
+            val obj = elem.takeIf { it.isJsonObject }?.asJsonObject ?: return@any false
+            val idField = obj.get("id")?.takeIf { it.isJsonPrimitive }
+            val idStr = idField?.asString ?: idField?.asLong?.toString()
+            val status = obj.get("status")?.takeIf { it.isJsonPrimitive }?.asInt
+            idStr == cronId && (status == 0 || status == 3)
+        } ?: false
+    }.getOrNull() ?: false
 
     // ---------------------------------------------------------------- 8. 监控 / 审计
 

@@ -108,7 +108,10 @@ class PyDepManager(
 
     private fun queryLatestWheel(pkg: String): LatestWheel? {
         val json = client.newCall(
-            Request.Builder().url("https://pypi.org/pypi/$pkg/json").build()
+            Request.Builder()
+                .url("https://pypi.org/pypi/$pkg/json")
+                .header("User-Agent", REQUEST_USER_AGENT)
+                .build()
         ).execute().use { resp ->
             if (!resp.isSuccessful) return null
             resp.body?.string() ?: return null
@@ -129,11 +132,31 @@ class PyDepManager(
     }
 
     private fun download(remote: JSONObject, target: File, onProgress: (String) -> Unit) {
-        val url = remote.getString("url")
-            .replace(OFFICIAL_PACKAGE_HOST, mirrorProvider())
-        val total = remote.optLong("size", -1L)
-        client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-            if (!resp.isSuccessful) throw IllegalStateException("下载失败 HTTP ${resp.code}")
+        val officialUrl = remote.getString("url").substringBefore('#')
+        // 镜像优先；403/404（部分镜像对个别路径拒绝）时回退官方源
+        val candidates = listOf(
+            officialUrl.replace(OFFICIAL_PACKAGE_HOST, mirrorProvider()),
+            officialUrl
+        ).distinct()
+        var lastCode = 0
+        for (url in candidates) {
+            val code = downloadOnce(url, remote.optLong("size", -1L), target, onProgress)
+            if (code == 200) return
+            lastCode = code
+            if (code != 403 && code != 404) break
+        }
+        throw IllegalStateException("下载失败 HTTP $lastCode（镜像与官方源均不可用）")
+    }
+
+    /** 单次下载；返回 HTTP 状态码，成功时写出文件 */
+    private fun downloadOnce(url: String, total: Long, target: File, onProgress: (String) -> Unit): Int {
+        client.newCall(
+            Request.Builder()
+                .url(url)
+                .header("User-Agent", REQUEST_USER_AGENT)
+                .build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) return resp.code
             resp.body?.byteStream()?.use { input ->
                 target.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
@@ -153,6 +176,7 @@ class PyDepManager(
                     }
                 }
             } ?: throw IllegalStateException("下载失败：空响应")
+            return 200
         }
     }
 
@@ -208,6 +232,10 @@ class PyDepManager(
 
         /** 默认 wheel 下载镜像（清华 TUNA，国内加速） */
         const val DEFAULT_MIRROR_HOST = "https://pypi.tuna.tsinghua.edu.cn"
+
+        /** 请求 UA：部分镜像 CDN 拒绝非浏览器 UA（okhttp 默认 UA 会 403） */
+        private const val REQUEST_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
         private fun defaultClient() = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

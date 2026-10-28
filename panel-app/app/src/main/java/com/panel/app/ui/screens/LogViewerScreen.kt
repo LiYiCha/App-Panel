@@ -61,20 +61,20 @@ fun LogViewerScreen(
     var isSearchOpen by remember { mutableStateOf(false) }
     var fontSizeSp by remember { mutableFloatStateOf(11f) }
 
-    fun fetchLog() {
-        isLoading = true
+    fun fetchLog(silent: Boolean = false) {
+        if (!silent) isLoading = true
         if (logPath.isNotBlank()) {
             val normalized = logPath.replace('\\', '/')
             val fileName = normalized.substringAfterLast('/')
             val dirPath = if (normalized.contains('/')) normalized.substringBeforeLast('/') else ""
             viewModel.loadServerLogDetail(dirPath, fileName, fallbackTaskId = taskId) { content ->
                 logContent = content
-                isLoading = false
+                if (!silent) isLoading = false
             }
         } else if (taskId.isNotBlank()) {
             viewModel.getTaskLog(taskId) { content ->
                 logContent = content
-                isLoading = false
+                if (!silent) isLoading = false
             }
         } else {
             isLoading = false
@@ -87,10 +87,17 @@ fun LogViewerScreen(
         }
     }
 
-    // 跟随模式：仅当任务正在运行时默认开启，流结束后自动停止；用户可手动切换
-    var isFollowing by remember { mutableStateOf(taskRunning && (taskId.isNotBlank() || logPath.isNotBlank())) }
+    // 跟随模式：只要有明确的日志目标就默认连接。任务列表 / 任务详情 / 执行历史等入口
+    // 都不带 running 参数，若仅靠 taskRunning 判断会导致所有面板都无法实时滚动；
+    // 服务端对已结束任务会立即下发全量并断开（白虎 finish 帧 / 青龙首轮轮询即止），开销可控。
+    // 仅"静态日志文件路径"（无 taskId 且非运行中）不建立流。
+    val streamTargetId = when {
+        taskId.isNotBlank() -> taskId
+        taskRunning && logPath.isNotBlank() -> logPath
+        else -> ""
+    }
+    var isFollowing by remember { mutableStateOf(streamTargetId.isNotBlank()) }
     var isStreamActive by remember { mutableStateOf(false) }
-    val streamTargetId = if (taskId.isNotBlank()) taskId else if (taskRunning) logPath else ""
 
     // 注意：isStreamActive 不能放进 key —— 在 effect 内部写它会使 key 立即变化，
     // 导致协程被取消后重新执行一遍，日志流被重复启动。
@@ -114,13 +121,16 @@ fun LogViewerScreen(
                     if (latest.isNotBlank()) {
                         logContent = if (latest.length > MAX_LOG_CHARS) latest.takeLast(MAX_LOG_CHARS) else latest
                     }
+                    android.util.Log.d("QLStream", "UI collect: len=${latest.length}")
                     isLoading = false
                 }
         } finally {
-            // 流结束 = 任务已结束，退出跟随
+            // 流结束 = 任务已结束。SSE 只推增量与最近 100 行缓冲（白虎），历史日志页
+            // 不会主动更新，回到服务端拉一次落库后的全量日志做校准（静默，不转圈）。
             isStreamActive = false
             isFollowing = false
             isLoading = false
+            if (streamTargetId.isNotBlank()) fetchLog(silent = true)
         }
     }
 
@@ -146,6 +156,9 @@ fun LogViewerScreen(
         if (autoScrollToBottom && filteredLines.isNotEmpty()) {
             // 日志流可能每秒追加多次；动画会排队并造成明显卡顿，直接定位到尾部。
             listState.scrollToItem(filteredLines.size - 1)
+            // scrollToItem 只能把最后一行顶部对齐视口顶部，超长换行行的尾部仍在屏外；
+            // 补一次正向滚动钳到真正的底部（等价网页端 scrollTop = scrollHeight）。
+            listState.dispatchRawDelta(Float.MAX_VALUE)
         }
     }
 

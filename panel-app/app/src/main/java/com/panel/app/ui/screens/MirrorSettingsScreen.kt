@@ -1,13 +1,9 @@
 package com.panel.app.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -21,219 +17,156 @@ import com.panel.app.util.MirrorManager
 import com.panel.app.util.MirrorManager.Type
 
 /**
- * 下载加速镜像管理页（从设置页进入）。
+ * 下载加速镜像选择行：紧凑单行展示当前选中源，点击弹出选择对话框。
+ * 对话框内：源单选列表（自定义源可删）+ 添加自定义源。
  *
- * 简化版能力：源列表 + 单选切换 + 自定义源增删（预设源不可删，不做延迟测速）。
- * - 更新下载镜像：应用内检查更新后 APK 的下载源（GitHub Release 直链加速）
- * - Python 依赖镜像：PyPI wheel 下载源（仅完整版生效）
+ * 展示两类源：
+ *  - 应用更新下载源：应用内检查更新后 APK 的下载源（GitHub Release 直链加速）
+ *  - Python 依赖下载源：PyPI wheel 下载源（仅完整版脚本引擎可用）
+ *
+ * 复用方：「其他设置」页（OtherSettingsScreen）基础设置卡片内嵌。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MirrorSettingsScreen(
-    onBack: () -> Unit,
-    localScriptEnabled: Boolean = false,
+fun MirrorPickerRow(
+    label: String,
+    subtitle: String,
+    type: Type,
+    divider: @Composable () -> Unit
 ) {
-    BackHandler { onBack() }
-
-    var updateSources by remember { mutableStateOf(MirrorManager.sources(Type.UPDATE)) }
-    var pypiSources by remember { mutableStateOf(MirrorManager.sources(Type.PYPI)) }
-    var selectedUpdate by remember { mutableStateOf(MirrorManager.selected(Type.UPDATE)) }
-    var selectedPyPi by remember { mutableStateOf(MirrorManager.selected(Type.PYPI)) }
-    var addDialogType by remember { mutableStateOf<Type?>(null) }
+    var showPicker by remember { mutableStateOf(false) }
+    var sources by remember { mutableStateOf(MirrorManager.sources(type)) }
+    var selectedId by remember { mutableStateOf(MirrorManager.selected(type).id) }
+    var addDialog by remember { mutableStateOf(false) }
 
     fun refresh() {
-        updateSources = MirrorManager.sources(Type.UPDATE)
-        pypiSources = MirrorManager.sources(Type.PYPI)
-        selectedUpdate = MirrorManager.selected(Type.UPDATE)
-        selectedPyPi = MirrorManager.selected(Type.PYPI)
+        sources = MirrorManager.sources(type)
+        selectedId = MirrorManager.selected(type).id
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "下载加速镜像",
-                        fontSize = 15.sp,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // ==================== 更新下载镜像 ====================
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        "应用更新下载源",
-                        fontSize = 13.sp,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        "应用内检查更新后，APK 从所选源下载；镜像失败会自动回退 GitHub 直连",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    updateSources.forEach { source ->
-                        MirrorSourceRow(
-                            source = source,
-                            selected = source.id == selectedUpdate.id,
-                            onSelect = {
-                                MirrorManager.select(Type.UPDATE, source.id)
-                                refresh()
-                            },
-                            onRemove = {
-                                MirrorManager.removeCustom(source.id)
-                                refresh()
-                            }
-                        )
-                    }
-                    AddSourceRow { addDialogType = Type.UPDATE }
-                }
-            }
-
-            // ==================== Python 依赖镜像 ====================
-            if (localScriptEnabled) {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            "Python 依赖下载源",
-                            fontSize = 13.sp,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            "本地脚本安装纯 Python 包时 wheel 的下载源，改动立即生效",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        pypiSources.forEach { source ->
-                            MirrorSourceRow(
-                                source = source,
-                                selected = source.id == selectedPyPi.id,
-                                onSelect = {
-                                    MirrorManager.select(Type.PYPI, source.id)
-                                    refresh()
-                                },
-                                onRemove = {
-                                    MirrorManager.removeCustom(source.id)
-                                    refresh()
-                                }
-                            )
-                        }
-                        AddSourceRow { addDialogType = Type.PYPI }
-                    }
-                }
-            }
-
-            Text(
-                "自定义源格式：更新源填镜像前缀（如 https://example.com/），Python 源填站点地址（如 https://pypi.example.com）",
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-
-    addDialogType?.let { type ->
-        AddMirrorDialog(
-            type = type,
-            onDismiss = { addDialogType = null },
-            onConfirm = { name, url ->
-                val ok = MirrorManager.addCustom(type, name, url)
-                if (ok) {
-                    refresh()
-                    addDialogType = null
-                }
-                ok
-            }
-        )
-    }
-}
-
-@Composable
-private fun MirrorSourceRow(
-    source: MirrorManager.MirrorSource,
-    selected: Boolean,
-    onSelect: () -> Unit,
-    onRemove: () -> Unit,
-) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelect() }
-            .padding(vertical = 6.dp),
+            .clickable { showPicker = true }
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            RadioButton(selected = selected, onClick = onSelect)
-            Column {
-                Text(source.name, fontSize = 12.sp)
-                if (source.url.isNotEmpty()) {
+        Column {
+            Text(label, fontSize = 12.sp)
+            Text(subtitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            "${sources.firstOrNull { it.id == selectedId }?.name ?: "默认"} >",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+    divider()
+
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text(label, fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        source.url,
+                        if (type == Type.UPDATE)
+                            "应用内检查更新后，APK 从所选源下载；镜像失败自动回退 GitHub 直连"
+                        else
+                            "本地脚本安装纯 Python 包时 wheel 的下载源，改动立即生效",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    sources.forEach { source ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    MirrorManager.select(type, source.id)
+                                    refresh()
+                                    showPicker = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = source.id == selectedId,
+                                onClick = {
+                                    MirrorManager.select(type, source.id)
+                                    refresh()
+                                    showPicker = false
+                                }
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(source.name, fontSize = 12.sp)
+                                if (source.url.isNotEmpty()) {
+                                    Text(
+                                        source.url,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (!source.isPreset) {
+                                IconButton(
+                                    onClick = {
+                                        MirrorManager.removeCustom(source.id)
+                                        refresh()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "删除",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { addDialog = true }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("添加自定义源", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(
+                        "自定义源格式：更新源填镜像前缀（如 https://example.com/），Python 源填站点地址（如 https://pypi.example.com）",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPicker = false }) { Text("完成") }
             }
-        }
-        if (!source.isPreset) {
-            IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AddSourceRow(onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            Icons.Default.Add,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp)
         )
-        Text("添加自定义源", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+    }
+
+    if (addDialog) {
+        AddMirrorDialog(
+            type = type,
+            onDismiss = { addDialog = false },
+            onConfirm = { name, url ->
+                val ok = MirrorManager.addCustom(type, name, url)
+                if (ok) refresh()
+                ok
+            }
+        )
     }
 }
 

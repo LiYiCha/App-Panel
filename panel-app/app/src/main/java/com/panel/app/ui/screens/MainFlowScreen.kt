@@ -57,7 +57,7 @@ fun MainFlowScreen(
     onOpenSubscriptionsScreen: () -> Unit = {},
     onOpenAppsScreen: () -> Unit = {},
     onOpenLocalScriptsScreen: () -> Unit = {},
-    onOpenMirrorSettingsScreen: () -> Unit = {},
+    onOpenOtherSettingsScreen: () -> Unit = {},
     localScriptEnabled: Boolean = false,
     onNavigateToCreateScript: () -> Unit = {}
 ) {
@@ -291,14 +291,13 @@ fun MainFlowScreen(
                         onOpenServerLogs = onOpenServerLogsScreen,
                         onOpenDashboard = onOpenDashboardScreen,
                         onOpenBackup = onOpenBackupScreen,
-                        onOpenDevConsole = onOpenDevConsoleScreen,
                         onOpenLogHistory = onOpenLogHistoryScreen,
                         onOpenSystemSettings = onOpenSystemSettingsScreen,
-                        onOpenPermissions = onOpenPermissionsScreen,
                         onOpenSubscriptionsScreen = onOpenSubscriptionsScreen,
                         onOpenApps = onOpenAppsScreen,
                         onOpenLocalScripts = onOpenLocalScriptsScreen,
-                        onOpenMirrorSettings = onOpenMirrorSettingsScreen,
+                        onOpenOtherSettings = onOpenOtherSettingsScreen,
+                        onOpenDevConsole = onOpenDevConsoleScreen,
                         localScriptEnabled = localScriptEnabled
                     )
                 }

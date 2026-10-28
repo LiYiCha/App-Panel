@@ -1,4 +1,4 @@
-﻿﻿package com.panel.app.ui.screens
+package com.panel.app.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -17,27 +17,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.panel.app.BuildConfig
 import com.panel.app.data.model.PanelInstance
 import com.panel.app.data.model.PanelType
 import com.panel.app.ui.viewmodel.MainViewModel
-import com.panel.app.util.AppUpdateInfo
-import com.panel.app.util.AppUpdateManager
-import com.panel.app.util.DownloadManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * 现代化紧凑型控制台/设置主页。
  * 遵循"一页即全览，深层下沉二级页"设计准则，核心面板状态与高频二级入口在一屏内完全呈现。
+ * 应用侧杂项（通知/缓存/更新/加速等）已收敛至「应用设置 → 其他」二级页（OtherSettingsScreen）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,40 +43,23 @@ fun SettingsScreen(
     onOpenServerLogs: () -> Unit = {},
     onOpenDashboard: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
-    onOpenDevConsole: () -> Unit = {},
     onOpenLogHistory: () -> Unit = {},
     onOpenSystemSettings: () -> Unit = {},
-    onOpenPermissions: () -> Unit = {},
     onOpenSubscriptionsScreen: () -> Unit = {},
     onOpenApps: () -> Unit = {},
     onOpenLocalScripts: () -> Unit = {},
-    onOpenMirrorSettings: () -> Unit = {},
+    onOpenOtherSettings: () -> Unit = {},
+    onOpenDevConsole: () -> Unit = {},
     localScriptEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
     val currentPanel = uiState.panels.getOrNull(uiState.selectedPanelIndex)
         ?: PanelInstance("baihu-default", "白虎面板", PanelType.BAIHU, "http://127.0.0.1:5700", isLocalServer = true)
 
-    var showAboutDialog by remember { mutableStateOf(false) }
     var pingLatency by remember { mutableStateOf<String?>(null) }
     var isReachable by remember { mutableStateOf<Boolean?>(null) }
     var remoteDashboard by remember { mutableStateOf<com.panel.app.data.model.PanelDashboard?>(null) }
-    var selectedTimeout by remember { mutableIntStateOf(15) }
-    var showTimeoutDialog by remember { mutableStateOf(false) }
-
-    var isCheckingUpdate by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
-
-    // 缓存明细（分类识别，支持单独清理）
-    var cacheEntries by remember { mutableStateOf<List<AppCacheEntry>>(emptyList()) }
-    var showCacheDialog by remember { mutableStateOf(false) }
-    fun refreshCacheEntries() {
-        cacheEntries = collectAppCacheEntries(context)
-    }
-    LaunchedEffect(Unit) { refreshCacheEntries() }
 
     // 实时探测远端连通性与拉取远端真实运行指标
     LaunchedEffect(currentPanel.id, currentPanel.baseUrl) {
@@ -383,253 +359,42 @@ fun SettingsScreen(
             )
         }
 
-        // ==================== 3. 应用设置（应用侧：超时/缓存/权限/调试/更新/关于，面板侧条目归入上方「面板功能」） ====================
+        // ==================== 3. 应用设置（full：本地模式 + 其他；standard：仅其他） ====================
         Text("应用设置", fontSize = 11.sp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                // 超时
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showTimeoutDialog = true }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("网络超时设置", fontSize = 12.sp)
-                    Text("${selectedTimeout}s >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 清除缓存（点击弹出分类明细，可按类单独清理）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showCacheDialog = true }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("清除缓存", fontSize = 12.sp)
-                    val totalBytes = cacheEntries.sumOf { it.sizeBytes }
-                    Text("${formatBytes(totalBytes)} 分类清理 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 应用权限管理入口
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenPermissions() }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("应用权限管理", fontSize = 12.sp)
-                    Text("查看与授权 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 本地脚本引擎（应用侧：JS / Python 本地运行；standard 变体不显示入口）
-                if (localScriptEnabled) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenLocalScripts() }
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("本地脚本（JS / Python）", fontSize = 12.sp)
-                        Text("本机运行与依赖 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                }
-
-                // 下载加速镜像（更新 APK + Python 依赖下载源管理）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenMirrorSettings() }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("下载加速镜像", fontSize = 12.sp)
-                    Text("更新与依赖源 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 调试日志（应用侧调试功能，从「面板功能」归并至此）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            if (uiState.isDevMode) onOpenDevConsole() else viewModel.toggleDevMode(true)
-                        }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("调试日志", fontSize = 12.sp)
-                    Text(
-                        if (uiState.isDevMode) "已开启，点击查看 >" else "点击开启 >",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 检查更新
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            if (!isCheckingUpdate) {
-                                coroutineScope.launch {
-                                    isCheckingUpdate = true
-                                    val res = AppUpdateManager.checkForUpdate()
-                                    isCheckingUpdate = false
-                                    res.onSuccess { info ->
-                                        updateInfo = info
-                                        showUpdateDialog = true
-                                    }.onFailure { err ->
-                                        Toast.makeText(context, err.message ?: "检查更新失败", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                        }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("检查应用更新", fontSize = 12.sp)
-                    if (isCheckingUpdate) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("v${BuildConfig.VERSION_NAME} (检测) >", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                // 关于
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAboutDialog = true }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("关于 Panel Hub", fontSize = 12.sp)
-                    Text("详情 >", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (localScriptEnabled) {
+                ModernNavTile(
+                    icon = Icons.Default.Code,
+                    title = "本地模式",
+                    desc = "脚本 · 依赖 · 记录",
+                    badge = null,
+                    badgeColor = null,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenLocalScripts
+                )
             }
+            ModernNavTile(
+                icon = Icons.Default.Settings,
+                title = "其他",
+                desc = "通知 · 缓存 · 加速 · 更新",
+                badge = null,
+                badgeColor = null,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenOtherSettings
+            )
         }
-    }
-
-
-
-    // 关于弹窗
-    if (showAboutDialog) {
-        AlertDialog(
-            onDismissRequest = { showAboutDialog = false },
-            title = { Text("关于 Panel Hub", fontSize = 15.sp) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("版本: v${BuildConfig.VERSION_NAME} (正式版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
-                    Text("全面适配青龙面板 (v2.10 - v2.20.2) 与白虎面板。支持定时任务多状态联动、代码语法高亮与行号、Git 订阅同步、多模式环境变量解析与还原、配置文件树浏览及依赖包状态监控。", fontSize = 11.sp)
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showAboutDialog = false }) { Text("确认", fontSize = 12.sp) }
-            }
-        )
-    }
-
-    // 缓存分类明细弹窗：逐类展示大小，可单独清理或全部清理
-    if (showCacheDialog) {
-        AlertDialog(
-            onDismissRequest = { showCacheDialog = false },
-            title = { Text("清除缓存", fontSize = 15.sp) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    cacheEntries.forEach { entry ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(entry.title, fontSize = 12.sp)
-                                Text(
-                                    "${entry.desc} · ${formatBytes(entry.sizeBytes)}",
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            TextButton(onClick = {
-                                entry.clear()
-                                refreshCacheEntries()
-                                Toast.makeText(context, "已清理${entry.title}", Toast.LENGTH_SHORT).show()
-                            }) { Text("清理", fontSize = 11.sp) }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    cacheEntries.forEach { it.clear() }
-                    refreshCacheEntries()
-                    Toast.makeText(context, "缓存已全部清除", Toast.LENGTH_SHORT).show()
-                }) { Text("全部清理", fontSize = 12.sp) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCacheDialog = false }) { Text("关闭", fontSize = 12.sp) }
-            }
-        )
-    }
-
-    // 超时设置弹窗
-    if (showTimeoutDialog) {
-        AlertDialog(
-            onDismissRequest = { showTimeoutDialog = false },
-            title = { Text("设置请求超时", fontSize = 15.sp) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(10, 15, 30, 60).forEach { seconds ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    selectedTimeout = seconds
-                                    showTimeoutDialog = false
-                                    Toast.makeText(context, "超时已设置为 ${seconds}s", Toast.LENGTH_SHORT).show()
-                                }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RadioButton(selected = selectedTimeout == seconds, onClick = null)
-                            Text("$seconds 秒" + if (seconds == 15) " (推荐默认)" else "", fontSize = 12.sp)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showTimeoutDialog = false }) { Text("关闭", fontSize = 12.sp) }
-            }
-        )
-    }
-
-    // 版本更新弹窗（自治组件，见 SettingsDialogs.kt）
-    if (showUpdateDialog && updateInfo != null) {
-        UpdateCheckDialog(info = updateInfo!!, onDismiss = { showUpdateDialog = false })
+        // 调试模式开启时：设置主页直达日志入口（快速查看，无需进二级页）
+        if (uiState.isDevMode) {
+            ModernNavTile(
+                icon = Icons.Default.BugReport,
+                title = "调试日志",
+                desc = "记录中 · 点击快速查看",
+                badge = "ON",
+                badgeColor = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onOpenDevConsole
+            )
+        }
     }
 }
 

@@ -1337,18 +1337,41 @@ class BaihuPanelAdapter(
     /**
      * 通过白虎 SSE 接口流式读取实时日志。
      * 端点：GET /api/v1/logs/sse?log_id=xxx
-     * 响应类型：application/x-ndjson，每行是一条 JSON，含 timestamp/type/message 字段。
-     * 使用 OkHttp Call.enqueue() 异步流式读取，避免阻塞协程调度线程。
+     *
+     * 服务端返回的是**标准 SSE 帧**（gin c.SSEvent：`event: message` + `data: <json>` + 空行），
+     * 不是 NDJSON；帧体字段是 `type`/`text`（见白虎 LogSSEController.StreamLog）：
+     *   data: {"type":"log","text":"<增量片段>"}           —— 运行中反复推送
+     *   data: {"type":"finish","text":"...","status":...}  —— 结束帧，随后服务端主动断开
+     *   （连接时若任务已结束，finish 帧直接携带库内全量日志）
+     *
+     * 两个关键点：
+     *  1. log_id 必须是 TaskLog 记录 ID（TinyLog 以它注册），调用方通常传任务 id，
+     *     需先经 /logs?task_id= 解析成最新一条日志 id（与 getTaskLog、网页端口径一致）；
+     *  2. SSE 是长连接，必须把 readTimeout 置 0，否则任务空闲 20s 无输出就被 OkHttp 掐断。
+     *
+     * 对外契约与青龙一致：每次 emit 全量累积快照（由本方法累积 text 增量），UI 侧整体替换即可。
      */
     override fun streamLog(logId: String): Flow<String> = callbackFlow {
+        ensureAuth()
+        // 任务 id → 最新一条日志记录 id；解析失败则原样使用（可能本身就是 log id）
+        var realLogId = logId
+        runCatching {
+            api.getLogs(taskId = logId, pageSize = 1)
+                .unwrap("查询运行日志失败").getOrNull()
+                ?.data?.data?.firstOrNull()?.id?.let { realLogId = it }
+        }
+
         val baseUrl = instance.baseUrl.removeSuffix("/")
-        val url = "$baseUrl/api/v1/logs/sse?log_id=${URLEncoder.encode(logId, StandardCharsets.UTF_8.toString())}"
+        val url = "$baseUrl/api/v1/logs/sse?log_id=${URLEncoder.encode(realLogId, StandardCharsets.UTF_8.toString())}"
         val request = okhttp3.Request.Builder()
             .url(url)
-            .header("Accept", "application/x-ndjson")
+            .header("Accept", "text/event-stream")
             .build()
 
-        val call = NetworkClient.unsafeOkHttpClient.newCall(request)
+        val sseClient = NetworkClient.unsafeOkHttpClient.newBuilder()
+            .readTimeout(0L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+        val call = sseClient.newCall(request)
         call.enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: IOException) {
                 trySend("[ERROR] ${e.message ?: "连接失败"}")
@@ -1370,20 +1393,44 @@ class BaihuPanelAdapter(
                         return
                     }
                     val reader = BufferedReader(InputStreamReader(body.byteStream(), StandardCharsets.UTF_8))
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        line?.trim()?.takeIf { it.isNotEmpty() }?.let { rawLine ->
-                            try {
-                                val json = JsonParser.parseString(rawLine).asJsonObject
-                                val msg = json["message"]?.takeIf { !it.isJsonNull }?.asString?.trim()
-                                    ?: json["content"]?.takeIf { !it.isJsonNull }?.asString?.trim()
-                                    ?: rawLine
-                                if (msg.isNotEmpty()) trySend(msg)
-                            } catch (_: Exception) {
-                                trySend(rawLine)
-                            }
+                    val dataBuf = StringBuilder()
+                    var accumulated = ""
+                    var lastSnapshot = ""
+
+                    fun dispatchFrame() {
+                        if (dataBuf.isEmpty()) return
+                        val data = dataBuf.toString()
+                        dataBuf.setLength(0)
+                        val frameText = try {
+                            JsonParser.parseString(data).asJsonObject
+                                .get("text")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        } catch (_: Exception) {
+                            data // 非预期帧，原样透传
+                        }
+                        if (frameText.isEmpty()) return
+                        accumulated += frameText
+                        // 与前端 MAX_LOG_VIEW_CHARS 一致：超 1MB 截尾，防内存溢出
+                        if (accumulated.length > 1024 * 1024) accumulated = accumulated.takeLast(1024 * 1024)
+                        if (accumulated != lastSnapshot) {
+                            lastSnapshot = accumulated
+                            trySend(accumulated)
                         }
                     }
+
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val l = line ?: break
+                        when {
+                            // 多条 data 行按 SSE 规范用换行拼接（gin 每帧只有一行，稳妥起见仍按规范处理）
+                            l.startsWith("data:") -> {
+                                if (dataBuf.isNotEmpty()) dataBuf.append('\n')
+                                dataBuf.append(l.removePrefix("data:").trimStart())
+                            }
+                            // 空行 = 帧边界；event:/id:/注释行忽略（服务端固定 event: message）
+                            l.isEmpty() -> dispatchFrame()
+                        }
+                    }
+                    dispatchFrame() // 流关闭前冲刷最后一帧
                 } catch (_: Exception) {
                 } finally {
                     response.close()

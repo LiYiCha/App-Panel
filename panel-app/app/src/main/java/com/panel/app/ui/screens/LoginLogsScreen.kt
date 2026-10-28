@@ -131,7 +131,9 @@ fun LoginLogsScreen(
                     items(filteredLogs) { log ->
                         val ip = log["ip"]?.toString() ?: "未知 IP"
                         val address = log["address"]?.toString() ?: log["info"]?.toString() ?: "本地网络/内网"
-                        val time = log["createdAt"]?.toString() ?: log["timestamp"]?.toString() ?: log["time"]?.toString() ?: "--"
+                        val time = formatLoginLogTime(
+                            log["createdAt"]?.toString() ?: log["timestamp"]?.toString() ?: log["time"]?.toString()
+                        )
                         val status = log["status"]?.toString() ?: "0"
                         val isSuccess = status == "0" || status.equals("success", ignoreCase = true)
 
@@ -167,4 +169,22 @@ fun LoginLogsScreen(
             }
         }
     }
+}
+
+/** 登录日志时间格式化：青龙返回毫秒时间戳，兼容 ISO 字符串与已格式化文本 */
+private fun formatLoginLogTime(raw: String?): String {
+    val value = raw?.trim().takeUnless { it.isNullOrBlank() } ?: return "--"
+    // 纯数字按毫秒时间戳处理（秒级时间戳自动 ×1000）
+    value.toLongOrNull()?.let { ts ->
+        val millis = if (ts > 1_000_000_000_000L) ts else ts * 1000
+        return java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(millis))
+    }
+    // ISO 8601（如 2026-10-28T14:00:00.000Z）转本地可读格式
+    runCatching {
+        val parsed = java.time.Instant.parse(value)
+        return java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(parsed.toEpochMilli()))
+    }
+    return value
 }

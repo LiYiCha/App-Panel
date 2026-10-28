@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.backup.BackupConfigFile
 import com.panel.app.data.backup.BackupEnv
+import com.panel.app.data.backup.BackupLocalScript
+import com.panel.app.data.backup.BackupPanelInstance
 import com.panel.app.data.backup.BackupScript
 import com.panel.app.data.backup.BackupTask
 import com.panel.app.data.backup.PreviewRestoreData
@@ -51,8 +54,13 @@ fun BackupRestoreScreen(
     var includeEnvs by remember { mutableStateOf(true) }
     var includeScripts by remember { mutableStateOf(false) }
     var includeConfigs by remember { mutableStateOf(false) }
+    var includeLocalScripts by remember { mutableStateOf(false) }
+    var includePanels by remember { mutableStateOf(false) }
     var isWorking by remember { mutableStateOf(false) }
     var reports by remember { mutableStateOf<List<RestoreReport>>(emptyList()) }
+
+    // 本地脚本库条目数（standard 变体为 null，隐藏该类别）
+    val localScriptCount = remember { viewModel.localScriptBackupCount() }
 
     // 导入预览状态
     var previewData by remember { mutableStateOf<PreviewRestoreData?>(null) }
@@ -60,6 +68,8 @@ fun BackupRestoreScreen(
     var selectedEnvs by remember { mutableStateOf<List<BackupEnv>>(emptyList()) }
     var selectedScripts by remember { mutableStateOf<List<BackupScript>>(emptyList()) }
     var selectedConfigs by remember { mutableStateOf<List<BackupConfigFile>>(emptyList()) }
+    var selectedLocalScripts by remember { mutableStateOf<List<BackupLocalScript>>(emptyList()) }
+    var selectedPanels by remember { mutableStateOf<List<BackupPanelInstance>>(emptyList()) }
 
     fun writeToUri(uri: Uri, text: String) {
         runCatching {
@@ -92,6 +102,8 @@ fun BackupRestoreScreen(
             selectedEnvs = data.envs
             selectedScripts = data.scripts
             selectedConfigs = data.configFiles
+            selectedLocalScripts = data.localScripts
+            selectedPanels = data.panels
         }
     }
 
@@ -100,7 +112,10 @@ fun BackupRestoreScreen(
     ) { uri ->
         if (uri != null && !isWorking) {
             isWorking = true
-            viewModel.buildBackup(includeTasks, includeEnvs, includeScripts, includeConfigs) { json ->
+            viewModel.buildBackup(
+                includeTasks, includeEnvs, includeScripts, includeConfigs,
+                includeLocalScripts, includePanels
+            ) { json ->
                 writeToUri(uri, json ?: "")
                 isWorking = false
                 if (json == null) {
@@ -197,6 +212,17 @@ fun BackupRestoreScreen(
                                 subtitle = "脚本内容与目录结构",
                                 count = scriptCount
                             )
+                            if (localScriptCount != null) {
+                                HorizontalDivider()
+                                BackupCategoryRow(
+                                    checked = includeLocalScripts,
+                                    onCheckedChange = { includeLocalScripts = it },
+                                    icon = Icons.Default.Folder,
+                                    title = "本地脚本库",
+                                    subtitle = "脚本内容与文件夹归属（在本机运行，不经面板）",
+                                    count = localScriptCount
+                                )
+                            }
                             HorizontalDivider()
                             BackupCategoryRow(
                                 checked = includeConfigs,
@@ -206,6 +232,15 @@ fun BackupRestoreScreen(
                                 subtitle = "config.sh 等（仅同类型面板可恢复）",
                                 count = configCount
                             )
+                            HorizontalDivider()
+                            BackupCategoryRow(
+                                checked = includePanels,
+                                onCheckedChange = { includePanels = it },
+                                icon = Icons.Default.Dns,
+                                title = "面板实例",
+                                subtitle = "名称 / 地址 / 类型 / 登录凭据（明文存储，谨慎分享备份文件）",
+                                count = uiState.panels.size
+                            )
                         }
                     }
                 }
@@ -214,7 +249,8 @@ fun BackupRestoreScreen(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
-                                val anyChecked = includeTasks || includeEnvs || includeScripts || includeConfigs
+                                val anyChecked = includeTasks || includeEnvs || includeScripts || includeConfigs ||
+                                    includeLocalScripts || includePanels
                                 if (!anyChecked) {
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         Toast.makeText(context, "请至少勾选一项备份内容", Toast.LENGTH_SHORT).show()
@@ -344,6 +380,46 @@ fun BackupRestoreScreen(
                     }
                 }
 
+                // 本地脚本库选择
+                previewData?.takeIf { it.localScripts.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.localScripts,
+                            selectedItems = selectedLocalScripts,
+                            onSelectAll = { selectedLocalScripts = pd.localScripts },
+                            onDeselectAll = { selectedLocalScripts = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedLocalScripts = if (checked) selectedLocalScripts + item
+                                else selectedLocalScripts - item
+                            },
+                            itemCount = pd.localScripts.size,
+                            selectedItemCount = selectedLocalScripts.size
+                        ) { script ->
+                            LocalScriptItemRow(script)
+                        }
+                    }
+                }
+
+                // 面板实例选择
+                previewData?.takeIf { it.panels.isNotEmpty() }?.let { pd ->
+                    item {
+                        SelectableItemList(
+                            items = pd.panels,
+                            selectedItems = selectedPanels,
+                            onSelectAll = { selectedPanels = pd.panels },
+                            onDeselectAll = { selectedPanels = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedPanels = if (checked) selectedPanels + item
+                                else selectedPanels - item
+                            },
+                            itemCount = pd.panels.size,
+                            selectedItemCount = selectedPanels.size
+                        ) { panel ->
+                            PanelInstanceItemRow(panel)
+                        }
+                    }
+                }
+
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
@@ -361,7 +437,8 @@ fun BackupRestoreScreen(
                         Button(
                             onClick = {
                                 val hasSelection = selectedTasks.isNotEmpty() || selectedEnvs.isNotEmpty() ||
-                                    selectedScripts.isNotEmpty() || selectedConfigs.isNotEmpty()
+                                    selectedScripts.isNotEmpty() || selectedConfigs.isNotEmpty() ||
+                                    selectedLocalScripts.isNotEmpty() || selectedPanels.isNotEmpty()
                                 if (!hasSelection) {
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         Toast.makeText(context, "请至少选择一项要恢复的内容", Toast.LENGTH_SHORT).show()
@@ -377,6 +454,8 @@ fun BackupRestoreScreen(
                                     selectedEnvs = selectedEnvs,
                                     selectedScripts = selectedScripts,
                                     selectedConfigs = selectedConfigs,
+                                    selectedLocalScripts = selectedLocalScripts,
+                                    selectedPanels = selectedPanels,
                                     onResult = { result, error ->
                                         isWorking = false
                                         if (error != null) {
@@ -467,8 +546,10 @@ private fun <T> SelectableItemList(
                 }
             }
             HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(items, key = { it.hashCode() }) { item ->
+            // 预览页整体在 verticalScroll 内滚动，此处不能用 LazyColumn（无限高度约束会崩溃），
+            // 条目数量有限，直接全量渲染由外层统一滚动
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items.forEach { item ->
                     SelectableItemRow(
                         selected = selectedItems.contains(item),
                         onSelectedChange = { checked -> onToggleItem(item, checked) }
@@ -563,6 +644,48 @@ private fun ConfigItemRow(config: BackupConfigFile) {
 }
 
 @Composable
+private fun LocalScriptItemRow(script: BackupLocalScript) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(script.name, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            buildString {
+                append(if (script.folder.isBlank()) "未分类" else "文件夹: ${script.folder}")
+                append(" · ${script.content.length} 字符")
+            },
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun PanelInstanceItemRow(panel: BackupPanelInstance) {
+    val typeLabel = when {
+        panel.type.uppercase().startsWith("QINGLONG") -> "青龙"
+        panel.type.uppercase() == "BAIHU" -> "白虎"
+        else -> panel.type
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "${panel.name}（$typeLabel）",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            buildString {
+                append(panel.baseUrl)
+                val hasCred = !panel.username.isNullOrBlank() || !panel.token.isNullOrBlank()
+                if (hasCred) append(" · 含登录凭据")
+            },
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun BackupCategoryRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -599,42 +722,43 @@ private fun RestoreReportCard(report: RestoreReport) {
             else MaterialTheme.colorScheme.surface
         )
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    report.category,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    "成功 ${report.success} / 跳过 ${report.skipped} / 失败 ${report.failed}",
-                    fontSize = 11.sp,
-                    color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (report.skipped > 0) {
-                Text(
-                    "跳过 ${report.skipped} 项（内容不完整或来源面板类型不匹配）",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            report.errors.take(3).forEach { err ->
-                Text(
-                    "• $err",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (report.errors.size > 3) {
-                Text("…另有 ${report.errors.size - 3} 条错误", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+        // SelectionContainer：报告文本可长按选择复制（便于反馈报错内容）
+        SelectionContainer {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        report.category,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        "成功 ${report.success} / 跳过 ${report.skipped} / 失败 ${report.failed}",
+                        fontSize = 11.sp,
+                        color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (report.skipped > 0) {
+                    Text(
+                        "跳过 ${report.skipped} 项（内容不完整或来源面板类型不匹配）",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                report.errors.take(3).forEach { err ->
+                    Text(
+                        "• $err",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                if (report.errors.size > 3) {
+                    Text("…另有 ${report.errors.size - 3} 条错误", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

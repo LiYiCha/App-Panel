@@ -93,7 +93,7 @@ android {
         if (name.endsWith("Release")) {
             outputs.forEach { output ->
                 (output as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
-                    "Panel-App-v${versionName}-${productFlavors.joinToString("-") { it.name }}.apk"
+                    "Panel-v${versionName}-${productFlavors.joinToString("-") { it.name }}.apk"
             }
         }
     }

@@ -67,6 +67,8 @@ class ScriptRunnerService : Service() {
         when (intent?.action) {
             ACTION_RUN -> handleRun(intent, startId)
             ACTION_STOP -> handleStop(intent)
+            ACTION_PAUSE -> handlePauseResume(intent, pause = true)
+            ACTION_RESUME -> handlePauseResume(intent, pause = false)
             else -> stopSelfIfIdle()
         }
         return START_NOT_STICKY
@@ -108,7 +110,7 @@ class ScriptRunnerService : Service() {
             lang = lang,
             entryFile = entryFile,
             workDir = entryFile.parentFile ?: filesDir,
-            depsDir = if (lang == ScriptLang.PYTHON) File(filesDir, "py_deps") else null,
+            depsDir = if (lang == ScriptLang.PYTHON) File(filesDir, "py_deps") else File(filesDir, "js_deps"),
             args = args
         )
 
@@ -190,6 +192,18 @@ class ScriptRunnerService : Service() {
     private fun handleStop(intent: Intent) {
         val runId = intent.getStringExtra(EXTRA_RUN_ID) ?: return
         sessions[runId]?.session?.stop()
+    }
+
+    private fun handlePauseResume(intent: Intent, pause: Boolean) {
+        val runId = intent.getStringExtra(EXTRA_RUN_ID) ?: return
+        val session = sessions[runId]?.session ?: return
+        if (pause) {
+            session.pause()
+            ScriptRunBus.onStatusChanged(runId, RunStatus.PAUSED)
+        } else {
+            session.resume()
+            ScriptRunBus.onStatusChanged(runId, RunStatus.RUNNING)
+        }
     }
 
     private fun stopSelfIfIdle() {
@@ -283,6 +297,8 @@ class ScriptRunnerService : Service() {
 
         const val ACTION_RUN = "com.panel.corescript.action.RUN"
         const val ACTION_STOP = "com.panel.corescript.action.STOP"
+        const val ACTION_PAUSE = "com.panel.corescript.action.PAUSE"
+        const val ACTION_RESUME = "com.panel.corescript.action.RESUME"
         private const val EXTRA_RUN_ID = "runId"
         private const val EXTRA_LANG = "lang"
         private const val EXTRA_PATH = "path"
@@ -290,7 +306,9 @@ class ScriptRunnerService : Service() {
 
         /** 启动脚本运行，返回 runId；UI 用它订阅 [ScriptRunBus] 与查找日志文件 */
         fun start(context: Context, lang: ScriptLang, scriptFile: File, args: List<String> = emptyList()): String {
-            val runId = UUID.randomUUID().toString()
+            // 时间前缀格式（yyyyMMdd_HHmmss_uuid8）：运行记录列表可直接按文件名排序与展示
+            val runId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date()) +
+                "_" + UUID.randomUUID().toString().take(8)
             val intent = Intent(context, ScriptRunnerService::class.java)
                 .setAction(ACTION_RUN)
                 .putExtra(EXTRA_RUN_ID, runId)
@@ -302,12 +320,23 @@ class ScriptRunnerService : Service() {
         }
 
         fun stop(context: Context, runId: String) {
-            context.startService(
-                Intent(context, ScriptRunnerService::class.java)
-                    .setAction(ACTION_STOP)
-                    .putExtra(EXTRA_RUN_ID, runId)
-            )
+            context.startService(actionIntent(context, ACTION_STOP, runId))
         }
+
+        /** 请求暂停（仅 Python 生效，JS 空操作） */
+        fun pause(context: Context, runId: String) {
+            context.startService(actionIntent(context, ACTION_PAUSE, runId))
+        }
+
+        /** 请求继续 */
+        fun resume(context: Context, runId: String) {
+            context.startService(actionIntent(context, ACTION_RESUME, runId))
+        }
+
+        private fun actionIntent(context: Context, action: String, runId: String) =
+            Intent(context, ScriptRunnerService::class.java)
+                .setAction(action)
+                .putExtra(EXTRA_RUN_ID, runId)
 
         fun runLogFile(context: Context, runId: String): File =
             File(File(context.filesDir, "run_logs"), "$runId.log")

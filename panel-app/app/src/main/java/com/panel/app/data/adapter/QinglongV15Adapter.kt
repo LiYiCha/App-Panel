@@ -10,11 +10,14 @@ import com.panel.app.data.remote.unwrapTo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.withLock
 import com.google.gson.JsonObject
 
 /**
@@ -34,10 +37,91 @@ class QinglongV15Adapter(
     companion object {
         /** 日志流最长持续 10 分钟，避免任务卡死时无限轮询服务端 */
         private const val MAX_LOG_STREAM_DURATION_MS = 10 * 60 * 1000L
+
+        /** 登录被限流（410）后的退避时长：期间不再向服务端发登录请求，防止自动重登风暴刷新限流 */
+        private const val AUTH_BACKOFF_MS = 5 * 60 * 1000L
+
+        // ---- 按面板持久化的端点能力表（版本感知）----
+        // 记录"什么面板缺什么端点"，存 SharedPreferences：重启后直接查表跳过，
+        // 连探测请求都不发；面板升级（版本号变化）时自动清空重新学习。
+        private const val CAPS_SP_KEY = "ql_caps_table"
+        private const val DETAIL_EP = "api/crons/detail"
+        private const val INSTANCES_EP = "api/crons/{id}/instances"
+        private val capsLock = Any()
+        private var capsTable: MutableMap<String, PanelCaps>? = null
+
+        class PanelCaps(
+            var version: String?,
+            val missing: LinkedHashSet<String>,
+            val broken: LinkedHashSet<String>
+        )
+
+        private fun panelKey(baseUrl: String) = baseUrl.trim().trimEnd('/').lowercase()
+
+        private fun capsFor(baseUrl: String): PanelCaps = synchronized(capsLock) {
+            (capsTable ?: loadCapsTable().also { capsTable = it })
+                .getOrPut(panelKey(baseUrl)) { PanelCaps(null, LinkedHashSet(), LinkedHashSet()) }
+        }
+
+        private fun markMissing(baseUrl: String, name: String) =
+            mutateCaps(baseUrl) { it.missing.add(name) }
+
+        private fun markBroken(baseUrl: String, name: String) =
+            mutateCaps(baseUrl) { it.broken.add(name) }
+
+        private inline fun mutateCaps(baseUrl: String, block: (PanelCaps) -> Unit) {
+            synchronized(capsLock) {
+                block(capsFor(baseUrl))
+                persistCapsTable()
+            }
+        }
+
+        private fun loadCapsTable(): MutableMap<String, PanelCaps> {
+            val out = HashMap<String, PanelCaps>()
+            runCatching {
+                val raw = com.panel.app.PanelApp.appContext
+                    .getSharedPreferences("ql_caps", 0).getString(CAPS_SP_KEY, null) ?: return out
+                val root = org.json.JSONObject(raw)
+                for (key in root.keys()) {
+                    val o = root.optJSONObject(key) ?: continue
+                    fun setOf(name: String) = LinkedHashSet<String>().also { s ->
+                        o.optJSONArray(name)?.let { a -> for (i in 0 until a.length()) s.add(a.getString(i)) }
+                    }
+                    out[key] = PanelCaps(o.optString("v").ifBlank { null }, setOf("missing"), setOf("broken"))
+                }
+            }
+            return out
+        }
+
+        private fun persistCapsTable() = synchronized(capsLock) {
+            val table = capsTable ?: return@synchronized
+            runCatching {
+                val root = org.json.JSONObject()
+                table.forEach { (k, c) ->
+                    root.put(k, org.json.JSONObject()
+                        .put("v", c.version ?: "")
+                        .put("missing", org.json.JSONArray(c.missing.toList()))
+                        .put("broken", org.json.JSONArray(c.broken.toList())))
+                }
+                com.panel.app.PanelApp.appContext
+                    .getSharedPreferences("ql_caps", 0)
+                    .edit().putString(CAPS_SP_KEY, root.toString()).apply()
+            }
+        }
     }
 
     private val api: QinglongV15Api = NetworkClient.buildRetrofit(instance.baseUrl).create(QinglongV15Api::class.java)
     private var currentToken: String? = instance.token
+
+    /**
+     * 自动登录每 adapter 实例最多一次：并发请求同时 401 时只允许第一个触发静默登录，
+     * 其余直接失败（由上层请求级自愈统一处理），避免并发轰炸服务端登录接口。
+     */
+    private val autoLoginAttempted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 登录限流退避截止时间（epoch ms）；0 表示无退避 */
+    @Volatile
+    private var authBackoffUntil = 0L
 
     private fun cleanToken(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
@@ -71,10 +155,16 @@ class QinglongV15Adapter(
             currentToken = t
             return true
         }
+        // 限流退避期内直接放弃，避免自动重登风暴让服务端限流一直刷新
+        if (System.currentTimeMillis() < authBackoffUntil) return false
         val user = instance.username?.trim().orEmpty()
         val pass = instance.password?.trim().orEmpty()
         if (user.isNotEmpty() && pass.isNotEmpty()) {
-            return authenticate().isSuccess
+            // 每 adapter 实例只自动登录一次：并发 401 场景只放行第一个，其余直接失败
+            if (!autoLoginAttempted.compareAndSet(false, true)) return false
+            val ok = authenticate().isSuccess
+            if (ok) autoLoginAttempted.set(false) // 成功后复位，后续 token 再失效仍可重登一次
+            return ok
         }
         return false
     }
@@ -106,6 +196,11 @@ class QinglongV15Adapter(
             return Result.failure(TwoFactorRequiredException())
         }
 
+        // 限流 410：服务端要求等待，进入退避期（成功登录会清除）
+        if (resp.body()?.code == 410) {
+            authBackoffUntil = System.currentTimeMillis() + AUTH_BACKOFF_MS
+        }
+
         val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
         val rawToken = envelope.data?.token
             ?: return Result.failure(Exception("登录失败: 服务端未返回 token (${envelope.message ?: ""})"))
@@ -114,6 +209,7 @@ class QinglongV15Adapter(
             return Result.failure(Exception("登录失败: 服务端返回无效的空 token"))
         }
         currentToken = token
+        authBackoffUntil = 0
         return Result.success(token)
     }
 
@@ -221,6 +317,18 @@ class QinglongV15Adapter(
         val lastRunTimeStr = QinglongApiHelpers.parseTimestampToMillis(last_execution_time)?.let {
             sdf.format(java.util.Date(it))
         }
+        // 新版青龙任务列表返回 next_execution_time（毫秒）；旧版无此字段时对齐官方 web 前端
+        // （CronExpressionParser.parse(schedule).next()）：本地按 cron 推算，含额外定时取最早
+        val nextRunTimeStr = QinglongApiHelpers.parseTimestampToMillis(next_execution_time)?.let {
+            sdf.format(java.util.Date(it))
+        } ?: run {
+            val candidates = buildList {
+                schedule?.takeIf { it.isNotBlank() }?.let { add(it) }
+                extraSchedules.forEach { if (it.isNotBlank()) add(it) }
+            }
+            candidates.mapNotNull { com.panel.app.util.CronNextRun.computeNextMillis(it) }
+                .minOrNull()?.let { sdf.format(java.util.Date(it)) }
+        }
 
         return UnifiedTask(
             id = QinglongApiHelpers.cleanId(id),
@@ -240,6 +348,7 @@ class QinglongV15Adapter(
             lastRunningTime = parsedRunningTime,
             lastExecutionTime = parsedExecutionTime,
             lastRunTime = lastRunTimeStr,
+            nextRunTime = nextRunTimeStr,
             extraSchedules = extraSchedules,
             workDir = work_dir,
             allowMultipleInstances = allow_multiple_instances == 1,
@@ -446,9 +555,16 @@ class QinglongV15Adapter(
         val defaultTaskName = targetCron?.name?.ifBlank { null } ?: "任务 #$cronId"
 
         var instancesErr: Throwable? = null
-        val fromInstances = runCatching {
+        val fromInstances = if (instancesUnsupported) {
+            emptyList()
+        } else runCatching {
             val resp = api.getCronInstances(getAuthHeader(), cronId)
             val envelope = resp.unwrap("获取运行实例失败").getOrElse {
+                // SPA 兜底页 = 该青龙版本没有此接口，永久跳过后续调用
+                if (isSpaFallbackError(it)) {
+                    instancesUnsupported = true
+                    recordCapability("缺失", "api/crons/{id}/instances")
+                }
                 instancesErr = it
                 return@runCatching emptyList()
             }
@@ -1264,6 +1380,7 @@ class QinglongV15Adapter(
      */
     override fun streamLog(logId: String): Flow<String> = callbackFlow {
         val cronId = QinglongApiHelpers.toId(logId)?.toString() ?: logId.substringBefore('.')
+        android.util.Log.d("QLStream", "流启动: 入参=$logId cronId=$cronId")
         var offset: Long? = null
         var accumulated = ""
         val ctx = currentCoroutineContext()
@@ -1291,28 +1408,165 @@ class QinglongV15Adapter(
                 }
                 val chunk = res.getOrNull()
                 val newChunk = chunk?.data?.takeIf { it.isNotEmpty() } ?: ""
-                // 与前端一致：首次替换，后续追加
+                // 与前端一致：首次替换，后续追加；超 1MB 截尾保留尾部，防长任务内存膨胀
                 accumulated = if (isFirst) newChunk else accumulated + newChunk
+                if (accumulated.length > 1024 * 1024) accumulated = accumulated.takeLast(1024 * 1024)
                 if (accumulated.isNotEmpty()) {
                     trySend(accumulated)
                 } else if (isFirst) {
                     trySend("暂无运行日志输出")
                 }
-                val stillRunning = chunk?.logStatus == "running" || chunk?.logStatus == "queued"
+                // 标准青龙 /api/crons/:id/log 响应不含 logStatus 字段（恒为 null），
+                // 不能直接用 null 判定"未运行"——否则首轮就退出，日志永远不更新。
+                // 回退方案：查任务自身状态（CrontabStatus 0=运行中 3=排队中，见 toUnifiedTask 注释）。
+                val logStatus = chunk?.logStatus
+                val stillRunning = when (logStatus) {
+                    "running", "queued" -> true
+                    null -> isCronRunning(cronId)
+                    else -> false
+                }
+                android.util.Log.d(
+                    "QLStream",
+                    "轮询: isNullChunk=${chunk == null} logStatus=$logStatus nextOffset=${chunk?.nextOffset} " +
+                        "newChunkLen=${newChunk.length} accLen=${accumulated.length} stillRunning=$stillRunning idleStep=$idleStep"
+                )
                 if (!stillRunning) {
                     // 非运行中状态，如果是首次获取或已读取完成则退出
+                    android.util.Log.d("QLStream", "退出轮询: logStatus=$logStatus 任务不再运行")
                     break
                 }
-                offset = chunk.nextOffset ?: offset
+                offset = chunk?.nextOffset ?: offset
                 idleStep = if (newChunk.isNotEmpty()) 0 else minOf(idleStep + 1, backoffSteps.lastIndex)
                 delay(backoffSteps[idleStep])
             }
         } catch (e: Exception) {
+            android.util.Log.w("QLStream", "流异常退出", e)
             trySend("[ERROR] ${e.message ?: "日志流异常"}")
         } finally {
+            android.util.Log.d("QLStream", "flow close")
             close()
         }
     }
+
+    /**
+     * 查询任务自身是否运行中（CrontabStatus: 0=运行中, 3=排队中）。
+     * 仅用于 log 接口未返回 logStatus 时（官方原版青龙）的回退判断。
+     * 优先走 /api/crons/detail?id=（魔改版青龙支持）；官方版无此接口（404），
+     * 打点实测会失败，此时回退 GET /api/crons 列表匹配 id。
+     * 两条路径都失败按"未运行"处理。
+     */
+    private suspend fun isCronRunning(cronId: String): Boolean {
+        // 10s 节流：官方版回退走全量任务列表，代价较高，避免每轮轮询都拉
+        val now = System.currentTimeMillis()
+        statusCache.get(cronId)?.let { (at, running) ->
+            if (now - at < 10_000L) return running
+        }
+        val running = queryCronRunning(cronId)
+        statusCache.put(cronId, now to running)
+        return running
+    }
+
+    // cronId → (检查时间, 是否运行中)；流结束后随 adapter 生命周期存活，容量极小
+    private val statusCache = object : LinkedHashMap<String, Pair<Long, Boolean>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, Boolean>>?) =
+            size > 8
+    }
+
+    // detail 接口异常标记（接口存在但服务端报错，如实测 500 的版本）→ 查持久化能力表
+    private var cronDetailBroken: Boolean
+        get() = capsFor(instance.baseUrl).broken.contains(DETAIL_EP)
+        set(value) { if (value) markBroken(instance.baseUrl, DETAIL_EP) }
+
+    // 多实例接口缺失标记（青龙新版才有，老版本返回 SPA 兜底 HTML）→ 查持久化能力表
+    private var instancesUnsupported: Boolean
+        get() = capsFor(instance.baseUrl).missing.contains(INSTANCES_EP)
+        set(value) { if (value) markMissing(instance.baseUrl, INSTANCES_EP) }
+
+    /** NetworkClient 把 SPA 兜底页原始响应塞进 message（以 <!DOCTYPE 开头），据此识别"端点不存在" */
+    private fun isSpaFallbackError(t: Throwable?): Boolean =
+        t?.message?.trimStart()?.startsWith("<!DOCTYPE", ignoreCase = true) == true
+
+    // ---------------------------------------------------------------- 版本能力统计（供后续适配参考）
+    // 缺失=接口不存在（SPA 兜底），异常=接口存在但服务端报错。持久化在 companion 能力表，
+    // 并按天输出到开发者控制台（TAG=QL_CAPS，key 按面板区分）。
+    private val capsMutex = Mutex()
+
+    private suspend fun recordCapability(kind: String, endpoint: String) {
+        capsMutex.withLock {
+            val baseUrl = instance.baseUrl
+            // 惰性探测一次版本号（GET /api/system，任何青龙版本都有，仪表盘本来也会调用）
+            val probedVersion = runCatching {
+                api.getSystemInfo(getAuthHeader()).unwrap("获取版本失败").getOrNull()?.data
+                    ?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.get("version")?.takeIf { it.isJsonPrimitive }?.asString
+            }.getOrNull()
+            var changed = false
+            val summary = synchronized(capsLock) {
+                val caps = capsFor(baseUrl)
+                // 面板升级（版本号变化）→ 清空该面板能力表，重新学习
+                if (probedVersion != null && caps.version != null && caps.version != probedVersion) {
+                    caps.missing.clear(); caps.broken.clear(); changed = true
+                }
+                if (probedVersion != null && caps.version != probedVersion) { caps.version = probedVersion; changed = true }
+                if (kind == "缺失") changed = caps.missing.add(endpoint) || changed
+                else changed = caps.broken.add(endpoint) || changed
+                if (changed) persistCapsTable()
+                buildString {
+                    if (caps.missing.isNotEmpty()) append("缺失[").append(caps.missing.joinToString(", ")).append("]")
+                    if (caps.broken.isNotEmpty()) {
+                        if (isNotEmpty()) append(" ")
+                        append("异常[").append(caps.broken.joinToString(", ")).append("]")
+                    }
+                }
+            }
+            com.panel.app.data.logger.AppLogger.logOncePerDay(
+                com.panel.app.data.logger.LogLevel.INFO,
+                "QL_CAPS",
+                "ql_caps_${panelKey(baseUrl)}",
+                "面板=${instance.name} 青龙版本=${probedVersion ?: "未知"} 端点能力 → $summary"
+            )
+        }
+    }
+
+    private suspend fun queryCronRunning(cronId: String): Boolean {
+        // 路径 1：魔改版 detail 接口。部分青龙版本该接口存在但服务端有 bug
+        // （实测 500: WHERE parameter "log_path" has invalid "undefined" value），
+        // 失败一次后永久跳过，避免每轮状态检查都打一次 500 错误日志。
+        if (!cronDetailBroken) {
+            val detailStatus = runCatching {
+                val raw = api.getCronDetail(getAuthHeader(), cronId)
+                    .unwrap("查询任务状态失败").getOrNull()?.data
+                raw?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.get("status")?.takeIf { it.isJsonPrimitive }?.asInt
+            }.getOrNull()
+            android.util.Log.d("QLStream", "isCronRunning: detail 接口 status=$detailStatus")
+            if (detailStatus != null) return detailStatus == 0 || detailStatus == 3
+            cronDetailBroken = true
+            recordCapability("异常", "api/crons/detail")
+        }
+
+        // 路径 2：官方版列表接口匹配（data 可能是数组或分页对象 {data:[...]}）
+        val listStatus = runCatching {
+            val root = api.getCrons(getAuthHeader(), null)
+                .unwrap("查询任务列表失败").getOrNull()?.data
+            val arr = when {
+                root?.isJsonArray == true -> root.asJsonArray
+                root?.isJsonObject == true -> root.asJsonObject.getAsJsonArray("data")
+                else -> null
+            }
+            arr?.firstOrNull { el ->
+                el.takeIf { it.isJsonObject }?.asJsonObject?.get("id")?.let { idEl ->
+                    (idEl.isJsonPrimitive && (idEl.asString == cronId || idEl.asJsonPrimitive.tryAsLong() == cronId.toLongOrNull()))
+                } == true
+            }?.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("status")?.takeIf { it.isJsonPrimitive }?.asInt
+        }.getOrNull()
+        android.util.Log.d("QLStream", "isCronRunning: 列表匹配 status=$listStatus")
+        return listStatus == 0 || listStatus == 3
+    }
+
+    private fun com.google.gson.JsonPrimitive.tryAsLong(): Long? =
+        runCatching { if (isNumber) asLong else null }.getOrNull()
 
     // ---------------------------------------------------------------- 8. 监控
 
@@ -1402,10 +1656,12 @@ class QinglongV15Adapter(
         }
     }
 
-    /** 青龙支持按实例精确停止：POST /api/crons/{id}/instances/{instanceId}/stop */
+    /** 青龙支持按实例精确停止：POST /api/crons/{id}/instances/{instanceId}/stop（新版才有） */
     override suspend fun stopRunningTask(taskId: String, instanceId: String?): Result<Boolean> {
         ensureAuth()
         val instance = instanceId ?: return stopTask(listOf(taskId))
+        // 老版本没有多实例接口（已探测到 SPA 兜底），退回整体停止任务
+        if (instancesUnsupported) return stopTask(listOf(taskId))
         val cronId = QinglongApiHelpers.toId(taskId)?.toString() ?: taskId.substringBefore('.')
         return api.stopCronInstance(getAuthHeader(), cronId, instance)
             .unwrap("停止运行实例失败").map { true }

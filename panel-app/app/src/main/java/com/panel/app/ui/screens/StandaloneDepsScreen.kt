@@ -18,6 +18,8 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -353,88 +355,70 @@ fun StandaloneDepsScreen(
                                             if (!dep.remarks.isNullOrEmpty()) {
                                                 Text(text = dep.remarks, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                                             }
-                                            // 安装/构建日志直接内嵌卡片（log 字段随 /api/dependencies 一起下发），
-                                            // 展示末尾 4 行 —— 最新进度在最后
-                                            if (!dep.log.isNullOrBlank()) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 6.dp)
-                                                ) {
-                                                    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                                                        dep.log.trim().lines().takeLast(4).forEach { line ->
-                                                            Text(
-                                                                text = line,
-                                                                fontSize = 10.sp,
-                                                                fontFamily = FontFamily.Monospace,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis,
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                            )
-                                                        }
-                                                        Text(
-                                                            text = "⋯ 点击卡片查看完整日志",
-                                                            fontSize = 9.sp,
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.padding(top = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
+                                            // 不内嵌日志内容（会把卡片撑得很大）；日志统一通过右侧「日志」按钮查看
                                         }
 
-                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // 图标+精简文字的竖排小按钮（纯图标难辨识）
+                                            @Composable
+                                            fun IconAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+                                                Column(
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .clickable(onClick = onClick)
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+                                                    Text(label, fontSize = 9.sp, color = tint, maxLines = 1)
+                                                }
+                                            }
+
                                             // 安装中：提供取消
                                             if (dep.status == 0) {
-                                                IconButton(
-                                                    onClick = {
-                                                        viewModel.cancelDeps(listOf(dep.id))
-                                                        Toast.makeText(context, "正在取消 [${dep.name}] 的安装...", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    modifier = Modifier.size(32.dp)
+                                                IconAction(
+                                                    icon = Icons.Default.Close,
+                                                    label = "取消",
+                                                    tint = MaterialTheme.colorScheme.error
                                                 ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "取消安装", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                                    viewModel.cancelDeps(listOf(dep.id))
+                                                    Toast.makeText(context, "正在取消 [${dep.name}] 的安装...", Toast.LENGTH_SHORT).show()
                                                 }
                                             }
 
                                             // 重新安装：对所有面板都可用。
                                             // 白虎的依赖记录不带状态字段，之前只能在 status==2/4（安装失败）时重试，
                                             // 导致白虎侧永远看不到重试入口。
-                                            IconButton(
-                                                onClick = {
-                                                    viewModel.reinstallDeps(listOf(dep.id))
-                                                    Toast.makeText(context, "正在重新安装 [${dep.name}]...", Toast.LENGTH_SHORT).show()
-                                                },
-                                                modifier = Modifier.size(32.dp)
+                                            IconAction(
+                                                icon = Icons.Default.Refresh,
+                                                label = "重装",
+                                                tint = if (dep.status == 2 || dep.status == 4) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                             ) {
-                                                Icon(
-                                                    Icons.Default.Refresh,
-                                                    contentDescription = "重新安装",
-                                                    tint = if (dep.status == 2 || dep.status == 4) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
+                                                viewModel.reinstallDeps(listOf(dep.id))
+                                                Toast.makeText(context, "正在重新安装 [${dep.name}]...", Toast.LENGTH_SHORT).show()
                                             }
 
-                                            // 查看安装/构建日志按键
-                                            IconButton(
-                                                onClick = {
-                                                    viewingLogDep = dep
-                                                    depLogContent = dep.log ?: ""
-                                                    viewModel.getDepLog(dep.id) { log -> depLogContent = log }
-                                                },
-                                                modifier = Modifier.size(32.dp)
+                                            // 查看安装/构建日志
+                                            IconAction(
+                                                icon = Icons.AutoMirrored.Filled.Article,
+                                                label = "日志",
+                                                tint = MaterialTheme.colorScheme.primary
                                             ) {
-                                                Icon(Icons.AutoMirrored.Filled.Article, contentDescription = "安装日志", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                                viewingLogDep = dep
+                                                depLogContent = dep.log ?: ""
+                                                viewModel.getDepLog(dep.id) { log -> depLogContent = log }
                                             }
 
-                                            // 卸载按键（触发二次确认弹窗）
-                                            IconButton(
-                                                onClick = { deletingDep = dep },
-                                                modifier = Modifier.size(32.dp)
+                                            // 卸载（触发二次确认弹窗）
+                                            IconAction(
+                                                icon = Icons.Default.Delete,
+                                                label = "卸载",
+                                                tint = MaterialTheme.colorScheme.error
                                             ) {
-                                                Icon(Icons.Default.Delete, contentDescription = "卸载依赖", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                                deletingDep = dep
                                             }
                                         }
                                     }

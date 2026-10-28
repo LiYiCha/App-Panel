@@ -81,8 +81,8 @@ jobs:
             echo ""
             echo "### 📦 下载说明"
             echo ""
-            echo "- \`Panel-App-v$VERSION-full.apk\`：完整版（含 JS / Python 本地脚本引擎，体积较大）"
-            echo "- \`Panel-App-v$VERSION-standard.apk\`：精简版（不含本地脚本引擎，体积小）"
+            echo "- \`Panel-v$VERSION-full.apk\`：完整版（含 JS / Python 本地脚本引擎，体积较大）"
+            echo "- \`Panel-v$VERSION-standard.apk\`：精简版（不含本地脚本引擎，体积小）"
             echo "- 应用内更新会自动匹配已安装的版本，请下载对应 APK 升级"
             echo ""
           } > CHANGELOG.md

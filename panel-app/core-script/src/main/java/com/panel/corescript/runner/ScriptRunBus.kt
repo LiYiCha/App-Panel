@@ -14,7 +14,7 @@ data class ConsoleLine(
     val text: String
 )
 
-enum class RunStatus { RUNNING, SUCCESS, FAILED, STOPPED }
+enum class RunStatus { RUNNING, PAUSED, SUCCESS, FAILED, STOPPED }
 
 /** 一次运行的状态快照 */
 data class ScriptRunState(
@@ -60,6 +60,15 @@ object ScriptRunBus {
             buffer.addLast(line)
         }
         _revision.value++
+    }
+
+    /** 运行中状态变更（暂停/继续）；仅对当前运行生效 */
+    fun onStatusChanged(runId: String, status: RunStatus) {
+        val current = _currentRun.value ?: return
+        if (current.runId != runId) return
+        _currentRun.value = current.copy(status = status)
+        _revision.value++
+        externalLogger?.invoke("INFO", "ScriptRunner", "${current.scriptName} 状态：${status.name}")
     }
 
     fun onRunFinished(runId: String, kind: ExitKind, detail: String?) {

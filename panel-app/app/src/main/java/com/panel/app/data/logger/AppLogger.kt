@@ -68,6 +68,7 @@ object AppLogger {
 
     /** Application.onCreate 里调用一次：初始化落盘目录，并回灌上次会话的日志尾部 */
     fun init(context: Context) {
+        prefs = context.getSharedPreferences("app_logger_caps", Context.MODE_PRIVATE)
         LogStorage.init(context)
         val tail = runCatching { LogStorage.readLatestTail() }.getOrNull() ?: return
         // 解析回原始 level/tag，HTTP 日志显示绿色、错误显示红色，和正常日志一致
@@ -75,6 +76,24 @@ object AppLogger {
         entries.forEach { entry ->
             append(entry.copy(id = idSequence.incrementAndGet()))
         }
+    }
+
+    private var prefs: android.content.SharedPreferences? = null
+
+    /**
+     * 周期性统计专用：同 key 同内容**每个自然日只记录一条**，内容变化当天允许更新，
+     * 跨天后重新记录。用于 QL_CAPS 等能力统计，避免每次进页面/重启都刷一条。
+     * 节流状态存 SharedPreferences，跨进程重启仍生效。
+     */
+    fun logOncePerDay(level: LogLevel, tag: String, key: String, message: String) {
+        val p = prefs ?: return
+        if (!isDevModeEnabled && level != LogLevel.ERROR) return
+        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+            .format(java.util.Date())
+        val sig = "$today|$message"
+        if ((p.getString("once_$key", null)) == sig) return
+        log(level, tag, message)
+        p.edit().putString("once_$key", sig).apply()
     }
 
     fun log(level: LogLevel, tag: String, message: String, error: String? = null) {
@@ -98,10 +117,12 @@ object AppLogger {
         durationMs: Long,
         requestBody: String? = null,
         responseBody: String? = null,
-        error: String? = null
+        error: String? = null,
+        forceError: Boolean = false
     ) {
         if (!isDevModeEnabled) return
-        val level = if (code in 200..299) LogLevel.HTTP_OK else LogLevel.HTTP_ERR
+        // HTTP 200 但响应体是 HTML 兜底页（如老版本青龙对未实现接口返回 SPA 页面）也判为错误
+        val level = if (code in 200..299 && !forceError) LogLevel.HTTP_OK else LogLevel.HTTP_ERR
         val summary = "[$method] $code (${durationMs}ms) $url"
         append(
             LogEntry(

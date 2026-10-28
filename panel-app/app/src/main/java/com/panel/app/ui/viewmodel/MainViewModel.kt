@@ -18,6 +18,8 @@ import com.panel.app.data.remote.OtpRequiredException
 import com.panel.app.data.remote.TwoFactorRequiredException
 import com.panel.app.data.repository.PanelRepository
 import com.panel.app.ui.screens.BottomNavScreen
+import com.panel.app.script.LocalScriptBackupItem
+import com.panel.app.script.LocalScriptFeature
 import com.panel.app.util.PanelUrl
 import com.panel.app.util.runSafely
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -78,6 +80,8 @@ data class MainUiState(
     val toastMessage: String? = null,
     /** 非空表示该面板开启了两步验证，等待用户输入动态验证码 */
     val otpPendingPanel: PanelInstance? = null,
+    /** 非空表示自动重登已确认失败（密码错误等认证类原因，非网络），UI 应回到该面板的登录页 */
+    val reloginPanelId: String? = null,
     /** 脚本内容缓存：路径 -> 内容 */
     val scriptViewerCache: Map<String, String> = emptyMap(),
     val scriptViewerLoadingPath: String? = null,
@@ -104,7 +108,8 @@ data class CachedPanelData(
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val repository: PanelRepository
+    private val repository: PanelRepository,
+    private val localScriptFeature: LocalScriptFeature
 ) : ViewModel() {
 
     private val prefs: SharedPreferences = context.getSharedPreferences("panel_hub_prefs", Context.MODE_PRIVATE)
@@ -128,9 +133,18 @@ class MainViewModel @Inject constructor(
     /** 本次进程已完成静默预重登的面板（每面板一次，避免冷启动首刷的 401 噪声） */
     private val sessionReauthedPanels = mutableSetOf<String>()
 
+    /** 本会话已做过请求级自愈重登的面板（每面板最多一次，防止 401→重登→失败的循环） */
+    private val sessionHealedPanels = mutableSetOf<String>()
+
     /** 面板 host 是否已知开启了两步验证（持久化；登录页据此直接带出验证码框） */
     fun isTwoFactorKnown(host: String): Boolean =
         host.isNotEmpty() && prefs.getBoolean("2fa_$host", false)
+
+    private fun hostOf(url: String): String = try {
+        java.net.URI(url).host ?: ""
+    } catch (e: Exception) {
+        ""
+    }
 
     fun markTwoFactorKnown(host: String) {
         if (host.isNotEmpty()) prefs.edit { putBoolean("2fa_$host", true) }
@@ -420,6 +434,40 @@ class MainViewModel @Inject constructor(
                 msg.contains("凭据已失效")
     }
 
+    /** 判断异常是否为网络类失败（连不上/超时/DNS）——这类失败不该归咎凭据，也不跳登录页 */
+    private fun isNetworkFailure(e: Throwable?): Boolean {
+        val msg = (e?.message ?: "").lowercase()
+        return msg.contains("连接失败") ||
+                msg.contains("网络异常") ||
+                msg.contains("网络") ||
+                msg.contains("无法连接") ||
+                msg.contains("timeout") ||
+                msg.contains("timed out") ||
+                msg.contains("unable to resolve") ||
+                msg.contains("failed to connect") ||
+                msg.contains("econnrefused") ||
+                msg.contains("econnreset")
+    }
+
+    /**
+     * 自动重登确认失败（密码错误/凭据失效等认证类原因，非网络）：
+     * 停止静默重试风暴，置位 reloginPanelId 让 UI 导航到登录页，并把原因透传给用户。
+     */
+    private fun requestReloginAtLogin(panel: PanelInstance, reason: String) {
+        _uiState.value = _uiState.value.copy(
+            reloginPanelId = panel.id,
+            isLoading = false,
+            toastMessage = "「${panel.name}」$reason，请重新登录"
+        )
+    }
+
+    /** 登录页导航完成后清除信号（一次性） */
+    fun clearForceRelogin() {
+        if (_uiState.value.reloginPanelId != null) {
+            _uiState.value = _uiState.value.copy(reloginPanelId = null)
+        }
+    }
+
     /**
      * 写入"当前工作面板" id。
      * 必须用 `commit = true` 同步落盘：`SharedPreferences.edit {}` 默认是 `apply()`（异步），
@@ -455,10 +503,22 @@ class MainViewModel @Inject constructor(
                         repository.savePanel(activePanel)
                     } else {
                         if (getActivePanel().id == panel.id) {
-                            _uiState.value = _uiState.value.copy(
-                                isLoading = false,
-                                toastMessage = "面板未登录或账号密码失效，请重新登录"
-                            )
+                            val err = authRes.exceptionOrNull()
+                            when {
+                                // 面板开启 2FA（密码已验证正确）：与官方 web 一致，回登录页手动完成验证
+                                err is TwoFactorRequiredException && getActivePanel().id == panel.id ->
+                                    requestReloginAtLogin(panel, "面板已开启两步验证，请在登录页输入动态验证码")
+                                // 认证类失败（密码错误等）：停止静默重试，回登录页并透传原因
+                                !isNetworkFailure(err) && getActivePanel().id == panel.id ->
+                                    requestReloginAtLogin(panel, "账号或密码验证失败${err?.message?.let { "（$it）" } ?: ""}")
+                                // 网络失败：维持原提示，不跳登录页
+                                else -> {
+                                    _uiState.value = _uiState.value.copy(
+                                        isLoading = false,
+                                        toastMessage = "面板未登录或账号密码失效，请重新登录"
+                                    )
+                                }
+                            }
                         }
                         return@launch
                     }
@@ -506,28 +566,39 @@ class MainViewModel @Inject constructor(
                 val effectiveAdapter = repository.getAdapter(activePanel)
 
                 // 冷启动首刷预重登：Cookie/token 可能已过期，先静默换取新凭据再发批量请求，
-                // 消除每轮刷新第一跳的 401 噪声（每进程每个面板只做一次；2FA 面板静默失败后由请求级自愈兜底）
+                // 消除每轮刷新第一跳的 401 噪声（每进程每个面板只做一次）。
+                // 已知开启 2FA 的面板直接跳过：自动重登必然撞 420 失败，白发请求只会
+                // 在服务端堆登录失败记录并触发限流
                 if (activePanel.id !in sessionReauthedPanels &&
                     !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()
                 ) {
                     sessionReauthedPanels.add(activePanel.id)
-                    val reauth = runSafely { repository.testAuthenticate(activePanel) }
-                        .getOrElse { Result.failure(it) }
-                    val newToken = reauth.getOrNull()
-                    if (!newToken.isNullOrEmpty()) {
-                        activePanel = activePanel.copy(token = newToken)
-                        repository.savePanel(activePanel)
-                    } else if (reauth.exceptionOrNull() is TwoFactorRequiredException) {
-                        // 青龙 2FA 面板 token 过期：authenticate 撞 420，自动重登走不通，
-                        // 挂起验证码流程（主界面全局弹窗），验证成功后 submitOtp 会重新触发刷新
-                        if (getActivePanel().id == panel.id) {
-                            _uiState.value = _uiState.value.copy(
-                                otpPendingPanel = activePanel,
-                                isLoading = false,
-                                toastMessage = "登录已过期，请输入两步验证码继续"
-                            )
+                    if (isTwoFactorKnown(hostOf(activePanel.baseUrl))) {
+                        // 已知 2FA：不自动登录；token 失效将由请求级自愈识别并跳登录页
+                    } else {
+                        val reauth = runSafely { repository.testAuthenticate(activePanel) }
+                            .getOrElse { Result.failure(it) }
+                        val newToken = reauth.getOrNull()
+                        if (!newToken.isNullOrEmpty()) {
+                            activePanel = activePanel.copy(token = newToken)
+                            repository.savePanel(activePanel)
+                        } else if (reauth.exceptionOrNull() is TwoFactorRequiredException) {
+                            // 首次撞 420：持久化标记该面板开启 2FA，之后不再自动登录
+                            markTwoFactorKnown(hostOf(activePanel.baseUrl))
+                            if (getActivePanel().id == panel.id) {
+                                requestReloginAtLogin(activePanel, "面板已开启两步验证，请在登录页输入动态验证码")
+                            }
+                            return@launch
+                        } else if (reauth.isFailure && !isNetworkFailure(reauth.exceptionOrNull())) {
+                            // 预重登失败且非网络原因（密码错误/限流等）：停止刷新，回登录页让用户处理
+                            if (getActivePanel().id == panel.id) {
+                                requestReloginAtLogin(
+                                    activePanel,
+                                    "自动重新登录失败（${reauth.exceptionOrNull()?.message ?: "凭据无效"}）"
+                                )
+                            }
+                            return@launch
                         }
-                        return@launch
                     }
                 }
 
@@ -638,7 +709,18 @@ class MainViewModel @Inject constructor(
                 val hasAuthFailure = listOfNotNull(tasksRes, envsRes, scriptTreeRes, subsRes, depsRes)
                     .any { it.isFailure && isAuthException(it.exceptionOrNull()) }
 
-                if (hasAuthFailure && !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()) {
+                // 自愈重登每会话每面板最多一次：本会话已试过就不再重登（防止 401→重登→再失败→再重登的循环）
+                if (hasAuthFailure && activePanel.id !in sessionHealedPanels &&
+                    !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()
+                ) {
+                    sessionHealedPanels.add(activePanel.id)
+                    // 已知开启 2FA：自动登录必然失败（420 需要动态码），直接回登录页不白发请求
+                    if (isTwoFactorKnown(hostOf(activePanel.baseUrl))) {
+                        if (getActivePanel().id == activePanel.id) {
+                            requestReloginAtLogin(activePanel, "面板已开启两步验证，请在登录页输入动态验证码")
+                        }
+                        return@launch
+                    }
                     repository.invalidateAdapter(activePanel.id)
                     val reauthRes = runSafely { repository.testAuthenticate(activePanel) }
                         .getOrElse { Result.failure(it) }
@@ -650,12 +732,20 @@ class MainViewModel @Inject constructor(
                         refreshPanelRemoteData(updatedPanel, notifyOnNoCredential, scopes)
                         return@launch
                     }
-                    // 青龙 2FA 面板：重登撞 420，重新走验证码流程（验证成功后 submitOtp 会重新触发刷新）
+                    // 请求级自愈重登撞 420：持久化 2FA 标记，回登录页手动完成验证
                     if (reauthRes.exceptionOrNull() is TwoFactorRequiredException) {
+                        markTwoFactorKnown(hostOf(activePanel.baseUrl))
                         if (getActivePanel().id == activePanel.id) {
-                            _uiState.value = _uiState.value.copy(
-                                otpPendingPanel = activePanel,
-                                toastMessage = "登录已过期，请输入两步验证码继续"
+                            requestReloginAtLogin(activePanel, "面板已开启两步验证，请在登录页输入动态验证码")
+                        }
+                        return@launch
+                    }
+                    // 重登失败且非网络原因（密码错误/限流等）：停止自愈风暴，回登录页让用户重新认证
+                    if (!isNetworkFailure(reauthRes.exceptionOrNull())) {
+                        if (getActivePanel().id == activePanel.id) {
+                            requestReloginAtLogin(
+                                activePanel,
+                                "登录已过期且自动重登失败（${reauthRes.exceptionOrNull()?.message ?: "凭据无效"}）"
                             )
                         }
                         return@launch
@@ -1818,6 +1908,8 @@ class MainViewModel @Inject constructor(
         includeEnvs: Boolean,
         includeScripts: Boolean,
         includeConfigs: Boolean,
+        includeLocalScripts: Boolean = false,
+        includePanels: Boolean = false,
         onResult: (String?) -> Unit
     ) {
         viewModelScope.launch {
@@ -1856,6 +1948,27 @@ class MainViewModel @Inject constructor(
                 }
             } else emptyList()
 
+            // 本地脚本库：不经网络，直接读应用私有目录
+            val localScripts = if (includeLocalScripts) {
+                localScriptFeature.exportForBackup().orEmpty().map {
+                    BackupLocalScript(name = it.name, folder = it.folder, content = it.content)
+                }
+            } else emptyList()
+
+            // 面板实例：含登录凭据，换机迁移免重录
+            val panels = if (includePanels) {
+                _uiState.value.panels.map {
+                    BackupPanelInstance(
+                        name = it.name,
+                        type = it.type.name,
+                        baseUrl = it.baseUrl,
+                        username = it.username,
+                        password = it.password,
+                        token = it.token
+                    )
+                }
+            } else emptyList()
+
             onResult(
                 buildBackupJson(
                     sourcePanelType = panel.type.name,
@@ -1863,11 +1976,16 @@ class MainViewModel @Inject constructor(
                     tasks = tasks,
                     envs = envs,
                     scripts = scripts,
-                    configFiles = configs
+                    configFiles = configs,
+                    localScripts = localScripts,
+                    panels = panels
                 )
             )
         }
     }
+
+    /** 本地脚本库条目数（备份页展示）；未启用本地脚本能力时返回 null */
+    fun localScriptBackupCount(): Int? = localScriptFeature.backupCount()
 
     /** 解析备份 JSON 并返回预览数据（不执行恢复） */
     fun previewRestore(json: String): PreviewRestoreData? {
@@ -1878,7 +1996,9 @@ class MainViewModel @Inject constructor(
                 tasks = backup.tasks,
                 envs = backup.envs,
                 scripts = backup.scripts,
-                configFiles = backup.configFiles
+                configFiles = backup.configFiles,
+                localScripts = backup.localScripts,
+                panels = backup.panels
             )
         }
     }
@@ -1890,6 +2010,8 @@ class MainViewModel @Inject constructor(
         selectedEnvs: List<BackupEnv> = data.envs,
         selectedScripts: List<BackupScript> = data.scripts,
         selectedConfigs: List<BackupConfigFile> = data.configFiles,
+        selectedLocalScripts: List<BackupLocalScript> = data.localScripts,
+        selectedPanels: List<BackupPanelInstance> = data.panels,
         onResult: (List<RestoreReport>, String?) -> Unit
     ) {
         viewModelScope.launch {
@@ -1916,6 +2038,56 @@ class MainViewModel @Inject constructor(
             }
             if (selectedConfigs.isNotEmpty()) {
                 adapter.restoreConfigFiles(selectedConfigs, sourceType).getOrNull()?.let { reports.add(it) }
+            }
+            // 本地脚本库恢复：不经网络，直接写应用私有目录
+            if (selectedLocalScripts.isNotEmpty()) {
+                if (localScriptFeature.enabled) {
+                    localScriptFeature.restoreFromBackup(selectedLocalScripts.map {
+                        LocalScriptBackupItem(name = it.name, folder = it.folder, content = it.content)
+                    })?.let { reports.add(it) }
+                } else {
+                    reports.add(
+                        RestoreReport("本地脚本库", selectedLocalScripts.size, 0, selectedLocalScripts.size, emptyList())
+                    )
+                }
+            }
+            // 面板实例恢复：同类型同地址的已存在实例跳过，其余以新 id 插入
+            if (selectedPanels.isNotEmpty()) {
+                val existing = _uiState.value.panels
+                var added = 0
+                val skippedPanels = mutableListOf<String>()
+                selectedPanels.forEach { bp ->
+                    val type = when (bp.type.uppercase()) {
+                        "QINGLONG" -> PanelType.QINGLONG_V15 // 兼容旧备份的类型写法
+                        else -> runCatching { PanelType.valueOf(bp.type) }.getOrNull()
+                    }
+                    if (type == null || bp.baseUrl.isBlank()) {
+                        skippedPanels.add(bp.baseUrl.ifBlank { bp.name })
+                        return@forEach
+                    }
+                    val duplicated = existing.any {
+                        it.type == type && PanelUrl.sanitize(it.baseUrl) == PanelUrl.sanitize(bp.baseUrl)
+                    }
+                    if (duplicated) {
+                        skippedPanels.add(bp.baseUrl)
+                        return@forEach
+                    }
+                    repository.savePanel(
+                        PanelInstance(
+                            id = UUID.randomUUID().toString(),
+                            name = bp.name.ifBlank { bp.baseUrl },
+                            type = type,
+                            baseUrl = bp.baseUrl,
+                            username = bp.username,
+                            password = bp.password,
+                            token = bp.token
+                        )
+                    )
+                    added++
+                }
+                reports.add(
+                    RestoreReport("面板实例", selectedPanels.size, added, skippedPanels.size, emptyList())
+                )
             }
             if (reports.isEmpty()) {
                 onResult(emptyList(), "没有选中的内容")

@@ -63,6 +63,13 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
         }
     }
 
+    // 自动重登确认失败（密码错误等认证类原因，非网络）：回到该面板的登录页让用户重新认证
+    LaunchedEffect(uiState.reloginPanelId) {
+        val pid = uiState.reloginPanelId ?: return@LaunchedEffect
+        viewModel.clearForceRelogin()
+        navController.navigate("login?panelId=$pid") { launchSingleTop = true }
+    }
+
     fun safePopBack() {
         if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
             navController.popBackStack()
@@ -95,6 +102,9 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                 onBack = if (navController.previousBackStackEntry != null) {
                     { safePopBack() }
                 } else null,
+                onEnterLocalMode = localScriptFeature.localModeRoute?.let { route ->
+                    { navController.navigate(route) }
+                },
                 onLoginSuccess = {
                     navController.navigate("main_flow") { popUpTo("login") { inclusive = true } }
                 }
@@ -128,9 +138,9 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                 onOpenAppsScreen = { navController.navigate("baihu_apps") },
                 onOpenLocalScriptsScreen = {
                     // standard 变体未启用本地脚本，入口不响应
-                    if (localScriptFeature.enabled) navController.navigate("local_scripts")
+                    if (localScriptFeature.enabled) navController.navigate("local_center")
                 },
-                onOpenMirrorSettingsScreen = { navController.navigate("mirror_settings") },
+                onOpenOtherSettingsScreen = { navController.navigate("other_settings") },
                 localScriptEnabled = localScriptFeature.enabled,
                 onNavigateToCreateScript = { navController.navigate("create_script") }
             )
@@ -316,10 +326,11 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
             )
         }
 
-        composable("mirror_settings") {
-            MirrorSettingsScreen(
+        composable("other_settings") {
+            OtherSettingsScreen(
+                viewModel = viewModel,
                 onBack = { safePopBack() },
-                localScriptEnabled = localScriptFeature.enabled
+                onOpenPermissions = { navController.navigate("app_permissions") }
             )
         }
 

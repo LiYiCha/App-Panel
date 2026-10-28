@@ -17,6 +17,7 @@ class PanelApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        appContext = applicationContext
         // 初始化日志落盘目录并回灌上次会话的日志尾部（冷启动也能看到上次崩溃）
         AppLogger.init(this)
         // 下载加速镜像管理中心（须先于 LocalScriptKit，PyPI 镜像 provider 依赖其 SP）
@@ -49,5 +50,11 @@ class PanelApp : Application() {
 
     companion object {
         const val CHANNEL_ID_PANEL = "channel_panel"
+
+        /** 全局 Application Context（仅持有 Application 自身，无 Activity 泄漏风险）。
+         *  供无 Hilt 注入的底层类（如适配器能力表持久化）安全获取 SharedPreferences */
+        @Suppress("StaticFieldLeak")
+        lateinit var appContext: android.content.Context
+            private set
     }
 }

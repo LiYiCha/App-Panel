@@ -23,8 +23,9 @@ object AppUpdateManager {
     private const val GITHUB_API_BASE = "https://api.github.com/"
 
     // GitHub API 默认使用全局 unsafeOkHttpClient（10s 连接 / 20s 读取）
-    // 国内网络访问 GitHub 常超时，提供备用 CDN 域名
-    private const val GITHUB_API_FALLBACK = "https://ghproxy.com/"
+    // 国内网络访问 GitHub 常超时，提供备用 API 代理（gh-proxy.com 支持代理 api.github.com；
+    // 2026-10 实测可用，失效时更换此常量即可。注意 ghfast.top/ghproxy.net 仅代理文件下载，不支持 API）
+    private const val GITHUB_API_FALLBACK = "https://gh-proxy.com/"
 
     private val api: GitHubReleaseApi by lazy {
         NetworkClient.buildRetrofit(GITHUB_API_BASE).create(GitHubReleaseApi::class.java)
@@ -39,12 +40,11 @@ object AppUpdateManager {
      */
     suspend fun checkForUpdate(): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
         try {
-            // 优先直连 GitHub，失败时尝试 ghproxy.com 代理
-            val resp = try {
-                api.getLatestRelease(GITHUB_OWNER, GITHUB_REPO)
-            } catch (_: Exception) {
-                apiFallback.getLatestRelease(GITHUB_OWNER, GITHUB_REPO)
-            }
+            // 优先直连 GitHub，异常或非 2xx（如 403 限流）时走 gh-proxy.com API 代理
+            val resp = runCatching { api.getLatestRelease(GITHUB_OWNER, GITHUB_REPO) }
+                .takeIf { it.isSuccess && it.getOrNull()?.isSuccessful == true }
+                ?.getOrNull()
+                ?: apiFallback.getLatestRelease(GITHUB_OWNER, GITHUB_REPO)
             if (resp.isSuccessful && resp.body() != null) {
                 val release = resp.body()!!
                 val currentVer = BuildConfig.VERSION_NAME

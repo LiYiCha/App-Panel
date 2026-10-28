@@ -82,7 +82,7 @@ fun DeveloperConsoleScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("开发者日志 (${filteredLogs.size})", fontSize = 16.sp) },
+                title = { Text("调试日志 (${filteredLogs.size})", fontSize = 16.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -184,6 +184,25 @@ fun DeveloperConsoleScreen(
                         modifier = Modifier.height(26.dp)
                     )
                 }
+                // 复制当前分类+搜索过滤后的日志，便于导出分析
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        val text = filteredLogs.takeLast(2000).joinToString("\n") { e ->
+                            buildString {
+                                append(e.timestamp).append(" [").append(e.level).append("]")
+                                if (e.tag.isNotBlank()) append("[").append(e.tag).append("]")
+                                append(" ").append(e.message)
+                                e.responseBody?.takeIf { it.isNotBlank() }?.let { append("\n  Resp: ").append(it.take(800)) }
+                                e.error?.takeIf { it.isNotBlank() }?.let { append("\n  Err: ").append(it.take(800)) }
+                            }
+                        }
+                        clipboardManager.setText(AnnotatedString(text))
+                        Toast.makeText(context, "已复制 ${filteredLogs.size} 条日志", Toast.LENGTH_SHORT).show()
+                    },
+                    label = { Text("复制", fontSize = 10.sp) },
+                    modifier = Modifier.height(26.dp)
+                )
             }
 
             // 日志列表：一行一条，点击弹出详情

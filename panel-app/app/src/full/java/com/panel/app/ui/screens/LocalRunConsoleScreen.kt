@@ -9,6 +9,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,18 +22,18 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.util.LocalScriptKit
 import com.panel.corescript.engine.OutputStream
+import com.panel.corescript.engine.ScriptLang
 import com.panel.corescript.runner.ConsoleLine
 import com.panel.corescript.runner.RunStatus
 import com.panel.corescript.runner.ScriptRunBus
 import com.panel.corescript.runner.ScriptRunnerService
-import java.io.File
 
 /**
- * 本地脚本运行控制台：实时展示运行输出，支持停止；
- * 打开历史运行时从运行日志文件回放。
+ * 本地脚本运行控制台：实时展示运行输出；
+ * 运行中底部操作栏提供 暂停/继续（仅 Python）+ 停止；
+ * 查看历史运行（或运行已结束）且能定位到脚本文件时，可一键重新运行。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,24 +44,31 @@ fun LocalRunConsoleScreen(
     val context = LocalContext.current
     BackHandler { onBack() }
 
+    // 控制台内重新运行时切换关注对象（新 runId 覆盖路由参数）
+    var activeRunId by remember { mutableStateOf(runId) }
+
     val currentRun by ScriptRunBus.currentRun.collectAsState()
     val revision by ScriptRunBus.revision.collectAsState()
 
     // 正在查看的运行：当前总线上是本运行则实时读取，否则回放日志文件
-    val liveRun = currentRun?.takeIf { runId == null || it.runId == runId }
-    val isLive = liveRun != null && currentRun?.runId == runId
+    val liveRun = currentRun?.takeIf { activeRunId == null || it.runId == activeRunId }
+    val isLive = liveRun != null && currentRun?.runId == activeRunId
 
     val lines: List<ConsoleLine> = if (isLive) {
         remember(revision) { ScriptRunBus.currentLines }
     } else {
-        remember(runId) { runId?.let { readRunLogFile(context, it) } ?: emptyList() }
+        remember(activeRunId) { activeRunId?.let { LocalScriptKit.runLogStore(context).read(it) } ?: emptyList() }
     }
 
     val status = liveRun?.status ?: RunStatus.FAILED // 无状态且无日志时按失败展示占位
+    val isRunning = status == RunStatus.RUNNING || status == RunStatus.PAUSED
     val listState = rememberLazyListState()
     LaunchedEffect(revision, lines.size) {
-        if (lines.isNotEmpty()) listState.scrollToItem(lines.size - 1)
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
     }
+
+    // 从输出定位脚本：解析「== 运行开始 xxx [Python/JavaScript] ==」行后在脚本库中查找文件
+    val rerunScript = remember(lines) { resolveRerunScript(lines) }
 
     Scaffold(
         topBar = {
@@ -72,7 +81,7 @@ fun LocalRunConsoleScreen(
                 title = {
                     Column {
                         Text(
-                            liveRun?.scriptName ?: "运行控制台",
+                            liveRun?.scriptName ?: rerunScript?.first?.name ?: "运行控制台",
                             fontSize = 15.sp,
                             style = MaterialTheme.typography.titleMedium
                         )
@@ -83,18 +92,86 @@ fun LocalRunConsoleScreen(
                     IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", modifier = Modifier.size(18.dp))
                     }
-                },
-                actions = {
-                    if (isLive && status == RunStatus.RUNNING && liveRun != null) {
-                        ActionButtonSmall(
-                            icon = Icons.Default.Stop,
-                            label = "停止",
-                            tint = MaterialTheme.colorScheme.error,
-                            onClick = { ScriptRunnerService.stop(context, liveRun.runId) }
-                        )
-                    }
                 }
             )
+        },
+        bottomBar = {
+            if (isLive && isRunning) {
+                // 运行中：暂停/继续（仅 Python）+ 停止
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .navigationBarsPadding(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (liveRun.lang == ScriptLang.PYTHON) {
+                            if (status == RunStatus.RUNNING) {
+                                OutlinedButton(
+                                    onClick = { ScriptRunnerService.pause(context, liveRun.runId) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("暂停", fontSize = 12.sp)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { ScriptRunnerService.resume(context, liveRun.runId) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("继续", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                        Button(
+                            onClick = { ScriptRunnerService.stop(context, liveRun.runId) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("停止", fontSize = 12.sp)
+                        }
+                    }
+                }
+            } else if (rerunScript != null) {
+                // 非运行中且能定位脚本：重新运行
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp
+                ) {
+                    Button(
+                        onClick = {
+                            val (script, _) = rerunScript
+                            activeRunId = ScriptRunnerService.start(context, script.lang, script.file)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .navigationBarsPadding(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("运行 ${rerunScript.first.name}", fontSize = 12.sp, maxLines = 1)
+                    }
+                }
+            }
         }
     ) { innerPadding ->
         Column(
@@ -134,16 +211,10 @@ fun LocalRunConsoleScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         items(lines) { line ->
-                            Text(
-                                text = line.text,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                color = if (line.stream == OutputStream.STDERR) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurface
-                            )
+                            ConsoleLineRow(line)
                         }
                     }
                 }
@@ -152,10 +223,49 @@ fun LocalRunConsoleScreen(
     }
 }
 
+/** 单行日志：时间戳淡化小字 + 正文（stderr 红色） */
+@Composable
+private fun ConsoleLineRow(line: ConsoleLine) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = line.time,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
+        Text(
+            text = line.text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            color = if (line.stream == OutputStream.STDERR) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/**
+ * 从日志行解析可重跑的脚本：匹配「== 运行开始 名称 [语言] ==」，
+ * 在本地脚本库中按文件名查找，语言按扩展名核对。
+ */
+private fun resolveRerunScript(lines: List<ConsoleLine>): Pair<com.panel.corescript.store.LocalScript, ScriptLang>? {
+    if (lines.isEmpty()) return null
+    val regex = Regex("^== 运行开始 (.+) \\[(.+)\\] ==$")
+    val startLine = lines.firstOrNull { regex.matches(it.text) } ?: return null
+    val match = regex.find(startLine.text) ?: return null
+    val (name, langLabel) = match.destructured
+    val script = LocalScriptKit.store.list().firstOrNull { it.name == name } ?: return null
+    val lang = ScriptLang.fromFileName(script.name)
+        ?: ScriptLang.entries.firstOrNull { it.label == langLabel }
+        ?: return null
+    return script to lang
+}
+
 @Composable
 private fun RunStatusBar(scriptName: String, status: RunStatus, detail: String?) {
     val (label, color) = when (status) {
         RunStatus.RUNNING -> "运行中" to MaterialTheme.colorScheme.primary
+        RunStatus.PAUSED -> "已暂停（计时继续）" to MaterialTheme.colorScheme.tertiary
         RunStatus.SUCCESS -> "成功" to MaterialTheme.colorScheme.primary
         RunStatus.FAILED -> "失败" to MaterialTheme.colorScheme.error
         RunStatus.STOPPED -> "已停止" to MaterialTheme.colorScheme.onSurfaceVariant
@@ -193,21 +303,5 @@ private fun RunStatusBar(scriptName: String, status: RunStatus, detail: String?)
                     .padding(horizontal = 10.dp, vertical = 3.dp)
             )
         }
-    }
-}
-
-/** 解析运行日志文件回放历史输出，与 ScriptRunnerService 的落盘格式一致 */
-private fun readRunLogFile(context: android.content.Context, runId: String): List<ConsoleLine> {
-    val file: File = ScriptRunnerService.runLogFile(context, runId)
-    if (!file.isFile) return emptyList()
-    return file.readLines().mapNotNull { raw ->
-        if (raw.length < 12 || !raw.startsWith("[")) return@mapNotNull null
-        val isErr = raw.contains("] [err] ")
-        val text = if (isErr) raw.substringAfter("] [err] ") else raw.substringAfter("] ", "")
-        ConsoleLine(
-            time = raw.substringBefore(']').removePrefix("["),
-            stream = if (isErr) OutputStream.STDERR else OutputStream.STDOUT,
-            text = text
-        )
     }
 }

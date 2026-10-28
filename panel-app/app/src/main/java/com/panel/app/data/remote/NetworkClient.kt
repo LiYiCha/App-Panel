@@ -78,6 +78,10 @@ object NetworkClient {
                             val respSnippet = try {
                                 resp.peekBody(2048).string()
                             } catch (_: Exception) { null }
+                            // 200 但响应体是 HTML（SPA 兜底页/网关页）按错误记录
+                            val htmlBody = respSnippet?.trimStart()?.let {
+                                it.startsWith("<!DOCTYPE", true) || it.startsWith("<html", true) || it.startsWith("<?xml", true)
+                            } == true
 
                             com.panel.app.data.logger.AppLogger.httpDetailed(
                                 method = req.method,
@@ -85,7 +89,8 @@ object NetworkClient {
                                 code = resp.code,
                                 durationMs = duration,
                                 requestBody = reqBodyStr,
-                                responseBody = respSnippet
+                                responseBody = respSnippet,
+                                forceError = htmlBody
                             )
                         }
                         resp
@@ -143,15 +148,9 @@ object NetworkClient {
 
                             if (isHtmlHeader || isHtmlContent) {
                                 val code = if (resp.code in 200..299) 500 else resp.code
-                                val errorMsg = when (resp.code) {
-                                    404 -> "接口不存在 (404)，请检查面板地址或接口路径"
-                                    502, 503, 504 -> "网关/代理异常 (${resp.code})，面板后端未正常响应"
-                                    401, 403 -> "鉴权异常 (${resp.code})，请重新登录"
-                                    else -> "服务端返回了 HTML 页面而非预期 JSON (HTTP ${resp.code})"
-                                }
-                                // 附上原始响应片段（过滤控制字符、限长），便于定位是哪个端点在返回 SPA 兜底页
-                                val origin = peek.filter { it.code >= 32 }.replace("\\s+".toRegex(), " ").take(160)
-                                val fullMsg = if (origin.isBlank()) errorMsg else "$errorMsg · 原始响应: $origin"
+                                // 按要求：错误信息直接透传原始响应，不附加任何自造文案
+                                val fullMsg = peek.filter { it.code >= 32 }.replace("\\s+".toRegex(), " ")
+                                    .take(300).ifBlank { "(空响应体)" }
                                 // 用 Gson 生成合成 JSON，保证原始内容里的引号/尖括号被正确转义
                                 val syntheticJson = com.google.gson.JsonObject().apply {
                                     addProperty("code", code)

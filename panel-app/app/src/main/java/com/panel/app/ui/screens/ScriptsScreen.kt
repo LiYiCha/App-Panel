@@ -129,7 +129,8 @@ fun ScriptsScreen(
                             onRename = { renamingNode = it },
                             onAddToTask = { node ->
                                 viewModel.readScript(node.path) { content ->
-                                    val (cron, parsedName) = parseScriptCommentInfo(content, node.name)
+                                    // parseScriptCommentInfo 返回 Pair(名字, cron)，勿反解构
+                                    val (parsedName, cron) = parseScriptCommentInfo(content, node.name)
                                     taskAddingName = parsedName
                                     taskAddingCommand = "task ${node.path}"
                                     taskAddingSchedule = cron

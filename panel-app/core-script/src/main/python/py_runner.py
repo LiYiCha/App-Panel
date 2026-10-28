@@ -6,6 +6,7 @@
 
 import os
 import sys
+import time
 import traceback
 import runpy
 
@@ -40,8 +41,11 @@ class _OutputWriter:
         return False
 
 
-def run_script(entry_path, work_dir, deps_dir, args, listener, run_id, out_enum, err_enum, stop_flag):
-    """执行脚本并返回退出码：0 成功、130 被停止、其他为失败"""
+def run_script(entry_path, work_dir, deps_dir, args, listener, run_id, out_enum, err_enum, stop_flag, pause_flag):
+    """执行脚本并返回退出码：0 成功、130 被停止、其他为失败
+
+    pause_flag 非空时支持暂停：trace 回调中阻塞等待恢复；暂停中收到停止则优先退出。
+    """
     if deps_dir:
         sys.path.insert(0, deps_dir)
     os.chdir(work_dir)
@@ -54,6 +58,9 @@ def run_script(entry_path, work_dir, deps_dir, args, listener, run_id, out_enum,
     def _trace(frame, event, arg):
         if stop_flag.isStopped():
             raise SystemExit(130)
+        # 暂停等待：逐行回调间轮询，停止信号可打断暂停
+        while pause_flag is not None and pause_flag.isPaused() and not stop_flag.isStopped():
+            time.sleep(0.1)
         return _trace
 
     sys.settrace(_trace)

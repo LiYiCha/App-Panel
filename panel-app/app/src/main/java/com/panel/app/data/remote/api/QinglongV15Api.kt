@@ -71,6 +71,8 @@ data class QlCronItem(
     val last_running_time: Any? = null,
     @SerializedName(value = "last_execution_time", alternate = ["lastExecutionTime", "last_run_time", "lastRunTime", "execution_time", "executionTime"])
     val last_execution_time: Any? = null,
+    @SerializedName(value = "next_execution_time", alternate = ["nextExecutionTime", "next_run_time", "nextRunTime"])
+    val next_execution_time: Any? = null,
     @SerializedName(value = "createdAt", alternate = ["created_at", "created"])
     val createdAt: String? = null,
     @SerializedName(value = "updatedAt", alternate = ["updated_at", "updated"])
@@ -88,6 +90,13 @@ data class QlCronItem(
 
     val lastExecutionTimeLong: Long
         get() = when (val v = last_execution_time) {
+            is Number -> v.toLong()
+            is String -> v.trim().toLongOrNull() ?: v.trim().toDoubleOrNull()?.toLong() ?: 0L
+            else -> 0L
+        }
+
+    val nextExecutionTimeLong: Long
+        get() = when (val v = next_execution_time) {
             is Number -> v.toLong()
             is String -> v.trim().toLongOrNull() ?: v.trim().toDoubleOrNull()?.toLong() ?: 0L
             else -> 0L

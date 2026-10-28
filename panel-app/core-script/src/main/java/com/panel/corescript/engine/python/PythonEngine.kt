@@ -5,6 +5,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.panel.corescript.engine.ExitKind
 import com.panel.corescript.engine.OutputStream
+import com.panel.corescript.engine.PauseFlag
 import com.panel.corescript.engine.ScriptEngine
 import com.panel.corescript.engine.ScriptLang
 import com.panel.corescript.engine.ScriptRunListener
@@ -32,6 +33,7 @@ class PythonEngine(context: Context) : ScriptEngine {
 
     override fun run(request: ScriptRunRequest, listener: ScriptRunListener): ScriptSession {
         val stopFlag = AtomicBoolean(false)
+        val pauseFlag = PauseFlag()
         val finished = AtomicBoolean(false)
 
         val runnerThread = thread(name = "py-run-${request.runId.take(8)}") {
@@ -49,7 +51,8 @@ class PythonEngine(context: Context) : ScriptEngine {
                     request.runId,
                     OutputStream.STDOUT,
                     OutputStream.STDERR,
-                    StopFlag { stopFlag.get() }
+                    StopFlag { stopFlag.get() },
+                    pauseFlag
                 ).toInt()
                 when {
                     exitCode == 0 -> exitKind = ExitKind.SUCCESS
@@ -72,6 +75,8 @@ class PythonEngine(context: Context) : ScriptEngine {
             override val runId = request.runId
             override fun stop() {
                 if (!stopFlag.compareAndSet(false, true)) return
+                // 停止时自动解除暂停，保证暂停中的脚本也能及时退出
+                pauseFlag.resume()
                 // 停止信号靠 settrace 逐行生效；脚本阻塞在 C 扩展时无法立即退出，
                 // 延迟后仍存活则向用户说明原因，避免"点了停止没反应"的困惑
                 thread(name = "py-stop-watchdog-${request.runId.take(8)}", isDaemon = true) {
@@ -84,6 +89,14 @@ class PythonEngine(context: Context) : ScriptEngine {
                         )
                     }
                 }
+            }
+
+            override fun pause() {
+                pauseFlag.pause()
+            }
+
+            override fun resume() {
+                pauseFlag.resume()
             }
         }
     }

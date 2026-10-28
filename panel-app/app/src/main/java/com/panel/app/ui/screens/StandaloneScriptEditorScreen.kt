@@ -516,7 +516,8 @@ fun StandaloneScriptEditorScreen(
 
     // 从代码编辑器一键添加为定时任务弹窗
     if (showAddToTaskDialog) {
-        val (parsedCron, parsedName) = remember(codeText) {
+        // parseScriptCommentInfo 返回 Pair(名字, cron)，勿反解构
+        val (parsedName, parsedCron) = remember(codeText) {
             parseScriptCommentInfo(codeText, scriptName.substringAfterLast('/'))
         }
         var taskName by remember { mutableStateOf(parsedName) }

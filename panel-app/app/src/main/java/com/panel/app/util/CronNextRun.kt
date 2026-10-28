@@ -20,7 +20,11 @@ import java.util.TreeSet
 object CronNextRun {
 
     /** 计算自 now 起的下次执行时间；无法解析或四年内无匹配返回 null */
-    fun computeNext(schedule: String, now: Calendar = Calendar.getInstance()): String? {
+    fun computeNext(schedule: String, now: Calendar = Calendar.getInstance()): String? =
+        computeNextMillis(schedule, now)?.let { TimeFormat.shortMillis(it) }
+
+    /** 同上但返回时间戳（毫秒），供调用方自行格式化 */
+    fun computeNextMillis(schedule: String, now: Calendar = Calendar.getInstance()): Long? {
         var parts = schedule.trim().split("\\s+".toRegex())
         if (parts.size < 5) return null
         // 青龙使用 6 域 cron（秒 分 时 日 月 周，如 "10 12 10 * * *" = 每天 10:12:10）；
@@ -74,7 +78,10 @@ object CronNextRun {
                     if (h < hourLimit) continue
                     val m = minutes.firstOrNull { h > hourLimit || it >= minuteLimit }
                     if (m != null) {
-                        return format(cursor, h, m)
+                        return (cursor.clone() as Calendar).apply {
+                            set(Calendar.HOUR_OF_DAY, h)
+                            set(Calendar.MINUTE, m)
+                        }.timeInMillis
                     }
                 }
             }
@@ -123,13 +130,5 @@ object CronNextRun {
             }
         }
         return if (out.isEmpty()) null else out
-    }
-
-    private fun format(day: Calendar, hour: Int, minute: Int): String {
-        val c = (day.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-        }
-        return TimeFormat.shortMillis(c.timeInMillis)
     }
 }
