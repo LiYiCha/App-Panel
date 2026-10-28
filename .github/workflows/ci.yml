@@ -20,6 +20,12 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # Chaquopy 构建期需要本机 Python 3.13 打包 CPython 运行时
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
 
