@@ -187,14 +187,14 @@ fun LoginScreen(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier.size(68.dp)
+                modifier = Modifier.size(92.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         painter = androidx.compose.ui.res.painterResource(com.panel.app.R.drawable.ic_main),
                         contentDescription = "Logo",
                         tint = Color.Unspecified,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(72.dp)
                     )
                 }
             }

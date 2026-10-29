@@ -330,7 +330,8 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
             OtherSettingsScreen(
                 viewModel = viewModel,
                 onBack = { safePopBack() },
-                onOpenPermissions = { navController.navigate("app_permissions") }
+                onOpenPermissions = { navController.navigate("app_permissions") },
+                onOpenDevLog = { navController.navigate("developer_console") }
             )
         }
 

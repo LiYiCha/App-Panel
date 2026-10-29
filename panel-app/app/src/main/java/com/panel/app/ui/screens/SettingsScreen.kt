@@ -588,7 +588,7 @@ fun QinglongSystemSettingsCard(viewModel: MainViewModel) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = {
-                                viewModel.sendTestNotify("系统测试通知", "来自 Panel Hub 移动端的通知连通性测试")
+                                viewModel.sendTestNotify("系统测试通知", "来自烛龙移动端的通知连通性测试")
                                 Toast.makeText(context, "已向青龙服务提交通知测试请求", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.weight(1f),

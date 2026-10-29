@@ -14,18 +14,29 @@ data class AppUpdateInfo(
     val releaseNotes: String,
     val downloadUrl: String?,
     val releasePageUrl: String,
-    val publishedAt: String
+    val publishedAt: String,
+    // Release 挂载的全部 APK 资产（standard/full 双版本），供更新弹窗展示手动选择
+    val apkAssets: List<ApkAsset> = emptyList()
+)
+
+/** Release 中的一个 APK 资产 */
+data class ApkAsset(
+    val name: String,
+    val url: String,
+    val sizeBytes: Long
 )
 
 object AppUpdateManager {
     private const val GITHUB_OWNER = "LiYiCha"
     private const val GITHUB_REPO = "App-Panel"
+    const val GITHUB_REPO_URL = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO"
     private const val GITHUB_API_BASE = "https://api.github.com/"
 
     // GitHub API 默认使用全局 unsafeOkHttpClient（10s 连接 / 20s 读取）
-    // 国内网络访问 GitHub 常超时，提供备用 API 代理（gh-proxy.com 支持代理 api.github.com；
-    // 2026-10 实测可用，失效时更换此常量即可。注意 ghfast.top/ghproxy.net 仅代理文件下载，不支持 API）
-    private const val GITHUB_API_FALLBACK = "https://gh-proxy.com/"
+    // 国内网络访问 GitHub 常超时，提供备用 API 代理。注意格式必须是「完整 URL 前缀」
+    // （gh-proxy.com/https://api.github.com/...），替换域名的写法会 404；
+    // 2026-10 实测：ghfast.top/ghproxy.net 仅代理文件下载，不支持 API（403）
+    private const val GITHUB_API_FALLBACK = "https://gh-proxy.com/https://api.github.com/"
 
     private val api: GitHubReleaseApi by lazy {
         NetworkClient.buildRetrofit(GITHUB_API_BASE).create(GitHubReleaseApi::class.java)
@@ -54,10 +65,9 @@ object AppUpdateManager {
 
                 val hasNew = isVersionNewer(cleanCurrent, latestTag)
                 // 双 flavor 发布（standard/full）：优先匹配当前变体的 APK，兼容旧版无 flavor 后缀的单 APK
-                val apkAsset = release.assets?.firstOrNull { asset ->
-                    asset.name.endsWith(".apk", ignoreCase = true) &&
-                        asset.name.contains(flavor, ignoreCase = true)
-                } ?: release.assets?.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+                val apkList = release.assets?.filter { it.name.endsWith(".apk", ignoreCase = true) } ?: emptyList()
+                val apkAsset = apkList.firstOrNull { it.name.contains(flavor, ignoreCase = true) }
+                    ?: apkList.firstOrNull()
                 val downloadUrl = apkAsset?.browser_download_url ?: release.html_url
 
                 Result.success(
@@ -69,7 +79,8 @@ object AppUpdateManager {
                         releaseNotes = release.body ?: "暂无更新日志",
                         downloadUrl = downloadUrl,
                         releasePageUrl = release.html_url,
-                        publishedAt = release.published_at?.substringBefore("T") ?: "--"
+                        publishedAt = release.published_at?.substringBefore("T") ?: "--",
+                        apkAssets = apkList.map { ApkAsset(it.name, it.browser_download_url, it.size ?: 0L) }
                     )
                 )
             } else if (resp.code() == 404) {

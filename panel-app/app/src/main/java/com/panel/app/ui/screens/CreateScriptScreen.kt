@@ -43,7 +43,7 @@ fun CreateScriptScreen(
     var content by remember {
         mutableStateOf(
             """// 脚本入口
-console.log("Hello from Panel Hub!");
+console.log("Hello from 烛龙!");
 """
         )
     }

@@ -32,7 +32,8 @@ import kotlinx.coroutines.launch
 fun OtherSettingsScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
-    onOpenPermissions: () -> Unit = {}
+    onOpenPermissions: () -> Unit = {},
+    onOpenDevLog: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -140,10 +141,10 @@ fun OtherSettingsScreen(
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                     SettingsRow(
                         title = "调试日志",
-                        subtitle = "开启后可在设置主页快速进入",
+                        subtitle = if (uiState.isDevMode) "点击查看日志" else "开启后可查看",
                         value = if (uiState.isDevMode) "已开启 >" else "点击开启 >",
                         onClick = {
-                            if (!uiState.isDevMode) viewModel.toggleDevMode(true)
+                            if (uiState.isDevMode) onOpenDevLog() else viewModel.toggleDevMode(true)
                         }
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
@@ -175,7 +176,7 @@ fun OtherSettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
                     SettingsRow(
-                        title = "关于 Panel Hub",
+                        title = "关于烛龙",
                         subtitle = "版本与功能说明",
                         value = "详情 >",
                         onClick = { showAboutDialog = true }
@@ -264,7 +265,7 @@ fun OtherSettingsScreen(
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
-            title = { Text("关于 Panel Hub", fontSize = 15.sp) },
+            title = { Text("关于烛龙", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("版本: v${BuildConfig.VERSION_NAME} (正式版)", fontSize = 12.sp, style = MaterialTheme.typography.titleSmall)
@@ -279,7 +280,11 @@ fun OtherSettingsScreen(
 
     // 版本更新弹窗（自治组件，见 SettingsDialogs.kt）
     if (showUpdateDialog && updateInfo != null) {
-        UpdateCheckDialog(info = updateInfo!!, onDismiss = { showUpdateDialog = false })
+        // 关闭弹窗时刷新缓存明细：下载完成/取消会增删缓存目录中的 APK 文件
+        UpdateCheckDialog(info = updateInfo!!, onDismiss = {
+            showUpdateDialog = false
+            refreshCacheEntries()
+        })
     }
 }
 

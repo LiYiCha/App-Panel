@@ -29,24 +29,25 @@ import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.AppUpdateInfo
 import com.panel.app.util.AppUpdateManager
 import com.panel.app.util.DownloadManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
-data class DownloadStateHolder(
-    var downloadUrl: String? = null,
-    var dlState: DownloadManager.State? = null,
-    var dlDownloaded: Long = 0L,
-    var dlTotal: Long = 0L,
-    var dlPercent: Int = 0,
-    var dlSpeed: Long = 0L,
-    var dlRetries: Int = 0,
-    var dlError: String? = null,
-    var dlDone: Boolean = false,
-    var dlDownloading: Boolean = false,
-)
+/**
+ * 更新弹窗下载状态机（按 URL 一槽一状态，支持 standard/full 并行下载）：
+ * Idle → Downloading → Done / Failed
+ */
+sealed class DownloadUiState {
+    data class Downloading(
+        val url: String,
+        val downloaded: Long,
+        val total: Long,
+        val percent: Int,
+        val speed: Long,
+        val retries: Int,
+    ) : DownloadUiState()
+
+    data class Failed(val url: String, val message: String) : DownloadUiState()
+    data class Done(val url: String, val file: File) : DownloadUiState()
+}
 
 /** 一类可单独清理的应用缓存 */
 data class AppCacheEntry(
@@ -58,17 +59,19 @@ data class AppCacheEntry(
 
 // 分类盘点应用缓存：更新安装包 / 面板数据快照 / 仪表盘缓存 / 其他临时文件，各自可独立清理
 fun collectAppCacheEntries(context: android.content.Context): List<AppCacheEntry> {
-    val apkFiles = listOf(
-        File(context.cacheDir, "Panel-App-download.apk"),
-        File(context.cacheDir, "Panel-App-download.apk.url")
-    )
+    // 更新安装包：按资产名落盘的 apk/ 目录（新版）+ 旧版固定名文件（迁移清理）
+    val apkFiles = (File(context.cacheDir, "apk").listFiles()?.toList() ?: emptyList()) +
+        listOf(
+            File(context.cacheDir, "Panel-App-download.apk"),
+            File(context.cacheDir, "Panel-App-download.apk.url")
+        )
     val dataCacheDir = File(context.filesDir, "cache")
     val allDataFiles = dataCacheDir.listFiles()?.toList() ?: emptyList()
     val snapshotFiles = allDataFiles.filter { it.name.startsWith("panel_cache_") }
     val dashboardFiles = allDataFiles.filter { it.name.startsWith("dashboard_cache_") }
-    val knownApkNames = apkFiles.map { it.name }.toSet()
+    val apkNames = apkFiles.map { it.name }.toSet()
     val otherFiles = mutableListOf<File>()
-    context.cacheDir.listFiles()?.forEach { if (it.name !in knownApkNames) otherFiles.add(it) }
+    context.cacheDir.listFiles()?.forEach { if (it.name !in apkNames && it.name != "apk") otherFiles.add(it) }
     context.externalCacheDir?.listFiles()?.forEach { otherFiles.add(it) }
 
     fun sizeOf(files: List<File>) = files.filter { it.exists() }.sumOf { if (it.isDirectory) it.walk().filter { f -> f.isFile }.sumOf { f -> f.length() } else it.length() }
@@ -83,61 +86,158 @@ fun collectAppCacheEntries(context: android.content.Context): List<AppCacheEntry
     )
 }
 
-// 版本更新弹窗（自治组件：内部管理下载状态/协程/缓存 APK 校验）
+// 版本更新弹窗（自治组件：内部管理下载状态机/缓存 APK 识别）
 @Composable
 fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val dlHolder = remember { mutableStateOf(DownloadStateHolder()) }
-    var dlJob by remember { mutableStateOf<Job?>(null) }
-        // 检查缓存目录是否已有已下载的 APK，允许直接安装无需重新下载
-        // 必须校验下载来源 URL：旧版本 APK 缓存不能用于新版安装，否则陷入"安装了还是旧包"的死循环
-        val cachedApkFile = File(context.cacheDir, "Panel-App-download.apk")
-        val cachedUrlFile = File(context.cacheDir, "Panel-App-download.apk.url")
-        val cachedApk = if (cachedApkFile.exists() && cachedApkFile.length() > 0
-            && cachedUrlFile.exists() && cachedUrlFile.readText() == info.downloadUrl
-        ) cachedApkFile else {
-            cachedApkFile.delete()
-            cachedUrlFile.delete()
-            null
+    // 下载状态表：url → 状态；standard/full 各自独立槽位，可并行下载
+    var dlStates by remember { mutableStateOf<Map<String, DownloadUiState>>(emptyMap()) }
+    // 缓存目录变更计数：任一下载完成后 +1，驱动缓存 APK 列表重组
+    var cacheTick by remember { mutableIntStateOf(0) }
+
+    // 缓存目录中属于当前 Release 的 APK（按资产名匹配，旧 Release 的文件不会误装）；
+    // 优先返回匹配当前安装版本的资产，其余排后
+    val matchedAssetName = info.downloadUrl?.substringBefore('?')?.substringAfterLast('/')
+    val cachedApks = remember(info, cacheTick) {
+        File(context.cacheDir, "apk").listFiles()
+            ?.filter { it.isFile && it.length() > 0 && it.name in info.apkAssets.map { a -> a.name } }
+            ?.sortedByDescending { it.name == matchedAssetName }
+            .orEmpty()
+    }
+
+    fun startDownload(url: String) {
+        if (DownloadManager.isActive(url)) return
+        runDownload(context, url) { state ->
+            if (state is DownloadUiState.Done) cacheTick++
+            dlStates = dlStates + (url to state)
         }
-        AlertDialog(
-            onDismissRequest = {
-                dlJob?.cancel()
-                if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
-                    DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
-                }
-                onDismiss()
-            },
-            title = {
-                Text(
-                    when {
-                        cachedApk != null && !dlHolder.value.dlDone -> "APK 已就绪"
-                        dlHolder.value.dlState != null && dlHolder.value.dlState!!.status == DownloadManager.State.Status.DONE -> "下载完成"
-                        dlHolder.value.dlError != null -> "下载失败"
-                        else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
-                    },
-                    fontSize = 15.sp
-                )
-            },
+    }
+    fun cancelDownload(url: String) {
+        DownloadManager.cancel(url)
+        dlStates = dlStates - url
+    }
+    fun dismissCard(url: String) {
+        dlStates = dlStates - url
+    }
+
+    val anyDownloading = dlStates.values.any { it is DownloadUiState.Downloading }
+    val mainFailed = info.downloadUrl?.let { dlStates[it] } is DownloadUiState.Failed
+
+    AlertDialog(
+        onDismissRequest = {
+            // 关闭弹窗：终止全部进行中的任务
+            dlStates.keys.forEach { if (DownloadManager.isActive(it)) DownloadManager.cancel(it) }
+            onDismiss()
+        },
+        title = {
+            Text(
+                when {
+                    anyDownloading -> "正在下载"
+                    cachedApks.isNotEmpty() -> "APK 已就绪"
+                    dlStates.values.any { it is DownloadUiState.Failed } -> "下载失败"
+                    else -> if (info.hasUpdate) "发现新版本 ${info.latestVersion}" else "当前已是最新版本"
+                },
+                fontSize = 15.sp
+            )
+        },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // 整体可滚动：更新说明较长时，保证 GitHub 链接、其他版本入口、进度卡不被裁切
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     // 版本信息（始终显示）
                     Text("当前: ${info.currentVersion}  |  最新: ${info.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (info.publishedAt.isNotBlank() && info.publishedAt != "--") {
                         Text("发布: ${info.publishedAt}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                     }
-                    if (cachedApk != null) {
-                        val sizeStr = when {
-                            cachedApk.length() >= 1024 * 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024 / 1024)} MB"
-                            cachedApk.length() >= 1024 -> "${String.format("%.1f", cachedApk.length().toDouble() / 1024)} KB"
-                            else -> "${cachedApk.length()} B"
+                    // GitHub 仓库入口（点击跳转浏览器）
+                    Surface(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(AppUpdateManager.GITHUB_REPO_URL))
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            Text("GitHub 仓库", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.weight(1f))
+                            Text("github.com/LiYiCha/App-Panel", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.OpenInNew, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
                         }
-                        Text("缓存 APK: ${cachedApk.name} ($sizeStr)", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    // 已缓存的 Release APK（下载完成/历史下载的资产，可直接安装）
+                    if (cachedApks.isNotEmpty()) {
+                        Text(
+                            if (cachedApks.size > 1) "已下载 ${cachedApks.size} 个安装包:" else "已下载安装包:",
+                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        cachedApks.forEach { apk ->
+                            Surface(
+                                onClick = {
+                                    // 现场重校验：缓存可能在弹窗打开期间被"清除缓存"删掉
+                                    if (apk.exists() && apk.length() > 0L) {
+                                        DownloadManager.installAndCleanup(context, apk)
+                                        onDismiss()
+                                    } else {
+                                        cacheTick++
+                                        Toast.makeText(context, "安装包缓存已失效，请重新下载", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                        Text(apk.name, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            if (apk.name == matchedAssetName) "当前版本 · 点击安装" else "另一版本 · 点击安装",
+                                            fontSize = 9.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(formatApkSize(apk.length()), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    // 单个 APK 操作：分享（另存/传输）与删除
+                                    Icon(
+                                        Icons.Default.Share,
+                                        contentDescription = "分享安装包",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(15.dp).clickable { shareApk(context, apk) }
+                                    )
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除安装包",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(15.dp).clickable {
+                                            runCatching { apk.delete() }
+                                            cacheTick++
+                                            Toast.makeText(context, "已删除 ${apk.name}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                     Text("更新说明:", fontSize = 11.sp, style = MaterialTheme.typography.titleSmall)
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
@@ -149,82 +249,111 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
                         )
                     }
 
-                    // 下载进度卡（仅在有效状态下显示）
-                    if (dlHolder.value.dlDownloading || dlHolder.value.dlState != null || dlHolder.value.dlPercent > 0 || dlHolder.value.dlError != null || dlHolder.value.dlDone) {
-                        DownloadProgressCard(
-                            downloaded = dlHolder.value.dlDownloaded,
-                            total = dlHolder.value.dlTotal,
-                            percent = dlHolder.value.dlPercent,
-                            speed = dlHolder.value.dlSpeed,
-                            retries = dlHolder.value.dlRetries,
-                            isError = dlHolder.value.dlError != null,
-                            isDone = dlHolder.value.dlDone,
-                            isDownloading = dlHolder.value.dlDownloading
-                        )
+                    // 全部 Release 资产下载入口（standard/full 各自独立，可并行下载）；
+                    // 已在下载中或已缓存就绪的资产不重复显示
+                    val downloadCards = info.apkAssets.filter { asset ->
+                        val st = dlStates[asset.url]
+                        st !is DownloadUiState.Downloading && asset.name !in cachedApks.map { it.name }
+                    }
+                    if (downloadCards.isNotEmpty()) {
+                        downloadCards.forEach { apk ->
+                            Surface(
+                                onClick = { startDownload(apk.url) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                        Text(apk.name, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            if (apk.url == info.downloadUrl) "匹配当前版本 · ${formatApkSize(apk.sizeBytes)}" else "另一版本安装包 · ${formatApkSize(apk.sizeBytes)}",
+                                            fontSize = 9.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text("下载", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+
+                    // 下载进度/失败卡（每 URL 一张，互不干扰；Done 状态由缓存 APK 卡片接管）
+                    dlStates.forEach { (url, st) ->
+                        when (st) {
+                            is DownloadUiState.Downloading -> DownloadProgressCard(
+                                downloaded = st.downloaded,
+                                total = st.total,
+                                percent = st.percent,
+                                speed = st.speed,
+                                retries = st.retries,
+                                isError = false,
+                                isDone = false,
+                                isDownloading = true,
+                                onCancel = { cancelDownload(url) }
+                            )
+                            is DownloadUiState.Failed -> DownloadProgressCard(
+                                downloaded = 0, total = 0, percent = 0, speed = 0, retries = 0,
+                                isError = true,
+                                isDone = false,
+                                onCancel = { dismissCard(url) }
+                            )
+                            is DownloadUiState.Done -> {}
+                        }
                     }
                 }
             },
             confirmButton = {
                 when {
-                    cachedApk != null && !dlHolder.value.dlDone -> {
-                        // 已有缓存 APK，直接安装
+                    // 有进行中的任务 → 只提供"后台/关闭"，不打断下载
+                    anyDownloading -> {
+                        Button(onClick = { onDismiss() }) { Text("后台下载", fontSize = 12.sp) }
+                    }
+                    // 有缓存 APK → 直接安装匹配当前版本的那个包
+                    cachedApks.isNotEmpty() -> {
+                        val target = cachedApks.first()
+                        val editionLabel = when {
+                            target.name.contains("full", ignoreCase = true) -> "安装完整版 (full)"
+                            target.name.contains("standard", ignoreCase = true) -> "安装精简版 (standard)"
+                            else -> "立即安装"
+                        }
                         Button(
                             onClick = {
-                                // 现场重校验：缓存可能在弹窗打开期间被"清除缓存"删掉，
-                                // 文件失效时静默 return 就是"点了好几下都没反应"的根源 —— 转为重新下载
-                                if (cachedApkFile.exists() && cachedApkFile.length() > 0L) {
-                                    DownloadManager.installAndCleanup(context, cachedApk)
-                                    dlHolder.value = dlHolder.value.copy(dlDone = true)
+                                // 现场重校验：缓存可能在弹窗打开期间被"清除缓存"删掉
+                                if (target.exists() && target.length() > 0L) {
+                                    DownloadManager.installAndCleanup(context, target)
                                     onDismiss()
                                 } else {
-                                    cachedApkFile.delete()
-                                    cachedUrlFile.delete()
-                                    Toast.makeText(context, "安装包缓存已失效，请点击下载", Toast.LENGTH_SHORT).show()
+                                    cacheTick++
+                                    Toast.makeText(context, "安装包缓存已失效，请重新下载", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("立即安装", fontSize = 12.sp)
+                            Text(editionLabel, fontSize = 12.sp)
                         }
                     }
-                    dlHolder.value.dlError != null -> {
+                    // 主下载入口失败 → 重试
+                    mainFailed && info.downloadUrl != null -> {
+                        val url = info.downloadUrl
                         Button(
                             onClick = {
-                                dlHolder.value = dlHolder.value.copy(dlError = null, dlRetries = 0)
-                                dlHolder.value.downloadUrl?.let { url ->
-                                    dlJob?.cancel()
-                                    dlJob = coroutineScope.launch(Dispatchers.IO) {
-                                        runDownload(context, url, dlHolder)
-                                    }
-                                }
+                                dlStates = dlStates - url
+                                startDownload(url)
                             }
                         ) { Text("重新下载", fontSize = 12.sp) }
                     }
-                    dlHolder.value.dlDone -> {
-                        Button(
-                            onClick = {
-                                val apkFile = dlHolder.value.dlState?.file ?: return@Button
-                                DownloadManager.installAndCleanup(context, apkFile)
-                                dlHolder.value = dlHolder.value.copy(dlDone = false, dlState = null)
-                                onDismiss()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                        ) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("立即安装", fontSize = 12.sp)
-                        }
-                    }
+                    // 常规下载
                     !info.downloadUrl.isNullOrEmpty() -> {
                         Button(
-                            onClick = {
-                                dlJob?.cancel()
-                                dlJob = coroutineScope.launch(Dispatchers.IO) {
-                                    runDownload(context, info.downloadUrl, dlHolder)
-                                }
-                            }
+                            onClick = { startDownload(info.downloadUrl) }
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
@@ -239,11 +368,8 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
             dismissButton = {
                 TextButton(
                     onClick = {
-                        dlJob?.cancel()
-                        if (dlHolder.value.dlState?.status == DownloadManager.State.Status.DOWNLOADING) {
-                            DownloadManager.cancel(dlHolder.value.downloadUrl ?: "")
-                        }
-                        resetDownloadState(dlHolder.value)
+                        // 取消：终止全部进行中的任务并清理
+                        dlStates.keys.forEach { if (DownloadManager.isActive(it)) DownloadManager.cancel(it) }
                         onDismiss()
                     }
                 ) { Text("取消", fontSize = 12.sp) }
@@ -252,68 +378,87 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
 }
 
 // ── 下载辅助函数 ────────────────────────────────
+/** APK 体积格式化：B / KB / MB */
+private fun formatApkSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes.toDouble() / 1024 / 1024)
+    bytes >= 1024 -> String.format("%.1f KB", bytes.toDouble() / 1024)
+    else -> "$bytes B"
+}
+
 /**
- * 启动下载；回调使用 Handler 切回主线程更新 holder，确保 Compose MutableState 在主线程写入。
+ * 通过 FileProvider 分享 APK（应用私有目录无法被文件管理器直接打开，
+ * 分享是用户取出安装包的实际出口：可另存到任意位置或传输到其他设备）。
+ */
+private fun shareApk(context: android.content.Context, apk: File) {
+    runCatching {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", apk
+        )
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "application/vnd.android.package-archive"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = android.content.Intent.createChooser(send, "分享安装包: ${apk.name}")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    }.onFailure {
+        Toast.makeText(context, "分享失败: ${it.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/**
+ * 启动指定 URL 的下载任务（可与其它 URL 的任务并行）。
+ * 回调统一经 Handler 切回主线程，驱动弹窗状态机 [DownloadUiState]。
+ * 输出文件按 Release 资产名落盘（apk/<资产名>），断点续传与缓存识别都以文件名为准。
  */
 fun runDownload(
     context: android.content.Context,
     url: String,
-    holder: MutableState<DownloadStateHolder>,
+    onState: (DownloadUiState) -> Unit,
 ) {
     val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    val apkFile = File(context.cacheDir, "Panel-App-download.apk")
+    var retries = 0
+    var lastDownloaded = 0L
+    var lastTotal = 0L
+    var lastPercent = 0
 
-    // 重置状态并开始下载（主线程）
-    mainHandler.post {
-        holder.value = holder.value.copy(
-            downloadUrl = url, dlDone = false, dlError = null, dlRetries = 0,
-            dlPercent = 0, dlSpeed = 0L, dlDownloading = true
-        )
+    // 统一在主线程更新状态与 Toast（Toast 在无 Looper 的 IO 线程调用会抛异常，
+    // 导致成功被误判为失败 → 重试 → 416 循环 → 文件被清理）
+    fun notify(state: DownloadUiState, toast: String? = null) {
+        mainHandler.post {
+            onState(state)
+            if (toast != null) android.widget.Toast.makeText(context, toast, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
+
+    // 初始 Downloading 状态（主线程）
+    notify(DownloadUiState.Downloading(url, 0, 0, 0, 0, 0))
 
     DownloadManager.download(
         url = url,
-        outputFile = apkFile,
+        outputFile = DownloadManager.outputFileFor(context, url),
         onProgress = { bytes, total, percent, speed ->
-            mainHandler.post {
-                holder.value = holder.value.copy(dlDownloaded = bytes, dlTotal = total, dlPercent = percent, dlSpeed = speed)
-            }
+            lastDownloaded = bytes; lastTotal = total; lastPercent = percent
+            notify(DownloadUiState.Downloading(url, bytes, total, percent, speed, retries))
+        },
+        onRetry = {
+            retries++
+            notify(
+                DownloadUiState.Downloading(url, lastDownloaded, lastTotal, lastPercent, 0, retries),
+                "自动重试中... ($retries/${DownloadManager.MAX_RETRIES})"
+            )
         },
         onSuccess = { file ->
-            File(context.cacheDir, "Panel-App-download.apk.url").writeText(url)
-            mainHandler.post {
-                holder.value = holder.value.copy(
-                    dlDownloading = false, dlDone = true,
-                    dlState = DownloadManager.State(
-                        url = url, file = file, downloaded = file.length(),
-                        total = file.length(), percent = 100, retries = 0,
-                        status = DownloadManager.State.Status.DONE
-                    )
-                )
-                Toast.makeText(context, "APK 下载完成，可以安装了", Toast.LENGTH_SHORT).show()
-            }
+            notify(DownloadUiState.Done(url, file), "APK 下载完成，可以安装了")
         },
         onFailure = { msg ->
             mainHandler.post {
-                holder.value = holder.value.copy(dlDownloading = false, dlError = msg, dlState = null)
-                Toast.makeText(context, "下载失败: $msg", Toast.LENGTH_LONG).show()
+                onState(DownloadUiState.Failed(url, msg))
+                android.widget.Toast.makeText(context, "下载失败: $msg", android.widget.Toast.LENGTH_LONG).show()
             }
         },
-        onRetry = {
-            mainHandler.post {
-                holder.value = holder.value.copy(dlRetries = holder.value.dlRetries + 1, dlError = null)
-                Toast.makeText(
-                    context,
-                    "自动重试中... (${holder.value.dlRetries}/${DownloadManager.MAX_RETRIES})",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
     )
-}
-
-fun resetDownloadState(stateHolder: DownloadStateHolder) {
-    DownloadManager.cancel(stateHolder.downloadUrl ?: "")
 }
 
 @Composable
@@ -326,6 +471,7 @@ private fun DownloadProgressCard(
     isError: Boolean,
     isDone: Boolean,
     isDownloading: Boolean = false,
+    onCancel: (() -> Unit)? = null,
 ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -368,6 +514,15 @@ private fun DownloadProgressCard(
                     }
                     if (speed > 0L) {
                         Text(formatSpeed(speed), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    // 下载中可手动取消
+                    if (isDownloading && onCancel != null) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "取消下载",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp).clickable { onCancel() }
+                        )
                     }
                 }
                 // 进度条

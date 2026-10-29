@@ -34,7 +34,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 供第三方文件管理器（MT 管理器等）通过 content:// 打开日志目录 -->
+        <!-- 供第三方应用通过 content:// 打开日志目录 -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
