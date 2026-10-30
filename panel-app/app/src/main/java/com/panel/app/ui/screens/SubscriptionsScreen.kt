@@ -130,12 +130,12 @@ fun SubscriptionsScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { viewModel.selectAllSubscriptions(!allSelected) }
+                            .clickable { viewModel.selectAllSubs(!allSelected) }
                             .padding(horizontal = 4.dp)
                     ) {
                         Checkbox(
                             checked = allSelected,
-                            onCheckedChange = { viewModel.selectAllSubscriptions(it) },
+                            onCheckedChange = { viewModel.selectAllSubs(it) },
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(4.dp))
@@ -193,7 +193,7 @@ fun SubscriptionsScreen(
                             Icon(Icons.Default.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                text = if (uiState.isLoading) "正在刷新仓库同步任务..." else "暂无匹配的仓库同步任务",
+                                text = if (uiState.isLoading) "正在刷新同步任务..." else "暂无同步任务",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -209,7 +209,7 @@ fun SubscriptionsScreen(
                             RepoSyncCard(
                                 sub = sub,
                                 isBatchMode = isBatchMode,
-                                onSelect = { viewModel.toggleSubscriptionSelection(sub.id) },
+                                onSelect = { viewModel.toggleSubSelection(sub.id) },
                                 onRunOrStop = {
                                     if (sub.isRunning) {
                                         viewModel.stopSubscription(sub.id)
@@ -268,8 +268,8 @@ fun SubscriptionsScreen(
     if (deletingSub != null) {
         AlertDialog(
             onDismissRequest = { deletingSub = null },
-            title = { Text("确认删除仓库任务", fontSize = 15.sp) },
-            text = { Text("确定要删除仓库同步任务 [${deletingSub?.name}] 吗？删除后将不再自动同步该仓库。", fontSize = 12.sp) },
+            title = { Text("确认删除", fontSize = 15.sp) },
+            text = { Text("删除同步任务 [${deletingSub?.name}]？删除后不再自动同步该仓库。", fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -292,7 +292,7 @@ fun SubscriptionsScreen(
         AlertDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
             title = { Text("确认批量删除", fontSize = 15.sp) },
-            text = { Text("确定要批量删除选中的 ${selectedSubs.size} 个仓库同步任务吗？该操作不可撤销。", fontSize = 12.sp) },
+            text = { Text("删除选中的 ${selectedSubs.size} 个同步任务？该操作不可撤销。", fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -315,7 +315,7 @@ fun SubscriptionsScreen(
     if (viewLogSubId != null) {
         AlertDialog(
             onDismissRequest = { viewLogSubId = null },
-            title = { Text("仓库同步日志", fontSize = 15.sp) },
+            title = { Text("同步日志", fontSize = 15.sp) },
             text = {
                 Box(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 360.dp)) {
                     if (isLogLoading) {
@@ -865,12 +865,12 @@ fun SubscriptionDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = autoAddCron, onCheckedChange = { autoAddCron = it })
                     Spacer(Modifier.width(4.dp))
-                    Text("自动识别脚本注释并添加定时调度任务", fontSize = 11.sp)
+                    Text("自动识别注释并添加定时任务", fontSize = 11.sp)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = autoDelCron, onCheckedChange = { autoDelCron = it })
                     Spacer(Modifier.width(4.dp))
-                    Text("自动删除已失效的同步任务", fontSize = 11.sp)
+                    Text("自动删除失效同步任务", fontSize = 11.sp)
                 }
 
                 // 高级同步与代理配置折叠项
@@ -882,7 +882,7 @@ fun SubscriptionDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("高级同步与代理配置", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                    Text("高级配置", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
                     Icon(
                         if (showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         contentDescription = null,

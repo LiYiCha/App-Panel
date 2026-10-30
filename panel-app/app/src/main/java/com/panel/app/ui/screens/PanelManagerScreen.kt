@@ -92,13 +92,13 @@ fun PanelManagerScreen(
                         modifier = Modifier.size(54.dp)
                     )
                     Text(
-                        text = "暂无配置的面板实例",
+                        text = "暂无面板",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "请添加并登录青龙或白虎面板以开始使用",
+                        text = "请先添加并登录面板",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -316,10 +316,10 @@ fun PanelManagerScreen(
     deletingPanel?.let { target ->
         AlertDialog(
             onDismissRequest = { deletingPanel = null },
-            title = { Text("确认删除面板", fontSize = 15.sp) },
+            title = { Text("删除面板", fontSize = 15.sp) },
             text = {
                 Text(
-                    text = "确定要删除面板实例 [${target.name}] 吗？删除后将清除该面板的所有本地配置与会话缓存。",
+                    text = "删除面板 [${target.name}]？将清除该面板的本地配置与会话缓存。",
                     fontSize = 12.sp
                 )
             },

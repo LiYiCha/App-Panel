@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,8 +33,7 @@ import com.panel.corescript.runner.ScriptRunnerService
 
 /**
  * 本地脚本运行控制台：实时展示运行输出；
- * 运行中底部操作栏提供 暂停/继续（仅 Python）+ 停止；
- * 查看历史运行（或运行已结束）且能定位到脚本文件时，可一键重新运行。
+ * 顶栏右侧操作：运行中 暂停/继续（仅 Python）+ 停止，结束后可一键重新运行。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,87 +92,57 @@ fun LocalRunConsoleScreen(
                     IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", modifier = Modifier.size(18.dp))
                     }
-                }
-            )
-        },
-        bottomBar = {
-            if (isLive && isRunning) {
-                // 运行中：暂停/继续（仅 Python）+ 停止
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .navigationBarsPadding(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                },
+                actions = {
+                    if (isLive && isRunning) {
+                        // 运行中：暂停/继续（仅 Python）+ 停止
                         if (liveRun.lang == ScriptLang.PYTHON) {
                             if (status == RunStatus.RUNNING) {
-                                OutlinedButton(
+                                IconButton(
                                     onClick = { ScriptRunnerService.pause(context, liveRun.runId) },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(8.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("暂停", fontSize = 12.sp)
+                                    Icon(Icons.Default.Pause, contentDescription = "暂停", modifier = Modifier.size(20.dp))
                                 }
                             } else {
-                                Button(
+                                IconButton(
                                     onClick = { ScriptRunnerService.resume(context, liveRun.runId) },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(8.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("继续", fontSize = 12.sp)
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "继续", modifier = Modifier.size(20.dp))
                                 }
                             }
                         }
-                        Button(
+                        IconButton(
                             onClick = { ScriptRunnerService.stop(context, liveRun.runId) },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer,
-                                contentColor = MaterialTheme.colorScheme.onErrorContainer
-                            )
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("停止", fontSize = 12.sp)
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = "停止",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else if (rerunScript != null) {
+                        // 已结束且能定位脚本：重新运行
+                        IconButton(
+                            onClick = {
+                                val (script, _) = rerunScript
+                                activeRunId = ScriptRunnerService.start(context, script.lang, script.file)
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = "运行 ${rerunScript.first.name}",
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
-            } else if (rerunScript != null) {
-                // 非运行中且能定位脚本：重新运行
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp
-                ) {
-                    Button(
-                        onClick = {
-                            val (script, _) = rerunScript
-                            activeRunId = ScriptRunnerService.start(context, script.lang, script.file)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .navigationBarsPadding(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("运行 ${rerunScript.first.name}", fontSize = 12.sp, maxLines = 1)
-                    }
-                }
-            }
-        }
+            )
+        },
     ) { innerPadding ->
         Column(
             modifier = Modifier

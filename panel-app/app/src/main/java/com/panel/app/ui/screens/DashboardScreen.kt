@@ -116,7 +116,7 @@ fun DashboardScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            if (isLoading) "正在拉取面板统计数据..." else errorMessage ?: "暂无统计数据",
+                            if (isLoading) "正在加载统计数据..." else errorMessage ?: "暂无统计数据",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -69,7 +69,7 @@ fun CreateTaskDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建定时任务", fontSize = 15.sp) },
+        title = { Text("新建任务", fontSize = 15.sp) },
         text = {
             Column(
                 modifier = Modifier

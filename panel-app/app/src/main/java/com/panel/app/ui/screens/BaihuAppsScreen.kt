@@ -167,7 +167,7 @@ fun BaihuAppsScreen(
                     if (apps.isEmpty()) {
                         Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
                             Text(
-                                if (tab == 0) "暂无已安装的应用" else "市场暂无应用",
+                                if (tab == 0) "暂无应用" else "市场暂无应用",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

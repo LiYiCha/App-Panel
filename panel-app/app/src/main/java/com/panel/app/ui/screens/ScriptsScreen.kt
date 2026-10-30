@@ -108,7 +108,7 @@ fun ScriptsScreen(
                         Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = if (searchQuery.isEmpty()) "暂无脚本文件 (下拉可刷新)" else "未匹配到相关脚本或目录",
+                            text = if (searchQuery.isEmpty()) "暂无脚本文件" else "无匹配脚本或目录",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -129,8 +129,8 @@ fun ScriptsScreen(
                             onRename = { renamingNode = it },
                             onAddToTask = { node ->
                                 viewModel.readScript(node.path) { content ->
-                                    // parseScriptCommentInfo 返回 Pair(名字, cron)，勿反解构
-                                    val (parsedName, cron) = parseScriptCommentInfo(content, node.name)
+                                    // parseScriptComment 返回 Pair(名字, cron)，勿反解构
+                                    val (parsedName, cron) = parseScriptComment(content, node.name)
                                     taskAddingName = parsedName
                                     taskAddingCommand = "task ${node.path}"
                                     taskAddingSchedule = cron
@@ -148,7 +148,7 @@ fun ScriptsScreen(
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = onDismissCreateDialog,
-            title = { Text("脚本管理操作", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("脚本操作", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(
@@ -207,8 +207,8 @@ fun ScriptsScreen(
 
     // 4. 新建文件夹弹窗
     if (showFolderDialog) {
-        CreateFolderStandaloneDialog(
-            existingDirs = extractAllDirectories(uiState.scriptTree),
+        CreateFolderDialog(
+            existingDirs = extractDirectories(uiState.scriptTree),
             onDismiss = { showFolderDialog = false },
             onConfirm = { folderName, parentDir ->
                 val fullPath = if (parentDir.isEmpty()) folderName else "$parentDir/$folderName"
@@ -238,7 +238,7 @@ fun ScriptsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        "仅支持同目录内重命名；如需移动到其他目录请先复制后在目标目录重建。",
+                        "仅支持同目录重命名；跨目录请复制后在目标目录重建。",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -273,7 +273,7 @@ fun ScriptsScreen(
         }
         AlertDialog(
             onDismissRequest = { taskAddingNode = null },
-            title = { Text("添加到定时任务", fontSize = 15.sp) },
+            title = { Text("添加任务", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("从脚本 [${node.name}] 创建定时任务：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -598,7 +598,7 @@ fun filterScriptTree(nodes: List<ScriptNode>, query: String): List<ScriptNode> {
 }
 
 // 提取脚本注释中嵌入的 Cron 与名称 (仅扫描文件头前 8KB，避免大文件扫描造成卡顿或 OOM)
-fun parseScriptCommentInfo(content: String, fileName: String): Pair<String, String> {
+fun parseScriptComment(content: String, fileName: String): Pair<String, String> {
     val defaultName = fileName.substringBeforeLast(".")
     val header = if (content.length > 8192) content.substring(0, 8192) else content
     val cronRegex = Regex("""(?:cron|\bcronexp)\s*[:=]?\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
@@ -610,7 +610,7 @@ fun parseScriptCommentInfo(content: String, fileName: String): Pair<String, Stri
 }
 
 // 递归提取所有已有目录供选择
-fun extractAllDirectories(nodes: List<ScriptNode>): List<String> {
+fun extractDirectories(nodes: List<ScriptNode>): List<String> {
     val dirs = mutableListOf<String>()
     fun traverse(list: List<ScriptNode>) {
         for (item in list) {
@@ -626,7 +626,7 @@ fun extractAllDirectories(nodes: List<ScriptNode>): List<String> {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreateFolderStandaloneDialog(
+fun CreateFolderDialog(
     existingDirs: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (String, String) -> Unit

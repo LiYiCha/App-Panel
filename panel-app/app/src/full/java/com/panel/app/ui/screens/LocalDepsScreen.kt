@@ -1,7 +1,10 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,8 +12,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,7 +30,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.SearchPillField
 import com.panel.app.util.LocalScriptKit
+import com.panel.app.util.MirrorManager
 import com.panel.corescript.deps.JsDepInfo
 import com.panel.corescript.deps.PyDepInfo
 import kotlinx.coroutines.launch
@@ -53,6 +62,11 @@ fun DepsTabContent() {
     var deletingDep by remember { mutableStateOf<Any?>(null) }
     // 搜索过滤
     var searchQuery by remember { mutableStateOf("") }
+    // 折叠的分组（"py"/"js"，默认全部展开；页面生命周期内记忆）
+    var collapsedGroups by remember { mutableStateOf(setOf<String>()) }
+    fun toggleGroup(key: String) {
+        collapsedGroups = if (key in collapsedGroups) collapsedGroups - key else collapsedGroups + key
+    }
 
     // 批量卸载选择模式（key 前缀区分来源："py:目录名" / "js:目录名"）
     var selecting by remember { mutableStateOf(false) }
@@ -75,6 +89,9 @@ fun DepsTabContent() {
     val filteredJs = remember(jsDeps, query) {
         if (query.isEmpty()) jsDeps else jsDeps.filter { it.name.contains(query, ignoreCase = true) }
     }
+    // 搜索命中时强制展开对应分组（忽略折叠态），清空后恢复
+    val pyCollapsed = "py" in collapsedGroups && !(query.isNotEmpty() && filteredPy.isNotEmpty())
+    val jsCollapsed = "js" in collapsedGroups && !(query.isNotEmpty() && filteredJs.isNotEmpty())
 
     Column(
         modifier = Modifier
@@ -86,7 +103,7 @@ fun DepsTabContent() {
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(10.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
             if (selecting) {
                 Row(
@@ -159,15 +176,11 @@ fun DepsTabContent() {
         }
 
         // 搜索框（常驻）
-        OutlinedTextField(
+        SearchPillField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索已安装依赖…", fontSize = 11.sp) },
-            singleLine = true,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
+            placeholder = "搜索已安装依赖…",
+            modifier = Modifier.padding(top = 8.dp)
         )
 
         LazyColumn(
@@ -175,92 +188,96 @@ fun DepsTabContent() {
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            // ==================== Python 依赖 ====================
-            item(key = "py_header") {
-                SectionHeader(
-                    title = "Python 依赖",
-                    count = filteredPy.size,
-                    desc = "纯 Python 包，运行时注入 sys.path",
-                    onInstall = { showInstallDialog = false }
-                )
-            }
-            item(key = "py_group") {
+            // ==================== 下载源（统一镜像行，位于两组分组卡上方） ====================
+            item(key = "mirror_card") {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ) {
-                    Column {
-                        // PyPI 下载源：分组卡首行（应用级设置，就近管理）
-                        MirrorPickerRow(
-                            label = "PyPI 下载源",
-                            subtitle = "wheel 下载源",
-                            type = com.panel.app.util.MirrorManager.Type.PYPI,
-                            divider = { if (filteredPy.isNotEmpty()) HorizontalDivider() }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("下载源", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        MirrorSourceChip(label = "PyPI", type = MirrorManager.Type.PYPI)
+                        MirrorSourceChip(label = "npm", type = MirrorManager.Type.NPM)
+                    }
+                }
+            }
+
+            // ==================== Python 依赖（可折叠分组卡） ====================
+            item(key = "py_card") {
+                DepGroupCard(
+                    langLabel = "PY",
+                    title = "Python 依赖",
+                    desc = "纯 Python 包，运行时注入 sys.path",
+                    count = filteredPy.size,
+                    collapsed = pyCollapsed,
+                    primary = true,
+                    onToggle = { toggleGroup("py") },
+                    onInstall = { showInstallDialog = false }
+                ) {
+                    if (filteredPy.isEmpty()) {
+                        SectionEmpty(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            text = if (query.isEmpty()) "暂无依赖（基础包已预置）" else "无匹配依赖"
                         )
-                        if (filteredPy.isEmpty()) {
-                            SectionEmpty(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                text = if (query.isEmpty()) "暂无依赖，requests 等基础包已预置" else "无匹配的 Python 依赖"
+                    } else {
+                        filteredPy.forEachIndexed { index, dep ->
+                            if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            DepRow(
+                                title = dep.name,
+                                subtitle = "v${dep.version} · ${formatSize(dep.sizeBytes)}",
+                                selecting = selecting,
+                                selected = "py:${dep.dirName}" in selectedKeys,
+                                onClick = { toggleSelect("py:${dep.dirName}") },
+                                onLongClick = { selecting = true },
+                                onDelete = { deletingDep = dep }
                             )
-                        } else {
-                            filteredPy.forEachIndexed { index, dep ->
-                                if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                DepRow(
-                                    title = dep.name,
-                                    subtitle = "v${dep.version} · ${formatSize(dep.sizeBytes)}",
-                                    selecting = selecting,
-                                    selected = "py:${dep.dirName}" in selectedKeys,
-                                    onClick = { toggleSelect("py:${dep.dirName}") },
-                                    onLongClick = { selecting = true },
-                                    onDelete = { deletingDep = dep }
-                                )
-                            }
                         }
                     }
                 }
             }
 
-            // ==================== JS 依赖 ====================
-            item(key = "js_header") {
-                SectionHeader(
+            // ==================== JS 依赖（可折叠分组卡） ====================
+            item(key = "js_card") {
+                DepGroupCard(
+                    langLabel = "JS",
                     title = "JS 依赖（npm）",
-                    count = filteredJs.size,
                     desc = "纯 JS 包，require('包名') 引用",
+                    count = filteredJs.size,
+                    collapsed = jsCollapsed,
+                    primary = false,
+                    onToggle = { toggleGroup("js") },
                     onInstall = { showInstallDialog = true }
-                )
-            }
-            item(key = "js_group") {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ) {
                     if (filteredJs.isEmpty()) {
                         SectionEmpty(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            text = if (query.isEmpty()) "暂无 JS 依赖，可安装 crypto-js、dayjs 等" else "无匹配的 JS 依赖"
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            text = if (query.isEmpty()) "暂无 JS 依赖" else "无匹配 JS 依赖"
                         )
                     } else {
-                        Column {
-                            filteredJs.forEachIndexed { index, dep ->
-                                if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                DepRow(
-                                    title = dep.name,
-                                    subtitle = buildString {
-                                        if (!dep.isTopLevel) append("传递依赖 · ")
-                                        append("v${dep.version} · ${formatSize(dep.sizeBytes)}")
-                                        if (dep.isTopLevel && dep.depCount > 0) append(" · 含 ${dep.depCount} 个依赖")
-                                    },
-                                    selecting = selecting,
-                                    selected = "js:${dep.dirName}" in selectedKeys,
-                                    onClick = { toggleSelect("js:${dep.dirName}") },
-                                    onLongClick = { selecting = true },
-                                    onDelete = { deletingDep = dep }
-                                )
-                            }
+                        filteredJs.forEachIndexed { index, dep ->
+                            if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            DepRow(
+                                title = dep.name,
+                                subtitle = buildString {
+                                    if (!dep.isTopLevel) append("传递依赖 · ")
+                                    append("v${dep.version} · ${formatSize(dep.sizeBytes)}")
+                                    if (dep.isTopLevel && dep.depCount > 0) append(" · 含 ${dep.depCount} 个依赖")
+                                },
+                                selecting = selecting,
+                                selected = "js:${dep.dirName}" in selectedKeys,
+                                onClick = { toggleSelect("js:${dep.dirName}") },
+                                onLongClick = { selecting = true },
+                                onDelete = { deletingDep = dep }
+                            )
                         }
                     }
                 }
@@ -382,7 +399,7 @@ fun DepsTabContent() {
     if (showBatchDialog) {
         AlertDialog(
             onDismissRequest = { showBatchDialog = false },
-            title = { Text("批量卸载依赖", fontSize = 15.sp) },
+            title = { Text("批量卸载", fontSize = 15.sp) },
             text = { Text("确定卸载已选的 ${selectedKeys.size} 个依赖？此操作不可撤销。", fontSize = 12.sp) },
             confirmButton = {
                 TextButton(onClick = {
@@ -417,29 +434,76 @@ fun DepsTabContent() {
     }
 }
 
-/** 分区标题：名称 + 数量 + 说明 + 安装按钮 */
+/** 可折叠依赖分组卡：组头（语言 tile + 标题计数 + 说明 + 安装 + 箭头）点击切换；
+ *  折叠时仅显示组头，展开时渲染 content */
 @Composable
-private fun SectionHeader(title: String, count: Int, desc: String, onInstall: () -> Unit) {
-    Row(
+private fun DepGroupCard(
+    langLabel: String,
+    title: String,
+    desc: String,
+    count: Int,
+    collapsed: Boolean,
+    primary: Boolean,
+    onToggle: () -> Unit,
+    onInstall: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "$title · $count",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+                    .clickable { onToggle() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (primary) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        langLabel,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (primary) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("$title ($count)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                ActionButtonSmall(
+                    icon = Icons.Default.Add,
+                    label = "安装",
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onInstall
+                )
+                Icon(
+                    if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (!collapsed) {
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                content()
+            }
         }
-        ActionButtonSmall(
-            icon = Icons.Default.Add,
-            label = "安装",
-            tint = MaterialTheme.colorScheme.primary,
-            onClick = onInstall
-        )
     }
 }
 
@@ -456,7 +520,7 @@ private fun SectionEmpty(modifier: Modifier = Modifier, text: String) {
 
 /** 依赖紧凑行：名称 + 版本·大小 + 卸载（列表行样式，由分组卡统一包边）；
  *  选择模式下点击切换勾选，长按任意行进入选择模式 */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DepRow(
     title: String,
@@ -474,7 +538,7 @@ private fun DepRow(
                 onClick = if (selecting) onClick else onLongClick,
                 onLongClick = onLongClick
             )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (selecting) {
@@ -488,7 +552,7 @@ private fun DepRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 title,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -503,6 +567,214 @@ private fun DepRow(
             Icon(Icons.Default.Delete, contentDescription = "卸载", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
         }
     }
+}
+
+/** 镜像下载源 chip：展示「前缀 当前源 ▾」，点击弹出源选择（单选 + 自定义增删）；
+ *  两组分组卡共用的统一下载源入口 */
+@Composable
+private fun MirrorSourceChip(label: String, type: MirrorManager.Type) {
+    var showPicker by remember { mutableStateOf(false) }
+    var sources by remember { mutableStateOf(MirrorManager.sources(type)) }
+    var selectedId by remember { mutableStateOf(MirrorManager.selected(type).id) }
+    var addDialog by remember { mutableStateOf(false) }
+
+    fun refresh() {
+        sources = MirrorManager.sources(type)
+        selectedId = MirrorManager.selected(type).id
+    }
+    val currentName = sources.firstOrNull { it.id == selectedId }?.name ?: "默认"
+    val isPy = type == MirrorManager.Type.PYPI
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable { showPicker = true }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "$label $currentName",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1
+        )
+        Icon(
+            Icons.Default.ArrowDropDown,
+            contentDescription = "选择 $label 下载源",
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    }
+
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text("$label 下载源", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (isPy) "安装纯 Python 包时 wheel 的下载源，改动立即生效"
+                        else "安装 npm 包时 registry 查询与 tarball 的下载源，改动立即生效",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    sources.forEach { source ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    MirrorManager.select(type, source.id)
+                                    refresh()
+                                    showPicker = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = source.id == selectedId,
+                                onClick = {
+                                    MirrorManager.select(type, source.id)
+                                    refresh()
+                                    showPicker = false
+                                }
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(source.name, fontSize = 12.sp)
+                                if (source.url.isNotEmpty()) {
+                                    Text(
+                                        source.url,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (!source.isPreset) {
+                                IconButton(
+                                    onClick = {
+                                        MirrorManager.removeCustom(source.id)
+                                        refresh()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "删除",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { addDialog = true }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("添加自定义源", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(
+                        if (isPy) "自定义源填站点地址（如 https://pypi.example.com）"
+                        else "自定义源填 registry 地址（如 https://registry.npmmirror.com）",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPicker = false }) { Text("完成") }
+            }
+        )
+    }
+
+    if (addDialog) {
+        AddMirrorSourceDialog(
+            type = type,
+            onDismiss = { addDialog = false },
+            onConfirm = { name, url ->
+                val ok = MirrorManager.addCustom(type, name, url)
+                if (ok) refresh()
+                ok
+            }
+        )
+    }
+}
+
+/** 添加自定义镜像源对话框（名称 + 地址校验） */
+@Composable
+private fun AddMirrorSourceDialog(
+    type: MirrorManager.Type,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, url: String) -> Boolean
+) {
+    var name by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (type == MirrorManager.Type.PYPI) "添加 PyPI 依赖源" else "添加 npm 下载源",
+                fontSize = 15.sp
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("名称", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = {
+                        Text(
+                            if (type == MirrorManager.Type.PYPI) "站点地址（https://...）"
+                            else "registry 地址（https://...）",
+                            fontSize = 12.sp
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when {
+                        name.isBlank() -> error = "请输入名称"
+                        url.isBlank() -> error = "请输入地址"
+                        !onConfirm(name, url) -> error = "地址需以 http(s):// 开头，名称不超过 30 字"
+                        else -> return@TextButton
+                    }
+                }
+            ) { Text("添加") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }
 
 private fun formatSize(bytes: Long): String = when {

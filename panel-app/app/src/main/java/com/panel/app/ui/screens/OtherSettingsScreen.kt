@@ -33,7 +33,8 @@ fun OtherSettingsScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
     onOpenPermissions: () -> Unit = {},
-    onOpenDevLog: () -> Unit = {}
+    onOpenDevLog: () -> Unit = {},
+    onReplayGuide: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -96,7 +97,7 @@ fun OtherSettingsScreen(
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                     SettingsRow(
                         title = "网络超时",
-                        subtitle = "面板请求超时时间",
+                        subtitle = "面板超时",
                         value = "${selectedTimeout}s >",
                         onClick = { showTimeoutDialog = true }
                     )
@@ -112,10 +113,18 @@ fun OtherSettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
                     SettingsRow(
-                        title = "应用权限管理",
-                        subtitle = "通知 · 安装 · 存储（含通知授权）",
+                        title = "权限管理",
+                        subtitle = "通知 · 安装 · 存储",
                         value = "管理 >",
                         onClick = onOpenPermissions
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                    SettingsRow(
+                        title = "新手引导",
+                        subtitle = "重看功能介绍",
+                        value = "查看 >",
+                        onClick = onReplayGuide
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
@@ -123,7 +132,7 @@ fun OtherSettingsScreen(
                     // （Python 依赖源已移至 本地运行-依赖 Tab 就近管理）
                     MirrorPickerRow(
                         label = "应用更新源",
-                        subtitle = "检查更新后 APK 的下载源",
+                        subtitle = "更新 APK 下载源",
                         type = com.panel.app.util.MirrorManager.Type.UPDATE,
                         divider = {}
                     )
@@ -150,7 +159,7 @@ fun OtherSettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
                     SettingsRow(
-                        title = "检查应用更新",
+                        title = "检查更新",
                         subtitle = "当前 v${BuildConfig.VERSION_NAME}",
                         value = if (isCheckingUpdate) null else "检测 >",
                         onClick = {
@@ -190,7 +199,7 @@ fun OtherSettingsScreen(
     if (showTimeoutDialog) {
         AlertDialog(
             onDismissRequest = { showTimeoutDialog = false },
-            title = { Text("设置请求超时", fontSize = 15.sp) },
+            title = { Text("超时设置", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(10, 15, 30, 60).forEach { seconds ->

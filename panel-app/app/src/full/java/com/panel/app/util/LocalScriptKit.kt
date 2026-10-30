@@ -39,7 +39,13 @@ object LocalScriptKit {
                 MirrorManager.selectedPyPiOrigin()
             }
         )
-        jsDeps = JsDepManager(File(context.filesDir, "js_deps"))
+        jsDeps = JsDepManager(
+            File(context.filesDir, "js_deps"),
+            mirrorProvider = {
+                // 每次下载时动态取当前 npm 镜像源（设置页改动即时生效）
+                MirrorManager.selectedNpmOrigin()
+            }
+        )
         ScriptRunBus.externalLogger = { level, tag, message ->
             AppLogger.log(
                 if (level == "ERROR") LogLevel.ERROR else LogLevel.INFO,

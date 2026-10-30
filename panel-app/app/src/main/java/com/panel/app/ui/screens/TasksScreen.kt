@@ -82,9 +82,12 @@ fun TasksScreen(
     onOpenLog: (String) -> Unit,
     currentSubTab: Int = 0,
     sortType: TaskSortType = TaskSortType.DEFAULT,
-    onSortTypeChange: (TaskSortType) -> Unit = {}
+    onSortTypeChange: (TaskSortType) -> Unit = {},
+    /** 引导页预览专用：非空时替代真实任务列表，仅展示不落库 */
+    previewTasks: List<UnifiedTask>? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val baseTasks = previewTasks ?: uiState.tasks
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("all") }
@@ -96,11 +99,11 @@ fun TasksScreen(
         buildScriptSizeMap(uiState.scriptTree)
     }
 
-    val filteredTasks = remember(searchQuery, selectedFilter, sortType, uiState.tasks) {
+    val filteredTasks = remember(searchQuery, selectedFilter, sortType, baseTasks) {
         val bySearch = if (searchQuery.isEmpty()) {
-            uiState.tasks
+            baseTasks
         } else {
-            uiState.tasks.filter { task ->
+            baseTasks.filter { task ->
                 task.name.contains(searchQuery, ignoreCase = true) ||
                         task.command.contains(searchQuery, ignoreCase = true) ||
                         task.schedule.contains(searchQuery, ignoreCase = true)
@@ -143,7 +146,7 @@ fun TasksScreen(
         }
     }
 
-    val selectedTasks = remember(uiState.tasks) { uiState.tasks.filter { it.selected } }
+    val selectedTasks = remember(baseTasks) { baseTasks.filter { it.selected } }
     val allSelected = remember(filteredTasks, selectedTasks) { filteredTasks.isNotEmpty() && filteredTasks.all { it.selected } }
 
     Column(
@@ -161,10 +164,10 @@ fun TasksScreen(
         )
 
         // 3. 任务状态筛选药丸（排序/批量/新建已收进顶栏，本行只留筛选）
-        val totalCount = uiState.tasks.size
-        val runningCount = uiState.tasks.count { it.isRunning }
-        val enabledCount = uiState.tasks.count { !it.isDisabled }
-        val disabledCount = uiState.tasks.count { it.isDisabled }
+        val totalCount = baseTasks.size
+        val runningCount = baseTasks.count { it.isRunning }
+        val enabledCount = baseTasks.count { !it.isDisabled }
+        val disabledCount = baseTasks.count { it.isDisabled }
 
         Row(
             modifier = Modifier
@@ -355,7 +358,7 @@ fun TasksScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
                             Spacer(Modifier.height(8.dp))
-                            Text(if (uiState.isLoading) "正在刷新任务..." else "暂无匹配的定时任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (uiState.isLoading) "正在刷新任务..." else "暂无定时任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 } else {

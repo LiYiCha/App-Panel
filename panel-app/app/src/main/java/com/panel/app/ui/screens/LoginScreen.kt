@@ -47,7 +47,9 @@ fun LoginScreen(
     editPanel: PanelInstance? = null,
     onBack: (() -> Unit)? = null,
     onEnterLocalMode: (() -> Unit)? = null,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: () -> Unit,
+    /** 引导页预览专用：预填示例地址与账号，仅展示不参与登录 */
+    preview: Boolean = false
 ) {
     // 从面板管理等上级页面进入时，返回键应回到上一页；
     // 作为根页面（没有上级回退栈）时不拦截，交给系统退出应用
@@ -59,9 +61,15 @@ fun LoginScreen(
 
     var panelType by remember(editPanel) { mutableStateOf(editPanel?.type ?: PanelType.BAIHU) }
     var panelName by remember(editPanel) { mutableStateOf(editPanel?.name ?: "白虎面板") }
-    var baseUrl by remember(editPanel) { mutableStateOf(editPanel?.baseUrl ?: "") }
-    var username by remember(editPanel) { mutableStateOf(editPanel?.username ?: "") }
-    var password by remember(editPanel) { mutableStateOf(editPanel?.password ?: "") }
+    var baseUrl by remember(editPanel) {
+        mutableStateOf(editPanel?.baseUrl ?: if (preview) "http://192.168.1.100:5700" else "")
+    }
+    var username by remember(editPanel) {
+        mutableStateOf(editPanel?.username ?: if (preview) "admin" else "")
+    }
+    var password by remember(editPanel) {
+        mutableStateOf(editPanel?.password ?: if (preview) "123456" else "")
+    }
     var isPasswordVisible by remember { mutableStateOf(false) }
 
     // 两步验证：内联在登录表单里（不再弹独立对话框）。
@@ -83,7 +91,7 @@ fun LoginScreen(
         // 第二段：账号密码已被服务端确认，此时同一个按钮提交动态验证码
         if (twoFactorPending) {
             if (twoFactorCode.isBlank()) {
-                errorMessage = "请输入验证器中的动态验证码"
+                errorMessage = "请输入动态验证码"
                 return
             }
             focusManager.clearFocus()
@@ -98,11 +106,11 @@ fun LoginScreen(
             return
         }
         if (baseUrl.isBlank()) {
-            errorMessage = "请输入面板服务地址"
+            errorMessage = "请输入面板地址"
             return
         }
         if (username.isBlank() || password.isBlank()) {
-            errorMessage = "请输入登录账号与密码"
+            errorMessage = "请输入账号与密码"
             return
         }
         // 地址在提交前先校验并规范化：漏写 http:// 会自动补全并回显给用户；
@@ -115,7 +123,7 @@ fun LoginScreen(
         errorMessage = null
         focusManager.clearFocus()
 
-        viewModel.authenticateAndSavePanel(
+        viewModel.loginAndSavePanel(
             existingId = editPanel?.id,
             name = panelName.ifBlank { if (panelType == PanelType.BAIHU) "白虎面板" else "青龙面板" },
             type = panelType,
@@ -209,7 +217,7 @@ fun LoginScreen(
             )
 
             Text(
-                text = if (isSwitchAccount) "修改信息并切换登录账号" else "青龙与白虎面板登录",
+                text = if (isSwitchAccount) "修改信息并切换账号" else "面板登录",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

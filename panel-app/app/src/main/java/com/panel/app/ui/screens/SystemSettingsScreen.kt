@@ -35,7 +35,7 @@ fun SystemSettingsScreen(
                 title = {
                     Column {
                         Text(
-                            if (panelType == PanelType.BAIHU) "白虎系统状态与配置" else "青龙系统高级配置",
+                            if (panelType == PanelType.BAIHU) "白虎配置" else "青龙配置",
                             fontSize = 15.sp,
                             style = MaterialTheme.typography.titleMedium
                         )

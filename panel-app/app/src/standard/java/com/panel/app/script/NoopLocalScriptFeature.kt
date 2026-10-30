@@ -1,6 +1,7 @@
 package com.panel.app.script
 
 import android.app.Application
+import androidx.compose.runtime.Composable
 import androidx.navigation.NavGraphBuilder
 import javax.inject.Inject
 
@@ -10,6 +11,8 @@ class NoopLocalScriptFeature @Inject constructor() : LocalScriptFeature {
     override val localModeRoute: String? = null
     override fun init(app: Application) {}
     override fun installRoutes(nav: NavGraphBuilder, openRoute: (String) -> Unit, popBack: () -> Unit) {}
+    @Composable
+    override fun CenterContent(initialTab: Int, onOpenEditor: (String) -> Unit, onOpenConsole: (String) -> Unit) {}
     override fun backupCount(): Int? = null
     override fun exportForBackup(): List<LocalScriptBackupItem>? = null
     override fun restoreFromBackup(items: List<LocalScriptBackupItem>): com.panel.app.data.backup.RestoreReport? = null

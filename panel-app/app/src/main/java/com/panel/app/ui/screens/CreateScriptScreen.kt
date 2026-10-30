@@ -101,7 +101,7 @@ console.log("Hello from 烛龙!");
             }
 
             // 智能提取脚本头部元数据 (new Env, cron, command)
-            val (parsedName, parsedCron) = parseScriptCommentInfo(readContent, pickedName)
+            val (parsedName, parsedCron) = parseScriptComment(readContent, pickedName)
             val cleanName = pickedName.trim()
             val fullPath = if (selectedDir.isEmpty()) cleanName else "$selectedDir/$cleanName"
             val parsedCmd = when {
@@ -398,10 +398,10 @@ console.log("Hello from 烛龙!");
         AlertDialog(
             onDismissRequest = { showBinaryErrorDialog = false },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(32.dp)) },
-            title = { Text("不支持上传该文件类型", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("无法上传", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "您选择的是二进制文件（如 APK、ZIP 等安装或压缩包）。青龙与白虎面板属于脚本运行容器，仅支持执行文本代码文件（.py、.js、.ts、.sh 等）。面板无法运行或查看二进制 APK 文件。",
+                    "所选为二进制文件（如 APK、ZIP）。青龙与白虎面板是脚本运行容器，仅支持文本代码（.py、.js、.ts、.sh 等）。",
                     fontSize = 12.sp
                 )
             },
@@ -418,10 +418,10 @@ console.log("Hello from 烛龙!");
         AlertDialog(
             onDismissRequest = { showSmartTaskDialog = false },
             icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp)) },
-            title = { Text("智能识别到脚本任务配置", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("任务配置", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("检测到导入的脚本包含定时调度元数据，是否同步注册为定时任务？", fontSize = 12.sp)
+                    Text("脚本包含定时调度元数据，是否注册为定时任务？", fontSize = 12.sp)
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(8.dp),
@@ -450,9 +450,9 @@ console.log("Hello from 烛龙!");
                     taskName = smartTaskName
                     cronSchedule = smartTaskCron
                     showSmartTaskDialog = false
-                    Toast.makeText(context, "已为您开启并填入定时任务配置！", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "已填入任务配置", Toast.LENGTH_SHORT).show()
                 }) {
-                    Text("同步添加定时任务", fontSize = 12.sp)
+                    Text("同步添加", fontSize = 12.sp)
                 }
             },
             dismissButton = {

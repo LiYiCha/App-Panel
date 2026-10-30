@@ -50,7 +50,7 @@ fun StandaloneDepsScreen(
     var selectedStatus by remember { mutableStateOf("all") }
     var deletingDep by remember { mutableStateOf<UnifiedDep?>(null) }
     var viewingLogDep by remember { mutableStateOf<UnifiedDep?>(null) }
-    var depLogContent by remember { mutableStateOf("正在获取安装与构建日志...") }
+    var depLogContent by remember { mutableStateOf("正在获取日志...") }
 
     val filteredDeps = remember(searchQuery, selectedType, selectedStatus, uiState.deps) {
         uiState.deps.filter { dep ->
@@ -77,8 +77,8 @@ fun StandaloneDepsScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(text = "依赖包管理 (${uiState.deps.size})", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
-                        Text(text = "按面板官方 API 安装与卸载运行环境依赖", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text = "依赖管理 (${uiState.deps.size})", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                        Text(text = "按面板官方 API 安装与卸载依赖", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 navigationIcon = {
@@ -112,7 +112,7 @@ fun StandaloneDepsScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("搜索已安装的依赖包名称或备注...", fontSize = 12.sp) },
+                placeholder = { Text("搜索依赖名称或备注...", fontSize = 12.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -275,7 +275,7 @@ fun StandaloneDepsScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
                                 Spacer(Modifier.height(8.dp))
-                                Text(if (uiState.isLoading) "正在同步依赖列表..." else "未发现符合条件的依赖包", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (uiState.isLoading) "正在同步依赖列表..." else "暂无匹配依赖", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     } else {
@@ -446,10 +446,10 @@ fun StandaloneDepsScreen(
     if (deletingDep != null) {
         AlertDialog(
             onDismissRequest = { deletingDep = null },
-            title = { Text("确认卸载依赖包", fontSize = 16.sp) },
+            title = { Text("确认卸载", fontSize = 16.sp) },
             text = {
                 Text(
-                    text = "确定要从服务端卸载依赖包 [${deletingDep!!.name}] 吗？\n卸载后依赖此包的定时任务脚本可能会执行报错。",
+                    text = "卸载依赖 [${deletingDep!!.name}]？\n依赖此包的任务脚本可能报错。",
                     fontSize = 13.sp
                 )
             },
@@ -505,7 +505,7 @@ fun StandaloneDepsScreen(
             dismissButton = {
                 OutlinedButton(onClick = {
                     clipboardManager.setText(AnnotatedString(depLogContent))
-                    Toast.makeText(context, "依赖日志已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "依赖日志已复制", Toast.LENGTH_SHORT).show()
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
@@ -528,7 +528,7 @@ fun InstallDepDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("安装环境依赖包", fontSize = 16.sp) },
+        title = { Text("安装依赖", fontSize = 16.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // 依赖环境类型选择 (对齐官方 Node.js / Python3 / Linux)

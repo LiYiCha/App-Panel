@@ -16,48 +16,29 @@ import kotlinx.coroutines.launch
 /**
  * 本地运行中心：本地脚本域单页整合（Tab：脚本 | 依赖 | 运行记录）。
  * 编辑器与运行控制台仍为独立路由，从中心页跳入。
+ * embedded=true 时不带页面壳（无 Scaffold/TopAppBar），由主流程提供顶栏与 Dock；
+ * standalone（登录页/设置页入口、local_center 路由）保持完整壳。
  * 下载加速镜像为应用级设置，已在设置页「其他」二级页管理。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScriptCenterScreen(
     initialTab: Int = 0,
-    onBack: () -> Unit,
+    embedded: Boolean = false,
+    onBack: () -> Unit = {},
     onOpenEditor: (String) -> Unit,
     onOpenConsole: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    BackHandler { onBack() }
+    if (!embedded) BackHandler { onBack() }
 
     val pagerState = rememberPagerState(initialPage = initialTab.coerceIn(0, 2)) { 3 }
     val tabs = listOf("脚本", "依赖", "运行记录")
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                title = {
-                    Column {
-                        Text("本地模式", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
-                        Text("在设备上运行 JS / Python 脚本，无需登录面板", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", modifier = Modifier.size(18.dp))
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
+    val centerTabs: @Composable (Modifier) -> Unit = { modifier ->
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
-                .padding(innerPadding)
         ) {
             TabRow(
                 selectedTabIndex = pagerState.currentPage,
@@ -83,11 +64,40 @@ fun ScriptCenterScreen(
                         onOpenConsole = onOpenConsole
                     )
                     1 -> DepsTabContent()
-                    else -> RunHistoryTabContent(
+                    else -> RunHistoryTab(
                         onOpenRun = onOpenConsole
                     )
                 }
             }
+        }
+    }
+
+    if (embedded) {
+        centerTabs(Modifier)
+    } else {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    title = {
+                        Column {
+                            Text("本地模式", fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                            Text("在设备上运行 JS / Python 脚本，无需登录面板", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                )
+            }
+        ) { innerPadding ->
+            centerTabs(Modifier.padding(innerPadding))
         }
     }
 }

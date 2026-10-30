@@ -52,6 +52,7 @@ fun BackupRestoreScreen(
 
     var includeTasks by remember { mutableStateOf(true) }
     var includeEnvs by remember { mutableStateOf(true) }
+    var includeEnvSegRules by remember { mutableStateOf(false) }
     var includeScripts by remember { mutableStateOf(false) }
     var includeConfigs by remember { mutableStateOf(false) }
     var includeLocalScripts by remember { mutableStateOf(false) }
@@ -61,11 +62,14 @@ fun BackupRestoreScreen(
 
     // 本地脚本库条目数（standard 变体为 null，隐藏该类别）
     val localScriptCount = remember { viewModel.localScriptBackupCount() }
+    // 环境变量分段规则条目数
+    val envSegCount = remember { viewModel.envSegBackupCount() }
 
     // 导入预览状态
     var previewData by remember { mutableStateOf<PreviewRestoreData?>(null) }
     var selectedTasks by remember { mutableStateOf<List<BackupTask>>(emptyList()) }
     var selectedEnvs by remember { mutableStateOf<List<BackupEnv>>(emptyList()) }
+    var selectedSegRules by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var selectedScripts by remember { mutableStateOf<List<BackupScript>>(emptyList()) }
     var selectedConfigs by remember { mutableStateOf<List<BackupConfigFile>>(emptyList()) }
     var selectedLocalScripts by remember { mutableStateOf<List<BackupLocalScript>>(emptyList()) }
@@ -100,6 +104,7 @@ fun BackupRestoreScreen(
             // 初始化选中状态为全选
             selectedTasks = data.tasks
             selectedEnvs = data.envs
+            selectedSegRules = data.envSegRules.entries.map { it.key to it.value }
             selectedScripts = data.scripts
             selectedConfigs = data.configFiles
             selectedLocalScripts = data.localScripts
@@ -114,7 +119,7 @@ fun BackupRestoreScreen(
             isWorking = true
             viewModel.buildBackup(
                 includeTasks, includeEnvs, includeScripts, includeConfigs,
-                includeLocalScripts, includePanels
+                includeLocalScripts, includePanels, includeEnvSegRules
             ) { json ->
                 writeToUri(uri, json ?: "")
                 isWorking = false
@@ -205,6 +210,15 @@ fun BackupRestoreScreen(
                             )
                             HorizontalDivider()
                             BackupCategoryRow(
+                                checked = includeEnvSegRules,
+                                onCheckedChange = { includeEnvSegRules = it },
+                                icon = Icons.Default.CallSplit,
+                                title = "分段规则",
+                                subtitle = "分隔符配置（本机生效，不经面板）",
+                                count = envSegCount
+                            )
+                            HorizontalDivider()
+                            BackupCategoryRow(
                                 checked = includeScripts,
                                 onCheckedChange = { includeScripts = it },
                                 icon = Icons.Default.Code,
@@ -219,7 +233,7 @@ fun BackupRestoreScreen(
                                     onCheckedChange = { includeLocalScripts = it },
                                     icon = Icons.Default.Folder,
                                     title = "本地脚本库",
-                                    subtitle = "脚本内容与文件夹归属（在本机运行，不经面板）",
+                                    subtitle = "脚本与文件夹（本机运行，不经面板）",
                                     count = localScriptCount
                                 )
                             }
@@ -238,7 +252,7 @@ fun BackupRestoreScreen(
                                 onCheckedChange = { includePanels = it },
                                 icon = Icons.Default.Dns,
                                 title = "面板实例",
-                                subtitle = "名称 / 地址 / 类型 / 登录凭据（明文存储，谨慎分享备份文件）",
+                                subtitle = "名称 / 地址 / 类型 / 凭据（明文，谨慎分享）",
                                 count = uiState.panels.size
                             )
                         }
@@ -250,7 +264,7 @@ fun BackupRestoreScreen(
                         Button(
                             onClick = {
                                 val anyChecked = includeTasks || includeEnvs || includeScripts || includeConfigs ||
-                                    includeLocalScripts || includePanels
+                                    includeLocalScripts || includePanels || includeEnvSegRules
                                 if (!anyChecked) {
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         Toast.makeText(context, "请至少勾选一项备份内容", Toast.LENGTH_SHORT).show()
@@ -336,6 +350,27 @@ fun BackupRestoreScreen(
                             selectedItemCount = selectedEnvs.size
                         ) { env ->
                             EnvItemRow(env)
+                        }
+                    }
+                }
+
+                // 环境变量分段规则选择
+                previewData?.takeIf { it.envSegRules.isNotEmpty() }?.let { pd ->
+                    val segItems = pd.envSegRules.entries.map { it.key to it.value }
+                    item {
+                        SelectableItemList(
+                            items = segItems,
+                            selectedItems = selectedSegRules,
+                            onSelectAll = { selectedSegRules = segItems },
+                            onDeselectAll = { selectedSegRules = emptyList() },
+                            onToggleItem = { item, checked ->
+                                selectedSegRules = if (checked) selectedSegRules + item
+                                else selectedSegRules - item
+                            },
+                            itemCount = segItems.size,
+                            selectedItemCount = selectedSegRules.size
+                        ) { (key, value) ->
+                            SegRuleItemRow(key, value)
                         }
                     }
                 }
@@ -438,7 +473,8 @@ fun BackupRestoreScreen(
                             onClick = {
                                 val hasSelection = selectedTasks.isNotEmpty() || selectedEnvs.isNotEmpty() ||
                                     selectedScripts.isNotEmpty() || selectedConfigs.isNotEmpty() ||
-                                    selectedLocalScripts.isNotEmpty() || selectedPanels.isNotEmpty()
+                                    selectedLocalScripts.isNotEmpty() || selectedPanels.isNotEmpty() ||
+                                    selectedSegRules.isNotEmpty()
                                 if (!hasSelection) {
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         Toast.makeText(context, "请至少选择一项要恢复的内容", Toast.LENGTH_SHORT).show()
@@ -456,6 +492,7 @@ fun BackupRestoreScreen(
                                     selectedConfigs = selectedConfigs,
                                     selectedLocalScripts = selectedLocalScripts,
                                     selectedPanels = selectedPanels,
+                                    selectedEnvSegRules = selectedSegRules.toMap(),
                                     onResult = { result, error ->
                                         isWorking = false
                                         if (error != null) {
@@ -609,6 +646,19 @@ private fun EnvItemRow(env: BackupEnv) {
         Text(
             env.value.takeIf { it.isNotBlank() }?.let { "值: ${it.take(50)}${if (it.length > 50) "..." else ""}" }
                 ?: "空值",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun SegRuleItemRow(key: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(key.removePrefix("seg_"), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            value.takeIf { it.isNotBlank() }?.let { "规则: ${it.take(60)}${if (it.length > 60) "..." else ""}" }
+                ?: "空规则",
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

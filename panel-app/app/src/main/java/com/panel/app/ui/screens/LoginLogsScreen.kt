@@ -119,7 +119,7 @@ fun LoginLogsScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text(if (searchQuery.isEmpty()) "暂无登录日志记录" else "未匹配到相关登录日志", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (searchQuery.isEmpty()) "暂无日志" else "无匹配日志", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else {

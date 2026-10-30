@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -34,6 +35,22 @@ import com.panel.app.data.logger.LogLevel
 import com.panel.app.data.logger.LogStorage
 import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.FolderLauncher
+
+/** 图标动作按钮：图标下方带精简文言，一眼看清每个按钮的用途 */
+@Composable
+private fun LabeledIconAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp))
+        }
+        Text(
+            text = label,
+            fontSize = 8.sp,
+            maxLines = 1,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,15 +106,12 @@ fun DeveloperConsoleScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
+                    // 复制当前分类+搜索过滤后的全部日志明细（原行内"复制"chip 已收敛到此）
+                    LabeledIconAction(Icons.Default.ContentCopy, "复制") {
                         val allText = filteredLogs.joinToString("\n\n") { it.toClipboardText() }
-                        copyText(allText, "已复制 ${filteredLogs.size} 条日志")
-                    }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "复制全部")
+                        copyText(allText, "已复制当前筛选的 ${filteredLogs.size} 条日志")
                     }
-                    IconButton(onClick = { showClearConfirm = true }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "清除日志")
-                    }
+                    LabeledIconAction(Icons.Default.DeleteSweep, "清空") { showClearConfirm = true }
                 }
             )
         }
@@ -126,8 +140,8 @@ fun DeveloperConsoleScreen(
                     onCheckedChange = { viewModel.toggleDevMode(it) },
                     modifier = Modifier.scale(0.65f)
                 )
-                IconButton(onClick = { FolderLauncher.open(context, LogStorage.logDirPath()) }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = "打开日志目录", modifier = Modifier.size(18.dp))
+                LabeledIconAction(Icons.Default.FolderOpen, "目录") {
+                    FolderLauncher.open(context, LogStorage.logDirPath())
                 }
             }
 
@@ -171,6 +185,7 @@ fun DeveloperConsoleScreen(
                 singleLine = true,
                 textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
             )
+            // 分类筛选行：只保留筛选职责，复制动作统一收敛到顶栏图标
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(
                     "ALL" to "全部(${logs.size})",
@@ -184,25 +199,6 @@ fun DeveloperConsoleScreen(
                         modifier = Modifier.height(26.dp)
                     )
                 }
-                // 复制当前分类+搜索过滤后的日志，便于导出分析
-                FilterChip(
-                    selected = false,
-                    onClick = {
-                        val text = filteredLogs.takeLast(2000).joinToString("\n") { e ->
-                            buildString {
-                                append(e.timestamp).append(" [").append(e.level).append("]")
-                                if (e.tag.isNotBlank()) append("[").append(e.tag).append("]")
-                                append(" ").append(e.message)
-                                e.responseBody?.takeIf { it.isNotBlank() }?.let { append("\n  Resp: ").append(it.take(800)) }
-                                e.error?.takeIf { it.isNotBlank() }?.let { append("\n  Err: ").append(it.take(800)) }
-                            }
-                        }
-                        clipboardManager.setText(AnnotatedString(text))
-                        Toast.makeText(context, "已复制 ${filteredLogs.size} 条日志", Toast.LENGTH_SHORT).show()
-                    },
-                    label = { Text("复制", fontSize = 10.sp) },
-                    modifier = Modifier.height(26.dp)
-                )
             }
 
             // 日志列表：一行一条，点击弹出详情

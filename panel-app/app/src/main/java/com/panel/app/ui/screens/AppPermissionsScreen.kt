@@ -155,7 +155,7 @@ fun AppPermissionsScreen(
                 title = "通知权限",
                 desc = "任务执行通知、更新提醒推送",
                 granted = perms.notificationEnabled,
-                onClick = { openAppNotificationSettings(context) }
+                onClick = { openNotificationSettings(context) }
             )
             PermissionCard(
                 icon = Icons.Default.AppRegistration,
@@ -164,7 +164,7 @@ fun AppPermissionsScreen(
                 title = "安装未知应用",
                 desc = "从应用内下载并安装更新包",
                 granted = perms.canInstallPackages,
-                onClick = { openInstallPermissionSettings(context) }
+                onClick = { openInstallSettings(context) }
             )
 
             // ===== 存储 =====
@@ -177,7 +177,7 @@ fun AppPermissionsScreen(
                 desc = "使用应用专属目录（Android/media），无需手动授权",
                 granted = true,
                 grantedLabel = "无需授权",
-                onClick = { openAppDetailsSettings(context) }
+                onClick = { openAppSettings(context) }
             )
 
             // ===== 更多 =====
@@ -275,7 +275,7 @@ private fun readPermissionState(context: android.content.Context): PermissionSta
     return PermissionState(notificationEnabled, canInstall, storageHandled)
 }
 
-private fun openAppNotificationSettings(context: android.content.Context) {
+private fun openNotificationSettings(context: android.content.Context) {
     runCatching {
         context.startActivity(
             Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
@@ -284,11 +284,11 @@ private fun openAppNotificationSettings(context: android.content.Context) {
             }
         )
     }.onFailure {
-        openAppDetailsSettings(context)
+        openAppSettings(context)
     }
 }
 
-private fun openInstallPermissionSettings(context: android.content.Context) {
+private fun openInstallSettings(context: android.content.Context) {
     runCatching {
         context.startActivity(
             Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
@@ -307,7 +307,7 @@ private fun openInstallPermissionSettings(context: android.content.Context) {
     }
 }
 
-private fun openAppDetailsSettings(context: android.content.Context) {
+private fun openAppSettings(context: android.content.Context) {
     runCatching {
         context.startActivity(
             Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {

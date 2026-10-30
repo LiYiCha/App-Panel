@@ -1,5 +1,7 @@
 package com.panel.app.data.remote.api
 
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import com.google.gson.annotations.SerializedName
 import com.panel.app.data.remote.ApiEnvelope
 import retrofit2.Response
@@ -21,16 +23,16 @@ import retrofit2.http.*
 data class QlTokenResp(
     override val code: Int?,
     override val message: String?,
-    val data: QlTokenData?
+    // data 形状不固定：成功登录是 {token,...} 对象；限流 410 时服务端直接返回数字（等待秒数），
+    // 声明成对象类型会让 Gson 抛 "Expected BEGIN_OBJECT but was NUMBER"，整次登录被误判成网络失败
+    val data: JsonElement?
 ) : ApiEnvelope {
     override val msg: String? get() = null
 }
 
-data class QlTokenData(
-    val token: String?,
-    val token_type: String?,
-    val expiration: Long?
-)
+/** data 为对象时取 token，其余形状（数字/缺失）返回 null，由业务 code 分支给出提示 */
+fun QlTokenResp.tokenOrNull(): String? =
+    (data as? JsonObject)?.get("token")?.takeIf { it.isJsonPrimitive }?.asString
 
 // ---------------------------------------------------------------- 任务
 

@@ -3,7 +3,6 @@ package com.panel.app.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.graphicsLayer
@@ -22,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -39,13 +39,14 @@ import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.UnifiedEnv
 import com.panel.app.data.parser.UniversalEnvParser
 import com.google.gson.Gson
+
 import com.panel.app.ui.components.SearchPillField
 import com.panel.app.ui.components.StatusBadge
 import com.panel.app.ui.components.StatusTone
-import com.panel.app.ui.viewmodel.MainViewModel
 import okhttp3.OkHttpClient
-import okhttp3.Request
+import com.panel.app.ui.viewmodel.MainViewModel
 import java.util.concurrent.TimeUnit
+import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,11 +101,17 @@ fun EnvsScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // 药丸形搜索框（三页统一组件）
-        SearchPillField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = "搜索变量名称或备注..."
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SearchPillField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = "搜索变量名称或备注...",
+                modifier = Modifier.weight(1f)
+            )
+        }
 
         // 顶部批量操作栏 (置于顶部，绝不占用主体列表空间)
         if (uiState.isEnvBatchMode) {
@@ -711,51 +718,151 @@ fun EditEnvDialog(
     )
 }
 
+
+// ---- 分段编辑器：按绑定规则拆分（无绑定自动识别），段数固定只改值 ----
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubItemEditorDialog(
     env: UnifiedEnv,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit
 ) {
-    val pairs = remember {
-        mutableStateListOf<Pair<String, String>>().apply {
-            addAll(UniversalEnvParser.parseSubItems(env.name, env.value))
+    val context = LocalContext.current
+    // 读取绑定规则（首次读取顺带完成旧配置迁移）；无绑定走自动识别
+    val rule = remember(env.name) { SegRuleStore.ruleFor(context, env.name) }
+    // 账号层分隔：空串 = 不拆账号
+    val acctSep = when {
+        rule == null -> if (env.value.contains("\n")) "\n" else ""
+        rule.acct == ACCT_NONE -> ""
+        rule.acct == ACCT_CUSTOM -> rule.acctCustom.trim()
+        else -> rule.acct
+    }
+    // 字段分隔：null = 自动识别字段
+    val fieldSep = when {
+        rule == null || rule.field == FIELD_AUTO -> null
+        rule.field == FIELD_CUSTOM -> rule.fieldCustom.trim().takeIf { it.isNotEmpty() }
+        else -> rule.field
+    }
+
+    // 段数按规则固定：打开时拆一次，后续只改名称/值
+    val split = remember(env.name, rule) {
+        val normalized = env.value.replace("\r\n", "\n")
+        val acctTexts = if (acctSep.isEmpty()) listOf(normalized) else normalized.split(acctSep)
+        // 每账号的段列表用快照状态承载：追加/改值才能触发重组（普通 List 变更不可观察）
+        val fieldsList = acctTexts.map { raw ->
+            when {
+                fieldSep == null -> UniversalEnvParser.parseSubItems(env.name, raw)
+                else -> UniversalEnvParser.parseSubItemsWithSeparator(raw, fieldSep)
+            }.toMutableStateList()
+        }
+        acctTexts to fieldsList
+    }
+    // 各账号原始文本：字段「自动」合分时无损还原格式
+    val origAcctTexts = remember(split) { split.first }
+    val accounts = remember(split) {
+        mutableStateListOf<SnapshotStateList<Pair<String, String>>>().apply {
+            addAll(split.second)
+            if (isEmpty()) add(mutableStateListOf<Pair<String, String>>())
         }
     }
+    // 字段总数为 0 时禁用保存，防止把变量值写成空字符串
+    val totalFields = accounts.sumOf { it.size }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("变量分段子项快捷修改器", fontSize = 15.sp) },
+        title = { Text("编辑分段", fontSize = 15.sp) },
         text = {
+            // 用可滚动 Column 替代 LazyColumn：文本选择手柄与长按"全选"菜单在滚动容器内工作更稳定
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 360.dp),
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("修改单字段，合成时自动保留其他字段：", fontSize = 11.sp)
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 280.dp)
-                ) {
-                    itemsIndexed(pairs) { index, pair ->
-                        OutlinedTextField(
-                            value = pair.second,
-                            onValueChange = { newVal -> pairs[index] = Pair(pair.first, newVal) },
-                            label = { Text("修改单字段: ${pair.first}", fontSize = 11.sp) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 8,
-                            singleLine = false
-                        )
+                // 顶部只读摘要：有绑定按规则，无绑定自动识别
+                Text(
+                    text = if (rule != null) {
+                        "按规则「${rule.name}」· 账号 ${acctSepLabel(rule.acct, rule.acctCustom)} · 字段 ${fieldSepLabel(rule.field, rule.fieldCustom)}"
+                    } else "自动识别拆分",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                accounts.forEachIndexed { ai, fields ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (accounts.size > 1) {
+                                Text("账号 ${ai + 1}", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            fields.forEachIndexed { fi, (k, v) ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = k,
+                                        onValueChange = { if (fi < fields.size) fields[fi] = Pair(it, v) },
+                                        label = { Text("名称", fontSize = 10.sp) },
+                                        modifier = Modifier.weight(0.4f),
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
+                                    )
+                                    OutlinedTextField(
+                                        value = v,
+                                        onValueChange = { if (fi < fields.size) fields[fi] = Pair(k, it) },
+                                        label = { Text("值", fontSize = 10.sp) },
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 6,
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
+                                    )
+                                }
+                            }
+                        }
                     }
+                }
+
+                // 快速添加：向当前段列表末尾追加空段（多账号时归入最后一组），不引入删除
+                TextButton(
+                    onClick = { accounts.last().add("" to "") },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("＋ 快速添加一段", fontSize = 12.sp)
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(UniversalEnvParser.assembleSubItems(env.name, pairs, env.value)) }) {
-                Text("拼合并保存", fontSize = 12.sp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // 字段全空时禁用保存（结构固定后属兜底防护）
+                if (totalFields == 0) {
+                    Text("无内容，已禁用保存", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                }
+                Button(
+                    enabled = totalFields > 0,
+                    onClick = {
+                        val acctTexts = accounts.mapIndexed { i, fields ->
+                            if (fieldSep == null) {
+                                UniversalEnvParser.assembleSubItems(env.name, fields, origAcctTexts.getOrElse(i) { "" })
+                            } else {
+                                UniversalEnvParser.assembleSubItemsWithSeparator(fields, fieldSep, origAcctTexts.getOrElse(i) { "" })
+                            }
+                        }
+                        val assembled = if (acctSep.isEmpty()) acctTexts.firstOrNull() ?: ""
+                        else acctTexts.joinToString(acctSep)
+                        onSave(assembled)
+                    }
+                ) {
+                    Text("保存", fontSize = 12.sp)
+                }
             }
         },
         dismissButton = {

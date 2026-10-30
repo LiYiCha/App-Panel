@@ -2,6 +2,7 @@ package com.panel.app.script
 
 import android.app.Application
 import android.net.Uri
+import androidx.compose.runtime.Composable
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.composable
@@ -69,6 +70,16 @@ class DefaultLocalScriptFeature @Inject constructor() : LocalScriptFeature {
                 onBack = popBack
             )
         }
+    }
+
+    @Composable
+    override fun CenterContent(initialTab: Int, onOpenEditor: (String) -> Unit, onOpenConsole: (String) -> Unit) {
+        ScriptCenterScreen(
+            initialTab = initialTab,
+            embedded = true,
+            onOpenEditor = onOpenEditor,
+            onOpenConsole = onOpenConsole
+        )
     }
 
     companion object {

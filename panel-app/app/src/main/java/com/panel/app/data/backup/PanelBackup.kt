@@ -21,7 +21,9 @@ data class PanelBackup(
     val configFiles: List<BackupConfigFile> = emptyList(),
     // v2 新增：本地数据
     val localScripts: List<BackupLocalScript> = emptyList(),
-    val panels: List<BackupPanelInstance> = emptyList()
+    val panels: List<BackupPanelInstance> = emptyList(),
+    // v2 新增：环境变量分段规则（env_seg_prefs 全量条目原样导出，"seg_<变量名>" -> JSON 字符串）
+    val envSegRules: Map<String, String> = emptyMap()
 )
 
 data class BackupTask(
@@ -88,7 +90,8 @@ fun buildBackupJson(
     scripts: List<BackupScript>,
     configFiles: List<BackupConfigFile>,
     localScripts: List<BackupLocalScript> = emptyList(),
-    panels: List<BackupPanelInstance> = emptyList()
+    panels: List<BackupPanelInstance> = emptyList(),
+    envSegRules: Map<String, String> = emptyMap()
 ): String {
     val backup = PanelBackup(
         exportedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(Date()),
@@ -99,7 +102,8 @@ fun buildBackupJson(
         scripts = scripts,
         configFiles = configFiles,
         localScripts = localScripts,
-        panels = panels
+        panels = panels,
+        envSegRules = envSegRules
     )
     return com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(backup)
 }
@@ -122,8 +126,10 @@ data class PreviewRestoreData(
     val scripts: List<BackupScript> = emptyList(),
     val configFiles: List<BackupConfigFile> = emptyList(),
     val localScripts: List<BackupLocalScript> = emptyList(),
-    val panels: List<BackupPanelInstance> = emptyList()
+    val panels: List<BackupPanelInstance> = emptyList(),
+    val envSegRules: Map<String, String> = emptyMap()
 ) {
     val hasData get() = tasks.isNotEmpty() || envs.isNotEmpty() || scripts.isNotEmpty() ||
-            configFiles.isNotEmpty() || localScripts.isNotEmpty() || panels.isNotEmpty()
+            configFiles.isNotEmpty() || localScripts.isNotEmpty() || panels.isNotEmpty() ||
+            envSegRules.isNotEmpty()
 }

@@ -295,7 +295,7 @@ fun SettingsScreen(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModernNavTile(
                 icon = Icons.Default.Extension,
-                title = "环境依赖管理",
+                title = "依赖管理",
                 desc = "${uiState.deps.size} 个依赖包",
                 badge = null,
                 badgeColor = null,

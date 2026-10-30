@@ -25,6 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.data.model.PanelType
+import com.panel.app.data.model.UnifiedTask
+import com.panel.app.script.LocalScriptFeature
 import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.components.TwoFactorVerifyDialog
 import com.panel.app.ui.viewmodel.MainViewModel
@@ -33,6 +35,7 @@ enum class BottomNavScreen(val title: String, val icon: ImageVector) {
     Tasks("任务列表", Icons.Default.TaskAlt),
     Envs("环境变量", Icons.Default.DataObject),
     Scripts("配置与脚本", Icons.Default.Folder),
+    LOCAL("本地", Icons.Default.PhoneAndroid),
     Settings("系统设置", Icons.Default.Settings)
 }
 
@@ -58,8 +61,14 @@ fun MainFlowScreen(
     onOpenAppsScreen: () -> Unit = {},
     onOpenLocalScriptsScreen: () -> Unit = {},
     onOpenOtherSettingsScreen: () -> Unit = {},
+    onOpenEnvRules: () -> Unit = {},
     localScriptEnabled: Boolean = false,
-    onNavigateToCreateScript: () -> Unit = {}
+    localScriptFeature: LocalScriptFeature? = null,
+    onOpenLocalEditor: (String) -> Unit = {},
+    onOpenLocalConsole: (String) -> Unit = {},
+    onNavigateToCreateScript: () -> Unit = {},
+    /** 引导页预览专用：透传给任务列表展示的假数据，仅展示不落库 */
+    previewTasks: List<UnifiedTask>? = null
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -149,6 +158,12 @@ fun MainFlowScreen(
                         }
                         BottomNavScreen.Envs -> {
                             ActionButtonSmall(
+                                icon = Icons.Default.Tune,
+                                label = "规则",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                onClick = onOpenEnvRules
+                            )
+                            ActionButtonSmall(
                                 icon = Icons.Default.Checklist,
                                 label = if (uiState.isEnvBatchMode) "完成" else "批量",
                                 tint = if (uiState.isEnvBatchMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
@@ -192,6 +207,9 @@ fun MainFlowScreen(
                                 )
                             }
                         }
+                        BottomNavScreen.LOCAL -> {
+                            // 本地模式动作入口内联在各 Tab 内容中，顶栏不额外放按钮
+                        }
                         BottomNavScreen.Settings -> {
                             ActionButtonSmall(
                                 icon = if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
@@ -213,6 +231,8 @@ fun MainFlowScreen(
         bottomBar = {
             NavigationDock(
                 current = selectedTab,
+                entries = if (localScriptEnabled) BottomNavScreen.entries
+                    else BottomNavScreen.entries.filter { it != BottomNavScreen.LOCAL },
                 onSelect = { viewModel.selectTab(it) },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -236,7 +256,8 @@ fun MainFlowScreen(
                         onOpenTaskDetail = onOpenTaskDetail,
                         onOpenLog = onOpenLogScreen,
                         sortType = taskSortType,
-                        onSortTypeChange = { taskSortType = it }
+                        onSortTypeChange = { taskSortType = it },
+                        previewTasks = previewTasks
                     )
                 }
 
@@ -281,6 +302,15 @@ fun MainFlowScreen(
                     }
                 }
 
+                BottomNavScreen.LOCAL -> {
+                    // 内嵌渲染本地模式中心页（embedded：无自身页面壳，顶栏与 Dock 由本层提供）
+                    localScriptFeature?.CenterContent(
+                        initialTab = 0,
+                        onOpenEditor = onOpenLocalEditor,
+                        onOpenConsole = onOpenLocalConsole
+                    )
+                }
+
                 BottomNavScreen.Settings -> {
                     SettingsScreen(
                         viewModel = viewModel,
@@ -313,6 +343,7 @@ fun MainFlowScreen(
 @Composable
 private fun NavigationDock(
     current: BottomNavScreen,
+    entries: List<BottomNavScreen>,
     onSelect: (BottomNavScreen) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -334,7 +365,7 @@ private fun NavigationDock(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BottomNavScreen.entries.forEach { screen ->
+            entries.forEach { screen ->
                 val selected = screen == current
                 Row(
                     modifier = Modifier

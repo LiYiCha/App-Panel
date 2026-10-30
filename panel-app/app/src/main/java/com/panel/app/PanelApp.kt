@@ -32,10 +32,10 @@ class PanelApp : Application() {
             AppLogger.recordCrash(thread, throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }
-        createNotificationChannels()
+        createChannels()
     }
 
-    private fun createNotificationChannels() {
+    private fun createChannels() {
         val channel = NotificationChannel(
             CHANNEL_ID_PANEL,
             "面板通知",

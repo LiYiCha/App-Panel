@@ -2,6 +2,7 @@ package com.panel.app.data.adapter
 
 import com.panel.app.data.backup.*
 import com.panel.app.data.model.*
+import com.panel.app.data.remote.ApiError
 import com.panel.app.data.remote.NetworkClient
 import com.panel.app.data.remote.TwoFactorRequiredException
 import com.panel.app.data.remote.api.*
@@ -47,6 +48,7 @@ class QinglongV15Adapter(
         private const val CAPS_SP_KEY = "ql_caps_table"
         private const val DETAIL_EP = "api/crons/detail"
         private const val INSTANCES_EP = "api/crons/{id}/instances"
+        private const val SCRIPT_DETAIL_EP = "api/scripts/detail"
         private val capsLock = Any()
         private var capsTable: MutableMap<String, PanelCaps>? = null
 
@@ -202,7 +204,7 @@ class QinglongV15Adapter(
         }
 
         val envelope = resp.unwrap("登录失败").getOrElse { return Result.failure(it) }
-        val rawToken = envelope.data?.token
+        val rawToken = envelope.tokenOrNull()
             ?: return Result.failure(Exception("登录失败: 服务端未返回 token (${envelope.message ?: ""})"))
         val token = cleanToken(rawToken)
         if (token.isBlank()) {
@@ -237,7 +239,7 @@ class QinglongV15Adapter(
         }
 
         val envelope = resp.unwrap("验证码校验失败").getOrElse { return Result.failure(it) }
-        val rawToken = envelope.data?.token
+        val rawToken = envelope.tokenOrNull()
             ?: return Result.failure(Exception("验证码校验失败: 服务端未返回 token"))
         val token = cleanToken(rawToken)
         if (token.isBlank()) {
@@ -443,19 +445,19 @@ class QinglongV15Adapter(
         val cronId = QinglongApiHelpers.toId(taskId)?.toString() ?: taskId.substringBefore('.')
         if (cronId.isBlank()) {
             return try {
-                loadAllCronsInstances()
+                loadAllInstances()
             } catch (e: Exception) {
                 Result.failure(e)
             }
         }
         return try {
-            loadTaskInstancesInternal(cronId)
+            loadTaskInstances(cronId)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private suspend fun loadAllCronsInstances(): Result<List<TaskInstanceRecord>> {
+    private suspend fun loadAllInstances(): Result<List<TaskInstanceRecord>> {
         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
         val cronsResp = api.getCrons(getAuthHeader(), null).unwrap("获取任务列表失败").getOrNull()
         val crons = parseCronArray(cronsResp?.data)
@@ -503,7 +505,7 @@ class QinglongV15Adapter(
                 async {
                     val cid = QinglongApiHelpers.cleanId(cron.id)
                         ?: return@async emptyList<TaskInstanceRecord>()
-                    loadTaskInstancesInternal(cid).getOrNull() ?: emptyList()
+                    loadTaskInstances(cid).getOrNull() ?: emptyList()
                 }
             }.awaitAll()
         }
@@ -543,7 +545,7 @@ class QinglongV15Adapter(
         return Result.success(records)
     }
 
-    private suspend fun loadTaskInstancesInternal(cronId: String): Result<List<TaskInstanceRecord>> {
+    private suspend fun loadTaskInstances(cronId: String): Result<List<TaskInstanceRecord>> {
         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
 
         // 预查该任务元数据（名称与最后运行时长），用于兜底与丰富展示
@@ -1155,13 +1157,29 @@ class QinglongV15Adapter(
         // "The 'path' argument must be of type string. Received undefined"。
         // 2.15.x 只有 GET /api/scripts/:file?path=；/api/scripts/detail 是 2.16+ 才有的接口，
         // 在 2.15.x 上会落到 /:file 兜底路由读一个叫 "detail" 的文件而 500，所以旧接口优先。
-        val legacy = api.getScriptFileLegacy(getAuthHeader(), file = fileName, path = dirPath ?: "")
-        if (legacy.isSuccessful && legacy.body()?.code.let { it == null || it == 200 }) {
-            return legacy.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+        // 例外：服务端 protectedPathCase 中间件对 /api/ 路径含大写字母直接 400
+        // "Invalid path format"（旧接口把文件名拼进 URL 路径，如 sendNotify.js 的大写 N），
+        // 这类文件名只能走 detail（官方前端同款做法：文件名放 query 参数）。
+        val legacyBlockedByCase = fileName.any { it.isUpperCase() }
+        if (!legacyBlockedByCase) {
+            val legacy = api.getScriptFileLegacy(getAuthHeader(), file = fileName, path = dirPath ?: "")
+            if (legacy.isSuccessful && legacy.body()?.code.let { it == null || it == 200 }) {
+                return legacy.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+            }
         }
-        val detail = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath ?: "")
-        if (detail.isSuccessful && detail.body()?.code.let { it == null || it == 200 }) {
-            return detail.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+        if (!scriptDetailUnsupported) {
+            val detail = api.getScriptDetail(getAuthHeader(), file = fileName, path = dirPath ?: "")
+            if (detail.isSuccessful && detail.body()?.code.let { it == null || it == 200 }) {
+                return detail.unwrapTo("读取脚本内容失败") { it.data ?: "" }
+            }
+            val detailErr = detail.unwrap("读取脚本内容失败").exceptionOrNull()
+            // 老版本面板没有该端点（SPA 兜底页/404/500）→ 永久降级，不再重复探测
+            if (isSpaFallbackError(detailErr) || (detailErr as? ApiError)?.code.let { it == 404 || it == 500 }) {
+                scriptDetailUnsupported = true
+            }
+            if (legacyBlockedByCase) {
+                return Result.failure(detailErr ?: Exception("读取脚本内容失败"))
+            }
         }
         // 整路径再试一次（兼容把完整相对路径当 file 的服务端变体）
         return api.getScriptDetail(getAuthHeader(), file = normalized, path = "")
@@ -1481,6 +1499,11 @@ class QinglongV15Adapter(
     private var instancesUnsupported: Boolean
         get() = capsFor(instance.baseUrl).missing.contains(INSTANCES_EP)
         set(value) { if (value) markMissing(instance.baseUrl, INSTANCES_EP) }
+
+    // 脚本内容 detail 端点缺失标记（2.15.x 没有该接口）→ 查持久化能力表
+    private var scriptDetailUnsupported: Boolean
+        get() = capsFor(instance.baseUrl).missing.contains(SCRIPT_DETAIL_EP)
+        set(value) { if (value) markMissing(instance.baseUrl, SCRIPT_DETAIL_EP) }
 
     /** NetworkClient 把 SPA 兜底页原始响应塞进 message（以 <!DOCTYPE 开头），据此识别"端点不存在" */
     private fun isSpaFallbackError(t: Throwable?): Boolean =

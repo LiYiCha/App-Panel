@@ -30,10 +30,13 @@ data class JsDepInfo(
  * 目录布局：js_deps/{name}@{version}/package 内容（package/ 前缀已剥除），
  * 作用域包名中的 '/' 编码为 %2F。
  * 原生扩展包（.node）与构建产物无法在设备上运行，仅适合纯 JS 包。
+ *
+ * registry 查询与 tarball 下载优先走 [mirrorProvider] 返回的镜像源，
+ * 失败自动回退 npm 官方源；镜像源由应用侧镜像管理中心提供，改动即时生效。
  */
 class JsDepManager(
     private val depsDir: File,
-    private val registry: String = DEFAULT_REGISTRY,
+    private val mirrorProvider: () -> String = { DEFAULT_REGISTRY },
     private val client: OkHttpClient = defaultClient()
 ) {
 
@@ -185,7 +188,7 @@ class JsDepManager(
         onProgress("下载 $pkg@${meta.version}…")
         val tempFile = File.createTempFile("jsdep_", ".tgz", depsDir)
         try {
-            download(meta.tarballUrl, tempFile, onProgress)
+            downloadWithFallback(meta.tarballUrl, tempFile, onProgress)
             onProgress("解压 $pkg…")
             extractTarGz(tempFile, target)
         } finally {
@@ -212,7 +215,17 @@ class JsDepManager(
     private data class LatestMeta(val version: String, val tarballUrl: String)
 
     private fun queryLatest(pkg: String): LatestMeta? {
-        val url = "$registry/${java.net.URLEncoder.encode(pkg, "UTF-8").replace("+", "%2F")}"
+        val path = "/${java.net.URLEncoder.encode(pkg, "UTF-8").replace("+", "%2F")}"
+        // 镜像 registry 优先，查询失败回退官方源
+        val registries = listOf(mirrorProvider().trimEnd('/'), DEFAULT_REGISTRY).distinct()
+        for (registry in registries) {
+            val meta = runCatching { queryFrom("$registry$path") }.getOrNull() ?: continue
+            return meta
+        }
+        return null
+    }
+
+    private fun queryFrom(url: String): LatestMeta? {
         val json = client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
             if (!resp.isSuccessful) return null
             resp.body?.string() ?: return null
@@ -222,6 +235,27 @@ class JsDepManager(
         val verMeta = root.optJSONObject("versions")?.optJSONObject(version) ?: return null
         val tarball = verMeta.optJSONObject("dist")?.optString("tarball") ?: return null
         return LatestMeta(version, tarball)
+    }
+
+    /**
+     * 下载 tarball：将官方 registry 域名替换为所选镜像源优先尝试，
+     * 镜像不可用（HTTP 失败/网络异常）时回退原始地址。
+     */
+    private fun downloadWithFallback(url: String, target: File, onProgress: (String) -> Unit) {
+        val candidates = listOf(
+            url.replace(DEFAULT_REGISTRY, mirrorProvider().trimEnd('/')),
+            url
+        ).distinct()
+        var last: Exception? = null
+        for (candidate in candidates) {
+            try {
+                download(candidate, target, onProgress)
+                return
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw IllegalStateException("下载失败（镜像与官方源均不可用）：${last?.message}", last)
     }
 
     private fun download(url: String, target: File, onProgress: (String) -> Unit) {

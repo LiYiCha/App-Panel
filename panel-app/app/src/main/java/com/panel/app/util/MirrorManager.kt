@@ -8,22 +8,25 @@ import org.json.JSONObject
 /**
  * 下载加速镜像的统一管理中心（简化版：源列表 + 切换 + 自定义增删）。
  *
- * 管理两类镜像源：
+ * 管理三类镜像源：
  *  - [Type.UPDATE]：应用内更新 APK 下载（GitHub Release 直链的镜像前缀加速）
  *  - [Type.PYPI]  ：Python 依赖 wheel 下载（files.pythonhosted.org 的域名替换加速），
  *                    由 :core-script 的 PyDepManager 通过共享 SharedPreferences 读取
+ *  - [Type.NPM]   ：JS 依赖下载（npm registry 查询与 tarball 下载源），
+ *                    由 :core-script 的 JsDepManager 通过共享 SharedPreferences 读取
  *
  * 存储使用固定的 SP 文件名与 key；core-script 侧（standard 变体不含本类）以相同 key 约定读取，
  * 两处修改任一处的 key 时必须同步另一处。
  */
 object MirrorManager {
 
-    enum class Type { UPDATE, PYPI }
+    enum class Type { UPDATE, PYPI, NPM }
 
     /**
      * @param url 语义随类型不同：
      *  - UPDATE：镜像前缀（直接拼接在原始 GitHub URL 之前），空串表示 GitHub 直连
      *  - PYPI  ：替换 files.pythonhosted.org 的源站地址（如 https://pypi.tuna.tsinghua.edu.cn）
+     *  - NPM   ：registry 地址（如 https://registry.npmmirror.com），空串表示 npm 官方
      */
     data class MirrorSource(
         val id: String,
@@ -47,9 +50,17 @@ object MirrorManager {
         "preset_pypi_tuna", "清华 TUNA", Type.PYPI, "https://pypi.tuna.tsinghua.edu.cn", true
     )
 
+    val PRESET_NPM_OFFICIAL = MirrorSource(
+        "preset_npm_official", "npm 官方", Type.NPM, "https://registry.npmjs.org", true
+    )
+    val PRESET_NPM_NPMMIRROR = MirrorSource(
+        "preset_npm_npmmirror", "npmmirror", Type.NPM, "https://registry.npmmirror.com", true
+    )
+
     private val PRESETS: Map<Type, List<MirrorSource>> = mapOf(
         Type.UPDATE to listOf(PRESET_UPDATE_GHFAST, PRESET_UPDATE_GHPROXY_NET, PRESET_UPDATE_GH_PROXY, PRESET_UPDATE_DIRECT),
         Type.PYPI to listOf(PRESET_PYPI_TUNA, PRESET_PYPI_OFFICIAL),
+        Type.NPM to listOf(PRESET_NPM_NPMMIRROR, PRESET_NPM_OFFICIAL),
     )
 
     // ── 共享存储约定（core-script 的 PyMirrorPrefs 使用相同文件与 key）────────
@@ -57,10 +68,14 @@ object MirrorManager {
     const val PREFS_NAME = "mirror_settings"
     const val KEY_UPDATE_SELECTED = "mirror_update_selected"
     const val KEY_PYPI_SELECTED = "mirror_pypi_selected"
+    const val KEY_NPM_SELECTED = "mirror_npm_selected"
     const val KEY_CUSTOM_LIST = "mirror_custom_json"
 
     /** PyPI 官方 wheel 域名（PyDepManager 与本类共同使用的替换源） */
     const val PYPI_OFFICIAL_HOST = "https://files.pythonhosted.org"
+
+    /** npm 官方 registry（JsDepManager 与本类共同使用的查询与下载源） */
+    const val NPM_OFFICIAL_HOST = "https://registry.npmjs.org"
 
     /** GitHub Release 直链前缀（仅这类 URL 会被镜像加速） */
     const val GITHUB_DIRECT_PREFIX = "https://github.com/"
@@ -84,6 +99,7 @@ object MirrorManager {
         val key = when (type) {
             Type.UPDATE -> KEY_UPDATE_SELECTED
             Type.PYPI -> KEY_PYPI_SELECTED
+            Type.NPM -> KEY_NPM_SELECTED
         }
         val selectedId = prefs?.getString(key, null)
         val all = sources(type)
@@ -114,6 +130,7 @@ object MirrorManager {
         val key = when (type) {
             Type.UPDATE -> KEY_UPDATE_SELECTED
             Type.PYPI -> KEY_PYPI_SELECTED
+            Type.NPM -> KEY_NPM_SELECTED
         }
         prefs?.edit()?.putString(key, id)?.apply()
     }
@@ -183,4 +200,7 @@ object MirrorManager {
 
     /** 当前 PyPI wheel 镜像源站（供 core-script 通过 provider 读取） */
     fun selectedPyPiOrigin(): String = selected(Type.PYPI).url.ifEmpty { PYPI_OFFICIAL_HOST }
+
+    /** 当前 npm registry 镜像源站（供 core-script 通过 provider 读取） */
+    fun selectedNpmOrigin(): String = selected(Type.NPM).url.ifEmpty { NPM_OFFICIAL_HOST }
 }

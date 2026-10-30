@@ -1,5 +1,6 @@
 package com.panel.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.SearchPillField
 import com.panel.app.util.LocalScriptKit
 import com.panel.corescript.engine.ScriptLang
 import com.panel.corescript.runner.RunStatus
@@ -39,7 +41,7 @@ import java.util.Locale
  * 由 ScriptCenterScreen 承载，自身不带页面壳。
  */
 @Composable
-fun RunHistoryTabContent(
+fun RunHistoryTab(
     onOpenRun: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -49,6 +51,8 @@ fun RunHistoryTabContent(
     // 待清理的脚本组（null=全部）
     var confirmClearScript by remember { mutableStateOf<String?>(null) }
     var expandedScripts by remember { mutableStateOf(setOf<String>()) }
+    // 按脚本名搜索
+    var searchQuery by remember { mutableStateOf("") }
 
     fun refresh() {
         entries = LocalScriptKit.runLogStore(context).list()
@@ -60,6 +64,10 @@ fun RunHistoryTabContent(
             .sortedByDescending { it.second.first().startedAt }
     }
     val okCount = remember(entries) { entries.count { it.status == RunStatus.SUCCESS } }
+    val query = searchQuery.trim()
+    val filteredGroups = remember(groups, query) {
+        if (query.isEmpty()) groups else groups.filter { it.first.contains(query, ignoreCase = true) }
+    }
 
     Column(
         modifier = Modifier
@@ -71,7 +79,7 @@ fun RunHistoryTabContent(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(10.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
             Row(
                 modifier = Modifier
@@ -113,9 +121,30 @@ fun RunHistoryTabContent(
             }
         }
 
-        if (groups.isEmpty()) {
+        // 搜索框（按脚本名过滤分组）
+        SearchPillField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = "按脚本名搜索记录…",
+            modifier = Modifier.padding(top = 8.dp)
+        )
+
+        if (filteredGroups.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("暂无运行记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (groups.isEmpty()) {
+                    // 空态并入原底部常驻说明
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("暂无运行记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "日志按脚本归类；点脚本展开历史，可单条或整组清理。单条日志上限 10MB。",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                } else {
+                    Text("无匹配的运行记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         } else {
             LazyColumn(
@@ -123,7 +152,7 @@ fun RunHistoryTabContent(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                groups.forEach { (scriptName, list) ->
+                filteredGroups.forEach { (scriptName, list) ->
                     val expanded = scriptName in expandedScripts
                     item(key = "group_$scriptName") {
                         ScriptGroupCard(
@@ -151,19 +180,12 @@ fun RunHistoryTabContent(
                 }
             }
         }
-
-        Text(
-            "日志按脚本归类；点脚本展开历史，可单条或整组清理。单条日志上限 10MB。",
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 6.dp)
-        )
     }
 
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text("清空运行记录", fontSize = 15.sp) },
+            title = { Text("清空记录", fontSize = 15.sp) },
             text = { Text("将删除全部 ${entries.size} 条运行日志，不可恢复。", fontSize = 12.sp) },
             confirmButton = {
                 TextButton(onClick = {
@@ -182,7 +204,7 @@ fun RunHistoryTabContent(
         val count = entries.count { it.scriptName == scriptName }
         AlertDialog(
             onDismissRequest = { confirmClearScript = null },
-            title = { Text("清理脚本日志", fontSize = 15.sp) },
+            title = { Text("清理日志", fontSize = 15.sp) },
             text = { Text("将删除「$scriptName」的全部 $count 条运行日志，不可恢复。", fontSize = 12.sp) },
             confirmButton = {
                 TextButton(onClick = {
@@ -221,19 +243,19 @@ private fun ScriptGroupCard(
             .clickable { onToggle() },
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
                     .background(
                         if (latest.lang == ScriptLang.PYTHON) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.secondaryContainer
@@ -242,7 +264,7 @@ private fun ScriptGroupCard(
             ) {
                 Text(
                     if (latest.lang == ScriptLang.PYTHON) "PY" else "JS",
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (latest.lang == ScriptLang.PYTHON) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSecondaryContainer
@@ -251,7 +273,7 @@ private fun ScriptGroupCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     scriptName,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

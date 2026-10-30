@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInHorizontally
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -52,6 +56,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScriptFeature: LocalScriptFeature) {
     val navController = rememberNavController()
+    val appContext = LocalContext.current
 
     val hasLoggedInPanel = uiState.panels.any {
         !it.token.isNullOrEmpty() || (!it.username.isNullOrEmpty() && !it.password.isNullOrEmpty())
@@ -59,7 +64,9 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
 
     LaunchedEffect(uiState.isDatabaseReady, hasLoggedInPanel) {
         if (uiState.isDatabaseReady && !hasLoggedInPanel) {
-            navController.navigate("login") { popUpTo(0) { inclusive = true } }
+            // 首次启动先走引导页，已看过（或重看后退出）直接进登录页
+            val guideRoute = if (GuidePrefs.isCompleted(appContext)) "login" else "guide"
+            navController.navigate(guideRoute) { popUpTo(0) { inclusive = true } }
         }
     }
 
@@ -82,6 +89,32 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
     }
 
     NavHost(navController = navController, startDestination = "main_flow") {
+        composable(
+            route = "guide?replay={replay}",
+            arguments = listOf(
+                navArgument("replay") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
+        ) { backStackEntry ->
+            val replay = backStackEntry.arguments?.getBoolean("replay") ?: false
+            GuideScreen(
+                replay = replay,
+                localScriptEnabled = localScriptFeature.enabled,
+                viewModel = viewModel,
+                onFinish = {
+                    if (replay) {
+                        // 设置页重看：原路返回，不再改写启动跳转
+                        navController.popBackStack()
+                    } else {
+                        navController.navigate("login") { popUpTo(0) { inclusive = true } }
+                    }
+                },
+                onBack = if (replay) ({ navController.popBackStack() }) else null
+            )
+        }
+
         composable(
             route = "login?panelId={panelId}",
             arguments = listOf(
@@ -141,7 +174,15 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                     if (localScriptFeature.enabled) navController.navigate("local_center")
                 },
                 onOpenOtherSettingsScreen = { navController.navigate("other_settings") },
+                onOpenEnvRules = { navController.navigate("env_rules") },
                 localScriptEnabled = localScriptFeature.enabled,
+                localScriptFeature = localScriptFeature,
+                onOpenLocalEditor = { name ->
+                    navController.navigate("local_editor/${Uri.encode(name)}")
+                },
+                onOpenLocalConsole = { runId ->
+                    navController.navigate("local_console/$runId")
+                },
                 onNavigateToCreateScript = { navController.navigate("create_script") }
             )
         }
@@ -154,7 +195,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
         }
 
         composable("create_script") {
-            val existingDirs = extractAllDirectories(uiState.scriptTree)
+            val existingDirs = extractDirectories(uiState.scriptTree)
             CreateScriptScreen(
                 viewModel = viewModel,
                 existingDirs = existingDirs,
@@ -196,6 +237,16 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
 
         composable("backup_restore") {
             BackupRestoreScreen(viewModel = viewModel, onBack = { safePopBack() })
+        }
+
+        // 分段规则页：轻量转场（水平滑入 1/3 屏 + 淡入，约 200ms）
+        composable(
+            route = "env_rules",
+            enterTransition = {
+                slideInHorizontally(initialOffsetX = { it / 3 }) + fadeIn(animationSpec = tween(200))
+            }
+        ) {
+            EnvRulesScreen(viewModel = viewModel, onBack = { safePopBack() })
         }
 
         composable("server_logs") {
@@ -331,7 +382,8 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                 viewModel = viewModel,
                 onBack = { safePopBack() },
                 onOpenPermissions = { navController.navigate("app_permissions") },
-                onOpenDevLog = { navController.navigate("developer_console") }
+                onOpenDevLog = { navController.navigate("developer_console") },
+                onReplayGuide = { navController.navigate("guide?replay=true") }
             )
         }
 

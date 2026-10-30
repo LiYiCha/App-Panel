@@ -167,7 +167,7 @@ fun StandaloneScriptEditorScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         onClick = {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(codeText))
-                            Toast.makeText(context, "代码已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
                         }
                     )
                     ActionButtonSmall(
@@ -242,7 +242,7 @@ fun StandaloneScriptEditorScreen(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "已启用极速流式虚拟化浏览 (${String.format("%.2f", codeText.length / (1024f * 1024f))} MB, 共 $totalLines 行)，保证极致流畅",
+                            text = "已启用流式浏览 (${String.format("%.2f", codeText.length / (1024f * 1024f))} MB, 共 $totalLines 行)",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
@@ -384,7 +384,7 @@ fun StandaloneScriptEditorScreen(
                                 }
                             } else {
                                 Text(
-                                    "正在从服务端读取脚本内容...",
+                                    "正在读取脚本内容...",
                                     fontSize = fontSizeSp.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -491,10 +491,10 @@ fun StandaloneScriptEditorScreen(
     if (showLargeFileEditWarning) {
         AlertDialog(
             onDismissRequest = { showLargeFileEditWarning = false },
-            title = { Text("大文件编辑提醒", fontSize = 15.sp) },
+            title = { Text("文件过大", fontSize = 15.sp) },
             text = {
                 Text(
-                    "当前脚本大小为 ${String.format("%.2f", codeText.length / (1024f * 1024f))} MB（共 $totalLines 行）。\n\n在移动端全量输入编辑可能导致输入法卡顿或消耗大量内存。建议优先使用流式浏览，或在桌面端编辑。是否仍要切换为编辑模式？",
+                    "当前脚本 ${String.format("%.2f", codeText.length / (1024f * 1024f))} MB（共 $totalLines 行）。\n\n移动端全量编辑可能卡顿或占用大量内存，建议优先流式浏览或在桌面端编辑。是否仍要切换为编辑模式？",
                     fontSize = 12.sp
                 )
             },
@@ -516,9 +516,9 @@ fun StandaloneScriptEditorScreen(
 
     // 从代码编辑器一键添加为定时任务弹窗
     if (showAddToTaskDialog) {
-        // parseScriptCommentInfo 返回 Pair(名字, cron)，勿反解构
+        // parseScriptComment 返回 Pair(名字, cron)，勿反解构
         val (parsedName, parsedCron) = remember(codeText) {
-            parseScriptCommentInfo(codeText, scriptName.substringAfterLast('/'))
+            parseScriptComment(codeText, scriptName.substringAfterLast('/'))
         }
         var taskName by remember { mutableStateOf(parsedName) }
         var taskCommand by remember { mutableStateOf("task $scriptName") }
@@ -530,10 +530,10 @@ fun StandaloneScriptEditorScreen(
 
         AlertDialog(
             onDismissRequest = { showAddToTaskDialog = false },
-            title = { Text("添加到定时任务", fontSize = 15.sp) },
+            title = { Text("添加任务", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("从当前正在编辑的脚本创建定时任务：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("从当前脚本创建定时任务：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(
                         value = taskName,
                         onValueChange = { taskName = it },

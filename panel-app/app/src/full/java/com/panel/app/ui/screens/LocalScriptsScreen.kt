@@ -9,19 +9,26 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -35,15 +42,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.panel.app.ui.components.ActionButtonSmall
+import com.panel.app.ui.components.SearchPillField
 import com.panel.app.util.LocalScriptKit
 import com.panel.corescript.engine.ScriptLang
 import com.panel.corescript.runner.ScriptRunnerService
@@ -56,9 +71,11 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
- * 脚本 Tab 内容：脚本库按文件夹分组展示（新建/导入/运行/编辑/移动/删除）。
+ * 脚本 Tab 内容：脚本库按多级文件夹路径树形展示（新建/导入/运行/编辑/移动/删除）。
  * 文件夹为虚拟分组（归属存元数据，文件仍平铺，保证运行时同目录模块解析不变）。
  * 由 ScriptCenterScreen 承载，自身不带页面壳。
  */
@@ -68,9 +85,15 @@ fun ScriptsTabContent(
     onOpenConsole: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var scripts by remember { mutableStateOf(LocalScriptKit.store.list()) }
-    fun refresh() { scripts = LocalScriptKit.store.list() }
+    // 文件夹树（深度优先前序，节点含 path/depth/子文件夹/直属脚本）
+    var folderTree by remember { mutableStateOf(LocalScriptKit.store.folderTree()) }
+    fun refresh() {
+        scripts = LocalScriptKit.store.list()
+        folderTree = LocalScriptKit.store.folderTree()
+    }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var createLang by remember { mutableStateOf(ScriptLang.PYTHON) }
@@ -82,15 +105,109 @@ fun ScriptsTabContent(
     // 新建/删除文件夹对话框
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
+    var newFolderParent by remember { mutableStateOf("") }
     var deletingFolder by remember { mutableStateOf<String?>(null) }
     // 导入方式选择对话框（单个脚本文件 / 脚本包 zip）
     var showImportDialog by remember { mutableStateOf(false) }
+    // 顶部动作菜单（新建/文件夹/导入/导出收敛）
+    var actionsMenuOpen by remember { mutableStateOf(false) }
+    // 统计详情弹窗（工具栏「统计」触发）
+    var showStatsDialog by remember { mutableStateOf(false) }
 
-    // 折叠的文件夹集合（默认全部展开）
+    // 折叠的文件夹集合（按路径记住，默认全部展开）
     var collapsedFolders by remember { mutableStateOf(setOf<String>()) }
     fun toggleFolder(folder: String) {
         collapsedFolders = if (folder in collapsedFolders) collapsedFolders - folder else collapsedFolders + folder
     }
+
+    // 搜索关键字：非空时按名称过滤并强制展开全部分组
+    var query by remember { mutableStateOf("") }
+    // 重命名对话框：脚本 / 文件夹
+    var renamingScript by remember { mutableStateOf<LocalScript?>(null) }
+    var renamingFolder by remember { mutableStateOf<String?>(null) }
+    // 长按拖拽移动：被拖脚本 / 指针根坐标 / 命中文件夹 key / 可见文件夹行矩形 / 列表矩形 / 浮层根偏移
+    var draggingScript by remember { mutableStateOf<LocalScript?>(null) }
+    var dragPointer by remember { mutableStateOf(Offset.Zero) }
+    var dropTargetKey by remember { mutableStateOf<String?>(null) }
+    val headerBounds = remember { mutableStateMapOf<String, Rect>() }
+    val rowCoords = remember { mutableStateMapOf<String, LayoutCoordinates>() }
+    var listBounds by remember { mutableStateOf<Rect?>(null) }
+    var overlayRoot by remember { mutableStateOf(Offset.Zero) }
+    val listState = rememberLazyListState()
+
+    fun reportHeaderBounds(key: String, rect: Rect?) {
+        if (rect == null) headerBounds.remove(key) else headerBounds[key] = rect
+    }
+
+    /** 被拖行内坐标 → 根坐标（行随列表滚动实时更新，行被回收时退回上次结果） */
+    fun toRoot(name: String, local: Offset): Offset? =
+        rowCoords[name]?.takeIf { it.isAttached }?.localToRoot(local)
+
+    /**
+     * 落点命中：优先手指正压住的文件夹行；否则取手指 y 下方最近的可见文件夹行；
+     * 下方没有时取上方最近的一行（未分类根区同样参与判定）。
+     */
+    fun hitFolder(p: Offset): String? {
+        headerBounds.entries.firstOrNull { it.value.contains(p) }?.let { return it.key }
+        headerBounds.entries.filter { it.value.top >= p.y }
+            .minByOrNull { it.value.top }?.let { return it.key }
+        return headerBounds.entries.filter { it.value.bottom <= p.y }
+            .maxByOrNull { it.value.bottom }?.key
+    }
+
+    fun dragModifierFor(script: LocalScript): Modifier = Modifier
+        .onGloballyPositioned { rowCoords[script.name] = it }
+        .pointerInput(script.name) {
+            // 拖拽期间手指接近列表上下边缘自动滚动，越近速度越快（回调非挂起，用协程调 scrollBy）
+            val edgeZone = 56.dp.toPx()
+            val maxStep = 24.dp.toPx()
+            fun autoScroll(p: Offset) {
+                val bounds = listBounds ?: return
+                val delta = when {
+                    p.y < bounds.top -> -maxStep
+                    p.y < bounds.top + edgeZone ->
+                        -maxStep * ((bounds.top + edgeZone - p.y) / edgeZone).coerceAtLeast(0.2f)
+                    p.y > bounds.bottom -> maxStep
+                    p.y > bounds.bottom - edgeZone ->
+                        maxStep * ((p.y - (bounds.bottom - edgeZone)) / edgeZone).coerceAtLeast(0.2f)
+                    else -> 0f
+                }
+                if (delta != 0f) scope.launch { listState.scrollBy(delta) }
+            }
+            detectDragGesturesAfterLongPress(
+                onDragStart = { start ->
+                    draggingScript = script
+                    val root = toRoot(script.name, start) ?: start
+                    dragPointer = root
+                    dropTargetKey = hitFolder(root)
+                    autoScroll(root)
+                },
+                onDrag = { change, _ ->
+                    change.consume()
+                    val root = toRoot(script.name, change.position) ?: dragPointer
+                    dragPointer = root
+                    dropTargetKey = hitFolder(root)
+                    autoScroll(root)
+                },
+                onDragEnd = {
+                    val dragged = draggingScript
+                    val key = dropTargetKey
+                    draggingScript = null
+                    dropTargetKey = null
+                    if (dragged != null && key != null) {
+                        val folder = if (key == UNGROUPED_KEY) "" else key
+                        if (folder != dragged.folder) {
+                            LocalScriptKit.store.moveTo(dragged.name, folder)
+                            refresh()
+                        }
+                    }
+                },
+                onDragCancel = {
+                    draggingScript = null
+                    dropTargetKey = null
+                }
+            )
+        }
 
     // 通知权限：Android 13+ 前台服务通知需要授权（拒绝也允许运行，仅通知不可见）
     var pendingRunScript by remember { mutableStateOf<LocalScript?>(null) }
@@ -115,18 +232,15 @@ fun ScriptsTabContent(
     }
 
     val totalSize = remember(scripts) { scripts.sumOf { it.sizeBytes } }
-    var folderNames by remember { mutableStateOf(LocalScriptKit.store.folders()) }
-    fun refreshAll() {
-        scripts = LocalScriptKit.store.list()
-        folderNames = LocalScriptKit.store.folders()
-    }
+    // 全部文件夹路径（树的前序列表，供各选择器使用）
+    val folderPaths = remember(folderTree) { folderTree.map { it.path } }
 
     // 脚本包 zip 导入：批量导入 + 文件夹归属合并
     val zipImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) importScriptsZip(context, uri) { imported, skipped ->
-            refreshAll()
+            refresh()
             val msg = buildString {
                 append("已导入 $imported 个脚本")
                 if (skipped > 0) append("，跳过 $skipped 项")
@@ -141,173 +255,257 @@ fun ScriptsTabContent(
     ) { uri ->
         if (uri != null) exportScriptsZip(context, uri)
     }
-    val uncategorized = remember(scripts) { scripts.filter { it.folder.isBlank() } }
+    val searching = query.isNotBlank()
+    val visibleScripts = remember(scripts, query) {
+        val q = query.trim()
+        if (q.isEmpty()) scripts else scripts.filter { it.name.contains(q, ignoreCase = true) }
+    }
+    val visibleUncategorized = remember(visibleScripts) { visibleScripts.filter { it.folder.isBlank() } }
 
-    Column(
+    // 树形行序列：文件夹按深度缩进（每级 14dp），脚本缩进到所属文件夹层级；
+    // 搜索时强制展开并隐藏无命中子树；收起父节点时隐藏整棵子树；未分类固定在根层。
+    val rowItems = remember(visibleScripts, collapsedFolders, folderTree, searching) {
+        val nodeByPath = folderTree.associateBy { it.path }
+        fun parentOf(path: String) = path.substringBeforeLast('/', "")
+        fun subtreeHasMatch(path: String): Boolean {
+            val node = nodeByPath[path] ?: return false
+            if (visibleScripts.any { parentOf(it.folder) == path }) return true
+            return node.subFolders.any { subtreeHasMatch(it) }
+        }
+        val rows = mutableListOf<RowItem>()
+        fun walk(path: String) {
+            val node = nodeByPath[path] ?: return
+            if (searching && !subtreeHasMatch(path)) return
+            val direct = visibleScripts.filter { parentOf(it.folder) == path }
+            val collapsed = !searching && path in collapsedFolders
+            rows += RowItem.FolderRow(path, path, node.depth, direct.size, collapsed)
+            if (!collapsed) {
+                direct.forEach { rows += RowItem.ScriptRow(it, node.depth + 1) }
+                node.subFolders.forEach { walk(it) }
+            }
+        }
+        folderTree.filter { it.depth == 0 }.forEach { walk(it.path) }
+        if (visibleUncategorized.isNotEmpty()) {
+            if (folderTree.isEmpty()) {
+                visibleUncategorized.forEach { rows += RowItem.ScriptRow(it, 0) }
+            } else {
+                val collapsed = !searching && UNGROUPED_KEY in collapsedFolders
+                rows += RowItem.FolderRow(UNGROUPED_KEY, "", 0, visibleUncategorized.size, collapsed)
+                if (!collapsed) visibleUncategorized.forEach { rows += RowItem.ScriptRow(it, 1) }
+            }
+        }
+        rows
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .onGloballyPositioned { overlayRoot = it.localToRoot(Offset.Zero) }
     ) {
-        // 汇总卡片：图标 tile + 数量统计 + 动作按钮
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
+            // 单行工具栏：搜索框为主体，行尾「统计」按钮（详情弹窗）+ ⋮ 菜单（新建/文件夹/导入/导出）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 2.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                SearchPillField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "搜索脚本名称",
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(
+                    onClick = { showStatsDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text("统计", fontSize = 11.sp)
+                }
+                Box {
+                    IconButton(onClick = { actionsMenuOpen = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "操作", modifier = Modifier.size(18.dp))
+                    }
+                    DropdownMenu(expanded = actionsMenuOpen, onDismissRequest = { actionsMenuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("新建脚本", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                actionsMenuOpen = false
+                                showCreateDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("新建文件夹", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                actionsMenuOpen = false
+                                showNewFolderDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导入脚本", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.PostAdd, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                actionsMenuOpen = false
+                                showImportDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导出脚本包（zip）", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                actionsMenuOpen = false
+                                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                                exportLauncher.launch("panelhub_scripts_$stamp.zip")
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (scripts.isEmpty()) {
+                EmptyHint(modifier = Modifier.weight(1f))
+            } else if (visibleScripts.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center
+                ) {
+                    Text("无匹配脚本", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .onGloballyPositioned { listBounds = it.boundsInRoot() },
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    items(
+                        rowItems,
+                        key = { row ->
+                            when (row) {
+                                is RowItem.FolderRow -> "folder_${row.key}"
+                                is RowItem.ScriptRow -> "script_${row.script.name}"
+                            }
+                        }
+                    ) { row ->
+                        when (row) {
+                            is RowItem.FolderRow -> Box(Modifier.padding(start = (row.depth * 14).dp)) {
+                                FolderHeader(
+                                    folderKey = row.key,
+                                    folder = row.path,
+                                    count = row.count,
+                                    collapsed = row.collapsed,
+                                    highlight = dropTargetKey == row.key,
+                                    onBounds = ::reportHeaderBounds,
+                                    onToggle = { toggleFolder(row.key) },
+                                    onDelete = if (row.key == UNGROUPED_KEY) null
+                                    else ({ deletingFolder = row.path }),
+                                    onRename = if (row.key == UNGROUPED_KEY) null
+                                    else ({ renamingFolder = row.path })
+                                )
+                            }
+                            is RowItem.ScriptRow -> Box(Modifier.padding(start = (row.depth * 14).dp)) {
+                                ScriptCard(
+                                    script = row.script,
+                                    isDragging = draggingScript?.name == row.script.name,
+                                    dragModifier = dragModifierFor(row.script),
+                                    onEdit = { onOpenEditor(row.script.name) },
+                                    onRun = {
+                                        if (Build.VERSION.SDK_INT >= 33 &&
+                                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            pendingRunScript = row.script
+                                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            startRun(context, row.script, onOpenConsole)
+                                        }
+                                    },
+                                    onRename = { renamingScript = row.script },
+                                    onDelete = { deletingScript = row.script },
+                                    onMove = { movingScript = row.script }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 拖拽期间跟随手指的浮层小片；原行半透明占位
+        draggingScript?.let { s ->
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 240.dp)
+                    .offset {
+                        IntOffset(
+                            (dragPointer.x - overlayRoot.x).roundToInt() + 24,
+                            (dragPointer.y - overlayRoot.y).roundToInt() - 20
+                        )
+                    },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         Icons.Default.Description,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(14.dp),
                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("脚本库", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        "${scripts.size} 个脚本 · ${folderNames.size} 个文件夹 · 共 ${formatSize(totalSize)}",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        s.name,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                ActionButtonSmall(
-                    icon = Icons.Default.CreateNewFolder,
-                    label = "文件夹",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    onClick = { showNewFolderDialog = true }
-                )
-                Spacer(Modifier.width(8.dp))
-                ActionButtonSmall(
-                    icon = Icons.Default.PostAdd,
-                    label = "导入",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    onClick = { showImportDialog = true }
-                )
-                Spacer(Modifier.width(8.dp))
-                ActionButtonSmall(
-                    icon = Icons.Default.FileDownload,
-                    label = "导出",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    onClick = {
-                        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
-                        exportLauncher.launch("panelhub_scripts_$stamp.zip")
-                    }
-                )
-                Spacer(Modifier.width(8.dp))
-                ActionButtonSmall(
-                    icon = Icons.Default.Add,
-                    label = "新建",
-                    tint = MaterialTheme.colorScheme.primary,
-                    onClick = { showCreateDialog = true }
-                )
             }
         }
+    }
 
-        if (scripts.isEmpty()) {
-            EmptyHint(modifier = Modifier.weight(1f))
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 8.dp)
-            ) {
-                // 文件夹分组
-                folderNames.filter { it.isNotBlank() }.forEach { folder ->
-                    val groupScripts = scripts.filter { it.folder == folder }
-                    val collapsed = folder in collapsedFolders
-                    item(key = "folder_$folder") {
-                        FolderHeader(
-                            folder = folder,
-                            count = groupScripts.size,
-                            collapsed = collapsed,
-                            onToggle = { toggleFolder(folder) },
-                            onDelete = { deletingFolder = folder }
-                        )
-                    }
-                    if (!collapsed) {
-                        items(groupScripts, key = { "f_${folder}_${it.name}" }) { script ->
-                            ScriptCard(
-                                script = script,
-                                onEdit = { onOpenEditor(script.name) },
-                                onRun = {
-                                    if (Build.VERSION.SDK_INT >= 33 &&
-                                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        pendingRunScript = script
-                                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    } else {
-                                        startRun(context, script, onOpenConsole)
-                                    }
-                                },
-                                onDelete = { deletingScript = script },
-                                onMove = { movingScript = script }
-                            )
-                        }
+    // 统计详情弹窗：打开时读取当前最新状态逐行展示
+    if (showStatsDialog) {
+        AlertDialog(
+            onDismissRequest = { showStatsDialog = false },
+            title = { Text("统计", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("脚本 ${scripts.size} 个", fontSize = 12.sp)
+                    Text("文件夹 ${folderTree.size} 个", fontSize = 12.sp)
+                    Text("未分类 ${visibleUncategorized.size} 个", fontSize = 12.sp)
+                    Text("总容量 ${formatSize(totalSize)}", fontSize = 12.sp)
+                    if (searching) {
+                        Text("搜索命中 ${visibleScripts.size} 个", fontSize = 12.sp)
                     }
                 }
-                // 未分类
-                if (uncategorized.isNotEmpty()) {
-                    if (folderNames.isNotEmpty()) {
-                        item(key = "folder_uncat") {
-                            FolderHeader(
-                                folder = "",
-                                count = uncategorized.size,
-                                collapsed = UNGROUPED_KEY in collapsedFolders,
-                                onToggle = { toggleFolder(UNGROUPED_KEY) },
-                                onDelete = null
-                            )
-                        }
-                    }
-                    if (folderNames.isEmpty() || UNGROUPED_KEY !in collapsedFolders) {
-                        items(uncategorized, key = { "u_${it.name}" }) { script ->
-                            ScriptCard(
-                                script = script,
-                                onEdit = { onOpenEditor(script.name) },
-                                onRun = {
-                                    if (Build.VERSION.SDK_INT >= 33 &&
-                                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        pendingRunScript = script
-                                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    } else {
-                                        startRun(context, script, onOpenConsole)
-                                    }
-                                },
-                                onDelete = { deletingScript = script },
-                                onMove = { movingScript = script }
-                            )
-                        }
-                    }
-                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStatsDialog = false }) { Text("确定", fontSize = 12.sp) }
             }
-        }
-
-        Text(
-            "点卡片菜单可移动到文件夹；文件夹仅归类展示，不影响脚本运行与模块引用。",
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 6.dp)
         )
     }
 
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text("新建本地脚本", fontSize = 15.sp) },
+            title = { Text("新建脚本", fontSize = 15.sp) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -328,7 +526,7 @@ fun ScriptsTabContent(
                     )
                     FolderPickerField(
                         selectedFolder = createFolder,
-                        folders = folderNames,
+                        folders = folderPaths,
                         onSelect = { createFolder = it }
                     )
                 }
@@ -355,20 +553,19 @@ fun ScriptsTabContent(
         )
     }
 
-    // 移动到文件夹对话框
+    // 移动到文件夹对话框（带缩进的层级路径列表）
     movingScript?.let { script ->
         var target by remember(script.name) { mutableStateOf(script.folder) }
         AlertDialog(
             onDismissRequest = { movingScript = null },
             title = { Text("移动 ${script.name}", fontSize = 15.sp) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FolderPickerField(
-                        selectedFolder = target,
-                        folders = folderNames,
-                        onSelect = { target = it }
-                    )
-                }
+                PathOptionList(
+                    selected = target,
+                    paths = folderPaths,
+                    rootLabel = "未分类",
+                    onSelect = { target = it }
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -383,28 +580,118 @@ fun ScriptsTabContent(
         )
     }
 
-    // 新建文件夹对话框
-    if (showNewFolderDialog) {
+    // 脚本重命名对话框
+    renamingScript?.let { script ->
+        var newName by remember(script.name) { mutableStateOf(script.name) }
         AlertDialog(
-            onDismissRequest = { showNewFolderDialog = false },
-            title = { Text("新建文件夹", fontSize = 15.sp) },
+            onDismissRequest = { renamingScript = null },
+            title = { Text("重命名脚本", fontSize = 15.sp) },
             text = {
                 OutlinedTextField(
-                    value = newFolderName,
-                    onValueChange = { newFolderName = it },
-                    label = { Text("文件夹名称", fontSize = 11.sp) },
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("新文件名（扩展名需与类型一致）", fontSize = 11.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
+                TextButton(onClick = {
+                    LocalScriptKit.store.rename(script.name, newName).onSuccess {
+                        renamingScript = null
+                        refresh()
+                    }.onFailure { e ->
+                        Toast.makeText(context, e.message ?: "重命名失败", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingScript = null }) { Text("取消") }
+            }
+        )
+    }
+
+    // 文件夹重命名对话框：名称 + 带缩进的层级路径列表（选择新父目录，默认原位置）
+    renamingFolder?.let { folder ->
+        var newName by remember(folder) { mutableStateOf(folder.substringAfterLast('/')) }
+        var newParent by remember(folder) { mutableStateOf(folder.substringBeforeLast('/', "")) }
+        AlertDialog(
+            onDismissRequest = { renamingFolder = null },
+            title = { Text("重命名文件夹", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("新文件夹名称", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "所在目录（可改父目录，子文件夹一并迁移）",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    PathOptionList(
+                        selected = newParent,
+                        paths = folderPaths.filter { it != folder && !it.startsWith("$folder/") },
+                        rootLabel = "根目录",
+                        onSelect = { newParent = it }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = newName.isNotBlank(),
+                    onClick = {
+                        val newPath = if (newParent.isEmpty()) newName.trim() else "$newParent/${newName.trim()}"
+                        LocalScriptKit.store.renameFolder(folder, newPath).onSuccess {
+                            renamingFolder = null
+                            refresh()
+                        }.onFailure { e ->
+                            Toast.makeText(context, e.message ?: "重命名失败", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingFolder = null }) { Text("取消") }
+            }
+        )
+    }
+
+    // 新建文件夹对话框：名称 + 父目录选择（默认根目录）
+    if (showNewFolderDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewFolderDialog = false },
+            title = { Text("新建文件夹", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        label = { Text("文件夹名称", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("父目录", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    PathOptionList(
+                        selected = newFolderParent,
+                        paths = folderPaths,
+                        rootLabel = "根目录",
+                        onSelect = { newFolderParent = it }
+                    )
+                }
+            },
+            confirmButton = {
                 TextButton(
                     enabled = newFolderName.isNotBlank(),
                     onClick = {
-                        LocalScriptKit.store.createFolder(newFolderName).onSuccess {
+                        LocalScriptKit.store.createFolder(newFolderName, newFolderParent).onSuccess {
                             showNewFolderDialog = false
                             newFolderName = ""
-                            refreshAll()
+                            newFolderParent = ""
+                            refresh()
                         }.onFailure { e ->
                             Toast.makeText(context, e.message ?: "创建失败", Toast.LENGTH_SHORT).show()
                         }
@@ -417,12 +704,12 @@ fun ScriptsTabContent(
         )
     }
 
-    // 删除文件夹确认：组内脚本移回未分类
+    // 删除文件夹确认：整棵子树删除，树下脚本移回未分类
     deletingFolder?.let { folder ->
         AlertDialog(
             onDismissRequest = { deletingFolder = null },
             title = { Text("删除文件夹", fontSize = 15.sp) },
-            text = { Text("删除「$folder」？组内脚本将移回未分类，不会删除脚本文件。", fontSize = 12.sp) },
+            text = { Text("删除「$folder」及其子文件夹？树下脚本将移回未分类，不会删除脚本文件。", fontSize = 12.sp) },
             confirmButton = {
                 TextButton(onClick = {
                     LocalScriptKit.store.deleteFolder(folder)
@@ -474,7 +761,7 @@ fun ScriptsTabContent(
                     ImportOptionRow(
                         icon = Icons.Default.FolderZip,
                         title = "脚本包（zip）",
-                        subtitle = "批量导入，含文件夹归属；同名脚本将被覆盖",
+                        subtitle = "批量导入，同名脚本将被覆盖",
                         onClick = {
                             showImportDialog = false
                             zipImportLauncher.launch(
@@ -493,33 +780,57 @@ fun ScriptsTabContent(
 
 private const val UNGROUPED_KEY = "__ungrouped__"
 
-/** 文件夹分组头：图标 + 名称 + 数量 + 折叠 + 删除（未分类组不可删） */
+/** 列表行：文件夹节点（key 为路径，未分类为 UNGROUPED_KEY）或脚本卡片 */
+private sealed interface RowItem {
+    data class FolderRow(
+        val key: String,
+        val path: String,
+        val depth: Int,
+        val count: Int,
+        val collapsed: Boolean
+    ) : RowItem
+
+    data class ScriptRow(val script: LocalScript, val depth: Int) : RowItem
+}
+
+/** 文件夹分组头：图标 + 名称 + 数量 + ⋮（重命名）+ 删除 + 折叠；highlight 为拖拽命中态 */
 @Composable
 private fun FolderHeader(
+    folderKey: String,
     folder: String,
     count: Int,
     collapsed: Boolean,
+    highlight: Boolean,
+    onBounds: (String, Rect?) -> Unit,
     onToggle: () -> Unit,
-    onDelete: (() -> Unit)?
+    onDelete: (() -> Unit)?,
+    onRename: (() -> Unit)?
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    // 拖拽命中区域登记：组头离开组合时清除
+    DisposableEffect(folderKey) {
+        onDispose { onBounds(folderKey, null) }
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .onGloballyPositioned { onBounds(folderKey, it.boundsInRoot()) }
             .clip(RoundedCornerShape(8.dp))
             .clickable { onToggle() },
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        color = if (highlight) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 Icons.Default.Folder,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.width(6.dp))
@@ -527,6 +838,8 @@ private fun FolderHeader(
                 folder.ifBlank { "未分类" },
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.width(6.dp))
@@ -540,6 +853,28 @@ private fun FolderHeader(
                     .padding(horizontal = 6.dp, vertical = 1.dp)
             )
             Spacer(Modifier.weight(1f))
+            onRename?.let { rename ->
+                Box {
+                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(26.dp)) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "文件夹操作",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("重命名文件夹", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                menuOpen = false
+                                rename()
+                            }
+                        )
+                    }
+                }
+            }
             onDelete?.let {
                 IconButton(onClick = it, modifier = Modifier.size(26.dp)) {
                     Icon(
@@ -557,6 +892,71 @@ private fun FolderHeader(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+/** 带缩进的层级路径单选列表（根目录/未分类置顶，按路径深度缩进） */
+@Composable
+private fun PathOptionList(
+    selected: String,
+    paths: List<String>,
+    rootLabel: String,
+    onSelect: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .heightIn(max = 240.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        PathOptionRow(
+            label = rootLabel,
+            depth = 0,
+            selected = selected.isEmpty(),
+            onClick = { onSelect("") }
+        )
+        paths.forEach { path ->
+            PathOptionRow(
+                label = path,
+                depth = path.count { it == '/' },
+                selected = selected == path,
+                onClick = { onSelect(path) }
+            )
+        }
+    }
+}
+
+/** 路径选项行：单选圆点 + 缩进路径文本 */
+@Composable
+private fun PathOptionRow(
+    label: String,
+    depth: Int,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onClick() }
+            .padding(start = (depth * 14).dp)
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            label,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -833,37 +1233,40 @@ private fun ImportOptionRow(
     }
 }
 
+/** 紧凑脚本行：类型小图标 + 名称 + 大小 + ⋮ 菜单；点击=编辑，长按=拖拽移动 */
 @Composable
 private fun ScriptCard(
     script: LocalScript,
+    isDragging: Boolean,
+    dragModifier: Modifier,
     onEdit: () -> Unit,
     onRun: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit,
     onMove: () -> Unit
 ) {
-    val timeText = remember(script.lastModified) {
-        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(script.lastModified))
-    }
     var menuOpen by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .alpha(if (isDragging) 0.3f else 1f)
+            .then(dragModifier)
+            .clip(RoundedCornerShape(8.dp))
             .clickable { onEdit() },
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(5.dp))
                     .background(
                         if (script.lang == ScriptLang.PYTHON) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.secondaryContainer
@@ -873,40 +1276,53 @@ private fun ScriptCard(
                 Icon(
                     Icons.Default.Description,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(13.dp),
                     tint = if (script.lang == ScriptLang.PYTHON) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSecondaryContainer
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    script.name,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${script.lang.label} · ${formatSize(script.sizeBytes)} · $timeText",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = onRun, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "运行", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                script.name,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                formatSize(script.sizeBytes),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Box {
-                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(30.dp)) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多", modifier = Modifier.size(16.dp))
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("运行", fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            menuOpen = false
+                            onRun()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("编辑", fontSize = 12.sp) },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) },
                         onClick = {
                             menuOpen = false
                             onEdit()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("重命名", fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        onClick = {
+                            menuOpen = false
+                            onRename()
                         }
                     )
                     DropdownMenuItem(
@@ -945,8 +1361,14 @@ private fun EmptyHint(modifier: Modifier = Modifier) {
             tint = MaterialTheme.colorScheme.outlineVariant
         )
         Spacer(Modifier.height(12.dp))
-        Text("还没有本地脚本", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("点击右上角「新建」或「导入」开始", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+        Text("暂无脚本", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("点右上角菜单可新建或导入脚本", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+        Text(
+            "文件夹仅归类展示，不影响脚本运行与模块引用；长按行可拖拽到分组，或点卡片菜单移动",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(top = 4.dp)
+        )
     }
 }
 

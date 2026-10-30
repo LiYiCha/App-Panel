@@ -18,6 +18,7 @@ import com.panel.app.data.remote.OtpRequiredException
 import com.panel.app.data.remote.TwoFactorRequiredException
 import com.panel.app.data.repository.PanelRepository
 import com.panel.app.ui.screens.BottomNavScreen
+import com.panel.app.ui.screens.SegRuleStore
 import com.panel.app.script.LocalScriptBackupItem
 import com.panel.app.script.LocalScriptFeature
 import com.panel.app.util.PanelUrl
@@ -129,9 +130,6 @@ class MainViewModel @Inject constructor(
     private fun saveBrokenConfigSet(panelId: String, set: Set<String>) {
         prefs.edit { putStringSet("broken_cfg_$panelId", set) }
     }
-
-    /** 本次进程已完成静默预重登的面板（每面板一次，避免冷启动首刷的 401 噪声） */
-    private val sessionReauthedPanels = mutableSetOf<String>()
 
     /** 本会话已做过请求级自愈重登的面板（每面板最多一次，防止 401→重登→失败的循环） */
     private val sessionHealedPanels = mutableSetOf<String>()
@@ -285,6 +283,9 @@ class MainViewModel @Inject constructor(
 
     init {
         com.panel.app.data.logger.AppLogger.isDevModeEnabled = _uiState.value.isDevMode
+        _uiState.value = _uiState.value.copy(
+            expandedHistoryScripts = prefs.getStringSet("history_expanded", emptySet())?.toSet().orEmpty()
+        )
         initData()
     }
 
@@ -526,7 +527,7 @@ class MainViewModel @Inject constructor(
                     if (getActivePanel().id == panel.id) {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            toastMessage = if (notifyOnNoCredential) "面板未登录，请先在面板管理中登录后再刷新" else _uiState.value.toastMessage
+                            toastMessage = if (notifyOnNoCredential) "面板未登录，请先在面板管理登录" else _uiState.value.toastMessage
                         )
                     }
                     return@launch
@@ -565,42 +566,9 @@ class MainViewModel @Inject constructor(
                 }
                 val effectiveAdapter = repository.getAdapter(activePanel)
 
-                // 冷启动首刷预重登：Cookie/token 可能已过期，先静默换取新凭据再发批量请求，
-                // 消除每轮刷新第一跳的 401 噪声（每进程每个面板只做一次）。
-                // 已知开启 2FA 的面板直接跳过：自动重登必然撞 420 失败，白发请求只会
-                // 在服务端堆登录失败记录并触发限流
-                if (activePanel.id !in sessionReauthedPanels &&
-                    !activePanel.username.isNullOrEmpty() && !activePanel.password.isNullOrEmpty()
-                ) {
-                    sessionReauthedPanels.add(activePanel.id)
-                    if (isTwoFactorKnown(hostOf(activePanel.baseUrl))) {
-                        // 已知 2FA：不自动登录；token 失效将由请求级自愈识别并跳登录页
-                    } else {
-                        val reauth = runSafely { repository.testAuthenticate(activePanel) }
-                            .getOrElse { Result.failure(it) }
-                        val newToken = reauth.getOrNull()
-                        if (!newToken.isNullOrEmpty()) {
-                            activePanel = activePanel.copy(token = newToken)
-                            repository.savePanel(activePanel)
-                        } else if (reauth.exceptionOrNull() is TwoFactorRequiredException) {
-                            // 首次撞 420：持久化标记该面板开启 2FA，之后不再自动登录
-                            markTwoFactorKnown(hostOf(activePanel.baseUrl))
-                            if (getActivePanel().id == panel.id) {
-                                requestReloginAtLogin(activePanel, "面板已开启两步验证，请在登录页输入动态验证码")
-                            }
-                            return@launch
-                        } else if (reauth.isFailure && !isNetworkFailure(reauth.exceptionOrNull())) {
-                            // 预重登失败且非网络原因（密码错误/限流等）：停止刷新，回登录页让用户处理
-                            if (getActivePanel().id == panel.id) {
-                                requestReloginAtLogin(
-                                    activePanel,
-                                    "自动重新登录失败（${reauth.exceptionOrNull()?.message ?: "凭据无效"}）"
-                                )
-                            }
-                            return@launch
-                        }
-                    }
-                }
+                // 冷启动不再主动发登录请求（旧预重登逻辑即使 token 有效也会每次开机撞一次
+                // /user/login，在服务端堆登录记录、触发失败限流）。token 缺失由上方静默重登
+                // 处理，token 失效由请求级 401 自愈重登兜底（见下方 sessionHealedPanels 分支）。
 
                 // 并发异步拉取：全部核心接口并发发起，拉取时间从 8-10s 降低到 1-2s。
                 // scopes 非空时只发起真正需要的请求，其余类别沿用内存中已有数据。
@@ -809,6 +777,14 @@ class MainViewModel @Inject constructor(
         val current = _uiState.value.expandedHistoryScripts
         val updated = if (current.contains(scriptName)) current - scriptName else current + scriptName
         _uiState.value = _uiState.value.copy(expandedHistoryScripts = updated)
+        prefs.edit { putStringSet("history_expanded", updated) }
+    }
+
+    /** 执行历史"默认展开前 5 组"只在首次生效（持久化），之后完全保留用户的展开/收起状态 */
+    fun isHistoryAutoExpandDone(): Boolean = prefs.getBoolean("history_expanded_init", false)
+
+    fun markHistoryAutoExpandDone() {
+        prefs.edit { putBoolean("history_expanded_init", true) }
     }
 
     /** 细粒度局部刷新：仅拉取任务列表，避免下拉刷新触发全局全量 API */
@@ -1048,7 +1024,7 @@ class MainViewModel @Inject constructor(
         refreshPanelRemoteData(active, notifyOnNoCredential = true)
     }
 
-    fun authenticateAndSavePanel(
+    fun loginAndSavePanel(
         existingId: String?,
         name: String,
         type: PanelType,
@@ -1280,7 +1256,7 @@ class MainViewModel @Inject constructor(
     fun batchRunTasks(taskIds: List<String>) {
         viewModelScope.launch {
             val list = _uiState.value.tasks.map { if (taskIds.contains(it.id)) it.copy(isRunning = true, statusText = "运行中") else it }
-            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已批量下发运行 ${taskIds.size} 个任务")
+            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已下发运行 ${taskIds.size} 个任务")
             repository.getAdapter(getActivePanel()).runTask(taskIds)
         }
     }
@@ -1288,7 +1264,7 @@ class MainViewModel @Inject constructor(
     fun batchStopTasks(taskIds: List<String>) {
         viewModelScope.launch {
             val list = _uiState.value.tasks.map { if (taskIds.contains(it.id)) it.copy(isRunning = false, statusText = "已停止") else it }
-            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已批量停止 ${taskIds.size} 个任务")
+            _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已停止 ${taskIds.size} 个任务")
             repository.getAdapter(getActivePanel()).stopTask(taskIds)
         }
     }
@@ -1314,11 +1290,11 @@ class MainViewModel @Inject constructor(
 
     fun batchDeleteTasks(taskIds: List<String>) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(toastMessage = "正在批量删除 ${taskIds.size} 个任务...")
+            _uiState.value = _uiState.value.copy(toastMessage = "正在删除 ${taskIds.size} 个任务...")
             val res = repository.getAdapter(getActivePanel()).deleteTask(taskIds)
             if (res.isSuccess) {
                 val list = _uiState.value.tasks.filterNot { taskIds.contains(it.id) }
-                _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已批量删除 ${taskIds.size} 个任务")
+                _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已删除 ${taskIds.size} 个任务")
             } else {
                 val errMsg = res.exceptionOrNull()?.message ?: "未知错误"
                 _uiState.value = _uiState.value.copy(toastMessage = "批量删除失败: $errMsg")
@@ -1480,7 +1456,7 @@ class MainViewModel @Inject constructor(
     fun runSubscription(subId: String) {
         viewModelScope.launch {
             val list = _uiState.value.subscriptions.map { if (it.id == subId) it.copy(isRunning = true, statusText = "同步中") else it }
-            _uiState.value = _uiState.value.copy(subscriptions = list, toastMessage = "开始同步订阅仓库...")
+            _uiState.value = _uiState.value.copy(subscriptions = list, toastMessage = "开始同步仓库...")
             repository.getAdapter(getActivePanel()).runSubscription(listOf(subId))
         }
     }
@@ -1512,18 +1488,18 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getAdapter(getActivePanel()).deleteSubscription(subIds)
             val list = _uiState.value.subscriptions.filterNot { it.id in subIds }
-            _uiState.value = _uiState.value.copy(subscriptions = list, toastMessage = "已批量删除选中的仓库同步任务")
+            _uiState.value = _uiState.value.copy(subscriptions = list, toastMessage = "已删除选中的同步任务")
         }
     }
 
-    fun toggleSubscriptionSelection(subId: String) {
+    fun toggleSubSelection(subId: String) {
         val list = _uiState.value.subscriptions.map {
             if (it.id == subId) it.copy(selected = !it.selected) else it
         }
         _uiState.value = _uiState.value.copy(subscriptions = list)
     }
 
-    fun selectAllSubscriptions(select: Boolean) {
+    fun selectAllSubs(select: Boolean) {
         val list = _uiState.value.subscriptions.map { it.copy(selected = select) }
         _uiState.value = _uiState.value.copy(subscriptions = list)
     }
@@ -1618,8 +1594,6 @@ class MainViewModel @Inject constructor(
     // ==================== 4. 环境变量 ====================
     fun toggleEnv(envId: String, enable: Boolean) {
         viewModelScope.launch {
-            val list = _uiState.value.envs.map { if (it.id == envId) it.copy(enabled = enable) else it }
-            _uiState.value = _uiState.value.copy(envs = list, toastMessage = "变量状态已设为: ${if (enable) "启用" else "禁用"}")
             repository.getAdapter(getActivePanel()).toggleEnv(envId, enable)
         }
     }
@@ -1628,7 +1602,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).saveEnv(env)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "变量 [${env.name}] 已保存")
                 onResult?.invoke(true, null)
             } else {
                 val err = res.exceptionOrNull()?.message ?: "保存失败，请检查服务响应"
@@ -1658,12 +1631,12 @@ class MainViewModel @Inject constructor(
             }
             val taskRes = adapter.createTask(taskName, command, schedule)
             if (taskRes.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "脚本与定时任务 [$taskName] 均已创建成功！")
-                onComplete(true, "脚本与定时任务创建成功")
+                _uiState.value = _uiState.value.copy(toastMessage = "脚本与任务 [$taskName] 已创建")
+                onComplete(true, "脚本与任务创建成功")
             } else {
                 val err = taskRes.exceptionOrNull()?.message ?: "创建定时任务失败"
-                _uiState.value = _uiState.value.copy(toastMessage = "脚本已保存，但创建定时任务失败: $err")
-                onComplete(false, "脚本已保存，但定时任务创建失败: $err")
+                _uiState.value = _uiState.value.copy(toastMessage = "脚本已保存，任务创建失败: $err")
+                onComplete(false, "脚本已保存，任务创建失败: $err")
             }
             refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS, RefreshScope.TASKS))
         }
@@ -1763,7 +1736,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getAdapter(getActivePanel()).deleteEnv(envIds)
             val list = _uiState.value.envs.filterNot { envIds.contains(it.id) }
-            _uiState.value = _uiState.value.copy(envs = list, toastMessage = "已批量删除 ${envIds.size} 个变量")
+            _uiState.value = _uiState.value.copy(envs = list, toastMessage = "已删除 ${envIds.size} 个变量")
         }
     }
 
@@ -1796,7 +1769,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).installDep(name, version, type, remark)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "依赖包 [$name] 安装指令已下发！")
+                _uiState.value = _uiState.value.copy(toastMessage = "依赖 [$name] 已下发安装")
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "安装失败: ${res.exceptionOrNull()?.message}")
             }
@@ -1910,6 +1883,7 @@ class MainViewModel @Inject constructor(
         includeConfigs: Boolean,
         includeLocalScripts: Boolean = false,
         includePanels: Boolean = false,
+        includeEnvSegRules: Boolean = false,
         onResult: (String?) -> Unit
     ) {
         viewModelScope.launch {
@@ -1969,6 +1943,20 @@ class MainViewModel @Inject constructor(
                 }
             } else emptyList()
 
+            // 环境变量分段规则：本机 SP 直读（含新 rules_v2/bindings_v2 与旧 seg_* 条目）
+            // 追加自定义符号库 sym_acct/sym_field 与自定义模板 tpl_custom（恢复侧不按 key 过滤，整表写回，两侧一致）
+            val envSegRules = if (includeEnvSegRules) envSegPrefs().all
+                .filterKeys {
+                    it.startsWith(segRuleKeyPrefix) ||
+                        it == SegRuleStore.KEY_RULES ||
+                        it == SegRuleStore.KEY_BINDINGS ||
+                        it == SegRuleStore.KEY_SYM_ACCT ||
+                        it == SegRuleStore.KEY_SYM_FIELD ||
+                        it == SegRuleStore.KEY_TPL_CUSTOM
+                }
+                .mapValues { it.value?.toString().orEmpty() }
+            else emptyMap()
+
             onResult(
                 buildBackupJson(
                     sourcePanelType = panel.type.name,
@@ -1978,7 +1966,8 @@ class MainViewModel @Inject constructor(
                     scripts = scripts,
                     configFiles = configs,
                     localScripts = localScripts,
-                    panels = panels
+                    panels = panels,
+                    envSegRules = envSegRules
                 )
             )
         }
@@ -1986,6 +1975,16 @@ class MainViewModel @Inject constructor(
 
     /** 本地脚本库条目数（备份页展示）；未启用本地脚本能力时返回 null */
     fun localScriptBackupCount(): Int? = localScriptFeature.backupCount()
+
+    /** 旧版分段配置 key 前缀（v2 规则表为 rules_v2/bindings_v2；旧条目由 SegRuleStore 读取时迁移） */
+    private val segRuleKeyPrefix = "seg_"
+
+    /** 环境变量分段规则存储（与 SegRuleStore 同一个 SP；恢复旧备份写回 seg_* 后读取时仍会触发迁移） */
+    private fun envSegPrefs(): SharedPreferences =
+        context.getSharedPreferences("env_seg_prefs", Context.MODE_PRIVATE)
+
+    /** 环境变量分段规则条目数（备份页展示）：rules_v2 规则条数 + 尚未迁移的旧 seg_* 条数 */
+    fun envSegBackupCount(): Int = SegRuleStore.ruleCount(context)
 
     /** 解析备份 JSON 并返回预览数据（不执行恢复） */
     fun previewRestore(json: String): PreviewRestoreData? {
@@ -1998,7 +1997,8 @@ class MainViewModel @Inject constructor(
                 scripts = backup.scripts,
                 configFiles = backup.configFiles,
                 localScripts = backup.localScripts,
-                panels = backup.panels
+                panels = backup.panels,
+                envSegRules = backup.envSegRules
             )
         }
     }
@@ -2012,6 +2012,7 @@ class MainViewModel @Inject constructor(
         selectedConfigs: List<BackupConfigFile> = data.configFiles,
         selectedLocalScripts: List<BackupLocalScript> = data.localScripts,
         selectedPanels: List<BackupPanelInstance> = data.panels,
+        selectedEnvSegRules: Map<String, String> = data.envSegRules,
         onResult: (List<RestoreReport>, String?) -> Unit
     ) {
         viewModelScope.launch {
@@ -2032,6 +2033,22 @@ class MainViewModel @Inject constructor(
             }
             if (selectedEnvs.isNotEmpty()) {
                 adapter.restoreEnvs(selectedEnvs).getOrNull()?.let { reports.add(it) }
+            }
+            // 环境变量分段规则：合并写回本机 SP（同 key 覆盖，不删除备份外的现有条目）
+            if (selectedEnvSegRules.isNotEmpty()) {
+                val editor = envSegPrefs().edit()
+                var segOk = 0
+                val segErrors = mutableListOf<String>()
+                selectedEnvSegRules.forEach { (key, value) ->
+                    runCatching { editor.putString(key, value) }
+                        .onSuccess { segOk++ }
+                        .onFailure { segErrors.add("${key.removePrefix(segRuleKeyPrefix)}: ${it.message}") }
+                }
+                runCatching { editor.apply() }
+                    .onFailure { segErrors.add("写入失败: ${it.message}") }
+                reports.add(
+                    RestoreReport("环境变量分段规则", selectedEnvSegRules.size, segOk, 0, segErrors)
+                )
             }
             if (selectedScripts.isNotEmpty()) {
                 adapter.restoreScripts(selectedScripts).getOrNull()?.let { reports.add(it) }
@@ -2232,7 +2249,7 @@ class MainViewModel @Inject constructor(
     fun reloadQinglongSystem() {
         viewModelScope.launch {
             val adapter = repository.getAdapter(getActivePanel())
-            _uiState.value = _uiState.value.copy(toastMessage = "正在重载面板配置...")
+            _uiState.value = _uiState.value.copy(toastMessage = "正在重载配置...")
             val res = when (adapter) {
                 is QinglongV15Adapter -> adapter.reloadSystem()
                 is QinglongV10Adapter -> adapter.reloadSystem()
@@ -2261,13 +2278,13 @@ class MainViewModel @Inject constructor(
 
     fun reinstallDeps(depIds: List<String>) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(toastMessage = "正在重新安装依赖...")
+            _uiState.value = _uiState.value.copy(toastMessage = "正在重装依赖...")
             val res = repository.getAdapter(getActivePanel()).reinstallDeps(depIds)
             _uiState.value = _uiState.value.copy(
                 toastMessage = if (res.isSuccess) {
-                    "已触发重新安装（${depIds.size} 个）"
+                    "已重装（${depIds.size} 个）"
                 } else {
-                    "重新安装失败: ${res.exceptionOrNull()?.message}"
+                    "重装失败: ${res.exceptionOrNull()?.message}"
                 }
             )
             refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.DEPS))
@@ -2408,7 +2425,7 @@ class MainViewModel @Inject constructor(
             val remaining = _uiState.value.panels.filter { it.id != panelId }
             _uiState.value = _uiState.value.copy(
                 selectedPanelIndex = 0,
-                toastMessage = "面板实例已删除！"
+                toastMessage = "面板已删除"
             )
             if (remaining.isEmpty()) {
                 onAllDeleted()

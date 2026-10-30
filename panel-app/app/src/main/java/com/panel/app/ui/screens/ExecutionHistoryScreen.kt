@@ -121,12 +121,14 @@ fun ExecutionHistoryScreen(
             .sortedByDescending { it.second.size }
     }
 
-    // 首次进入时若没有任何记忆，默认展开前 5 个脚本组
+    // 仅首次（持久化标记）默认展开前 5 组；之后完全保留用户的展开/收起状态，
+    // 不能把"展开集合为空"当成无记忆——那正是用户手动全部收起后的状态
     LaunchedEffect(groupedByScript) {
-        if (expandedScripts.isEmpty() && groupedByScript.isNotEmpty()) {
+        if (taskId.isNullOrBlank() && !viewModel.isHistoryAutoExpandDone() && groupedByScript.isNotEmpty()) {
             groupedByScript.take(5).forEach { (scriptName, _) ->
                 viewModel.toggleHistoryScriptExpanded(scriptName)
             }
+            viewModel.markHistoryAutoExpandDone()
         }
     }
 
@@ -320,7 +322,7 @@ fun ExecutionHistoryScreen(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                                     Spacer(Modifier.height(8.dp))
-                                    Text(if (isLoading) "正在同步执行历史记录..." else "暂无匹配的执行历史记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (isLoading) "正在同步执行历史..." else "暂无执行历史", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }

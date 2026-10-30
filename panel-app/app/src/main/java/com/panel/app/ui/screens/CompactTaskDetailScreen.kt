@@ -171,10 +171,10 @@ fun CompactTaskDetailScreen(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // ================= 1. 三大二级页面直达入口 =================
+            // ================= 1. 状态与基础运行信息 =================
             item {
                 Text(
-                    text = "直达二级页面",
+                    text = "状态信息",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -182,60 +182,8 @@ fun CompactTaskDetailScreen(
                 )
             }
 
-            // 二级入口 1：实时执行日志
             item {
-                NavigableActionCard(
-                    icon = Icons.Default.Terminal,
-                    title = "最新日志",
-                    subtitle = if (task.isRunning) "任务当前正在运行中，点击跟随实时日志流" else "点击查看最新日志输出",
-                    badge = if (task.isRunning) "运行中" else "查看日志",
-                    badgeColor = if (task.isRunning) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                    onClick = { onOpenLog(task.name, task.id) }
-                )
-            }
-
-            // 二级入口 2：脚本代码页面
-            item {
-                val scriptPath = extractScriptPath(task.command)
-                NavigableActionCard(
-                    icon = Icons.Default.Code,
-                    title = "脚本代码文件",
-                    subtitle = if (scriptPath.isNotBlank()) "目标文件: $scriptPath (点击在线查看与编辑)" else "从执行命令查看或编辑脚本源码",
-                    badge = scriptPath.ifBlank { "源码编辑" },
-                    badgeColor = MaterialTheme.colorScheme.secondary,
-                    onClick = {
-                        val path = scriptPath.ifBlank { task.name }
-                        onOpenScriptEditor(path)
-                    }
-                )
-            }
-
-            // 二级入口 3：执行历史记录页面
-            item {
-                val count = uiState.activeTaskInstances.size
-                NavigableActionCard(
-                    icon = Icons.Default.History,
-                    title = "历次执行历史记录",
-                    subtitle = "累计已记录 $count 条执行历史实例，点击查看完整历史",
-                    badge = "$count 条记录",
-                    badgeColor = MaterialTheme.colorScheme.tertiary,
-                    onClick = { onOpenHistory(task.id) }
-                )
-            }
-
-            // ================= 2. 状态与基础运行信息 =================
-            item {
-                Text(
-                    text = "运行与状态信息",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp)
-                )
-            }
-
-            item {
-                DetailCard(title = "任务基础信息", icon = Icons.Default.Info) {
+                DetailCard(title = "基础信息", icon = Icons.Default.Info) {
                     // 运行状态与启停开关
                     Row(
                         modifier = Modifier
@@ -345,10 +293,62 @@ fun CompactTaskDetailScreen(
                 }
             }
 
+            // ================= 2. 三大二级页面快捷入口 =================
+            item {
+                Text(
+                    text = "快捷入口",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp)
+                )
+            }
+
+            // 入口 1：实时执行日志
+            item {
+                NavigableActionCard(
+                    icon = Icons.Default.Terminal,
+                    title = "执行日志",
+                    subtitle = if (task.isRunning) "任务正在运行，点击跟随实时日志流" else "点击查看最新日志输出",
+                    badge = if (task.isRunning) "运行中" else "查看日志",
+                    badgeColor = if (task.isRunning) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                    onClick = { onOpenLog(task.name, task.id) }
+                )
+            }
+
+            // 入口 2：脚本源码（不展示文件名）
+            item {
+                val scriptPath = extractScriptPath(task.command)
+                NavigableActionCard(
+                    icon = Icons.Default.Code,
+                    title = "脚本源码",
+                    subtitle = "点击查看并编辑",
+                    badge = "源码编辑",
+                    badgeColor = MaterialTheme.colorScheme.secondary,
+                    onClick = {
+                        val path = scriptPath.ifBlank { task.name }
+                        onOpenScriptEditor(path)
+                    }
+                )
+            }
+
+            // 入口 3：执行历史
+            item {
+                val count = uiState.activeTaskInstances.size
+                NavigableActionCard(
+                    icon = Icons.Default.History,
+                    title = "执行历史",
+                    subtitle = "已记录 $count 条，点击查看完整历史",
+                    badge = "$count 条记录",
+                    badgeColor = MaterialTheme.colorScheme.tertiary,
+                    onClick = { onOpenHistory(task.id) }
+                )
+            }
+
             // ================= 3. 定时调度与运行周期 =================
             item {
                 Text(
-                    text = "定时调度与执行周期",
+                    text = "调度周期",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -357,7 +357,7 @@ fun CompactTaskDetailScreen(
             }
 
             item {
-                DetailCard(title = "定时规则与执行历史", icon = Icons.Default.Schedule) {
+                DetailCard(title = "规则与历史", icon = Icons.Default.Schedule) {
                     val cronDesc = remember(task.schedule) {
                         CronExpressionDescriber.describe(task.schedule)
                     }
@@ -455,7 +455,7 @@ fun CompactTaskDetailScreen(
             // ================= 4. 高级配置参数 (全量补全缺失字段) =================
             item {
                 Text(
-                    text = "高级配置参数",
+                    text = "高级配置",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -464,7 +464,7 @@ fun CompactTaskDetailScreen(
             }
 
             item {
-                DetailCard(title = "高级属性配置", icon = Icons.Default.Tune) {
+                DetailCard(title = "高级属性", icon = Icons.Default.Tune) {
                     // 超时时间
                     DetailRow(
                         label = "超时时间",

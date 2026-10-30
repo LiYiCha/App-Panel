@@ -311,6 +311,65 @@ object UniversalEnvParser {
     }
 
     /**
+     * 「=」双重语义模式下的段边界切分：
+     * 优先按 "&"（原串同时含 "&" 且不含 ";"），否则 ";"，否则换行 "\n"，都没有则整串为一段。
+     * "=" 只作为段内键值分隔，不参与切段，避免 "a=1&b=2" 被错切成三段。
+     */
+    private fun splitSegmentsForEqMode(sanitized: String): List<String> = when {
+        sanitized.contains("&") && !sanitized.contains(";") -> sanitized.split("&")
+        sanitized.contains(";") -> sanitized.split(";")
+        sanitized.contains("\n") -> sanitized.split("\n")
+        else -> listOf(sanitized)
+    }
+
+    /** 「=」模式下按原文选择连接符，与 [splitSegmentsForEqMode] 的优先级保持一致，默认 "&" */
+    private fun eqModeJoiner(original: String): String = when {
+        original.contains("&") && !original.contains(";") -> "&"
+        original.contains(";") -> ";"
+        original.contains("\n") -> "\n"
+        else -> "&"
+    }
+
+    /**
+     * 按用户指定分隔符拆段：段内若含 "=" 则以首个 "=" 拆为 key/value，否则整段作为 key。
+     * 与 [parseSubItems] 的自动识别互不影响，供自定义分段模式使用。
+     * sep 为 "=" 时走双重语义：按 [&] / [;] / 据行 切段、段内首个 "=" 拆键值（后续 "=" 原样保留）。
+     */
+    fun parseSubItemsWithSeparator(value: String, sep: String): List<Pair<String, String>> {
+        val sanitized = sanitizeRawString(value)
+        if (sanitized.isEmpty() || sep.isEmpty()) return emptyList()
+        val segments = if (sep == "=") splitSegmentsForEqMode(sanitized) else sanitized.split(sep)
+        return segments.mapNotNull { part ->
+            val trimmed = part.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+            val idx = trimmed.indexOf('=')
+            if (idx >= 0) Pair(trimmed.substring(0, idx).trim(), trimmed.substring(idx + 1))
+            else Pair(trimmed, "")
+        }
+    }
+
+    /**
+     * 按用户指定分隔符合分：值为空的段只输出 key，保证 "abcd=12345" 这类内容往返无损。
+     * sep 为 "=" 时按原文特征选连接符，原文缺失则默认 "&"；建议调用方传入 [originalValue] 重载以无损往返。
+     */
+    fun assembleSubItemsWithSeparator(pairs: List<Pair<String, String>>, sep: String): String =
+        assembleSubItemsWithSeparator(pairs, sep, "")
+
+    /**
+     * 带原文的合分重载：sep 为 "=" 时根据 [originalValue] 的段边界特征（& / ; / 换行）选择连接符，
+     * 与 [parseSubItemsWithSeparator] 的切段规则对称，保证往返无损；sep 为其他值时行为与双参版本完全一致。
+     */
+    fun assembleSubItemsWithSeparator(
+        pairs: List<Pair<String, String>>,
+        sep: String,
+        originalValue: String
+    ): String {
+        val cleaned = pairs.filter { it.first.isNotEmpty() || it.second.isNotEmpty() }
+        val joiner = if (sep == "=") eqModeJoiner(sanitizeRawString(originalValue)) else sep
+        return cleaned.joinToString(joiner) { (k, v) -> if (v.isEmpty()) k else "$k=$v" }
+    }
+
+    /**
      * 自适应合成分段修改后的文本，根据原始数据特征无损还原
      */
     fun assembleSubItems(envName: String, pairs: List<Pair<String, String>>, originalValue: String = ""): String {
