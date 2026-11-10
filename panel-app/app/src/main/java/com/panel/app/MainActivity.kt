@@ -312,10 +312,10 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                     val encoded = Uri.encode(scriptPath)
                     navController.navigate("standalone_editor/$encoded")
                 },
-                onOpenLog = { title, tId ->
+                onOpenLog = { title, tId, isRunning ->
                     val encTitle = Uri.encode(title)
                     val encId = Uri.encode(tId)
-                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId")
+                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId&running=$isRunning")
                 },
                 onOpenHistory = { tId ->
                     navController.navigate("execution_history?taskId=$tId")

@@ -95,17 +95,6 @@ data class MainUiState(
     val taskDurationCache: Map<String, String> = emptyMap()
 )
 
-data class CachedPanelData(
-    val tasks: List<UnifiedTask> = emptyList(),
-    val envs: List<UnifiedEnv> = emptyList(),
-    val subscriptions: List<UnifiedSubscription> = emptyList(),
-    val deps: List<UnifiedDep> = emptyList(),
-    val scriptTree: List<ScriptNode> = emptyList(),
-    val configFiles: List<String> = emptyList(),
-    val selectedConfigFile: String = "config.sh",
-    val configContent: String = ""
-)
-
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -219,39 +208,60 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun loadDiskCache(panelId: String) {
+    private fun readDiskCacheDirect(panelId: String): CachedPanelData? {
         try {
             val file = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
-            if (file.exists()) {
-                val json = file.readText()
+            if (!file.exists() || file.length() == 0L) return null
+            val json = file.readText()
+            if (json.isBlank()) return null
+            return try {
+                gson.fromJson(json, CachedPanelData::class.java)
+            } catch (_: Exception) {
                 val root = JsonParser.parseString(json).asJsonObject
                 fun <T> readList(name: String, type: java.lang.reflect.Type): List<T> =
-                    root.get(name)?.let { gson.fromJson<List<T>>(it, type) }.orEmpty()
-                val data = CachedPanelData(
+                    root.get(name)?.takeIf { !it.isJsonNull }?.let {
+                        runCatching { gson.fromJson<List<T>>(it, type) }.getOrNull()
+                    }.orEmpty()
+                CachedPanelData(
                     tasks = readList("tasks", object : TypeToken<List<UnifiedTask>>() {}.type),
                     envs = readList("envs", object : TypeToken<List<UnifiedEnv>>() {}.type),
                     subscriptions = readList("subscriptions", object : TypeToken<List<UnifiedSubscription>>() {}.type),
                     deps = readList("deps", object : TypeToken<List<UnifiedDep>>() {}.type),
                     scriptTree = readList("scriptTree", object : TypeToken<List<ScriptNode>>() {}.type),
                     configFiles = readList("configFiles", object : TypeToken<List<String>>() {}.type),
-                    selectedConfigFile = root.get("selectedConfigFile")?.asString ?: "config.sh",
-                    configContent = root.get("configContent")?.asString ?: ""
+                    selectedConfigFile = root.get("selectedConfigFile")?.takeIf { !it.isJsonNull }?.asString ?: "config.sh",
+                    configContent = root.get("configContent")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                    activeTaskInstances = readList("activeTaskInstances", object : TypeToken<List<TaskInstanceRecord>>() {}.type)
                 )
-                // 只有从未加载过网络数据时，才使用缓存作为初始数据
-                if (data != null && getActivePanel().id == panelId && !hasNetworkDataLoaded) {
-                    _uiState.value = _uiState.value.copy(
-                        tasks = data.tasks,
-                        envs = data.envs,
-                        subscriptions = data.subscriptions,
-                        deps = data.deps,
-                        scriptTree = data.scriptTree,
-                        configFiles = data.configFiles,
-                        selectedConfigFile = data.selectedConfigFile,
-                        configContent = data.configContent
-                    )
-                }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.panel.app.data.logger.AppLogger.log(
+                com.panel.app.data.logger.LogLevel.WARN,
+                "Cache",
+                "读取本地缓存失败 [$panelId]: ${e.message}"
+            )
+            return null
+        }
+    }
+
+    private fun loadDiskCache(panelId: String) {
+        val data = readDiskCacheDirect(panelId) ?: return
+        val currentActive = getActivePanel()
+        if (currentActive.id == panelId) {
+            _uiState.update { current ->
+                current.copy(
+                    tasks = if (current.tasks.isEmpty()) data.tasks else current.tasks,
+                    envs = if (current.envs.isEmpty()) data.envs else current.envs,
+                    subscriptions = if (current.subscriptions.isEmpty()) data.subscriptions else current.subscriptions,
+                    deps = if (current.deps.isEmpty()) data.deps else current.deps,
+                    scriptTree = if (current.scriptTree.isEmpty()) data.scriptTree else current.scriptTree,
+                    configFiles = if (current.configFiles.isEmpty()) data.configFiles else current.configFiles,
+                    selectedConfigFile = if (current.selectedConfigFile.isBlank() || current.selectedConfigFile == "config.sh") data.selectedConfigFile else current.selectedConfigFile,
+                    configContent = if (current.configContent.isEmpty()) data.configContent else current.configContent,
+                    activeTaskInstances = if (current.activeTaskInstances.isEmpty()) data.activeTaskInstances else current.activeTaskInstances
+                )
+            }
+        }
     }
 
     private fun saveDiskCache(
@@ -263,29 +273,106 @@ class MainViewModel @Inject constructor(
         scriptTree: List<ScriptNode>,
         configFiles: List<String>,
         selectedConfigFile: String,
-        configContent: String
+        configContent: String,
+        activeTaskInstances: List<TaskInstanceRecord> = _uiState.value.activeTaskInstances
     ) {
         try {
-            java.io.File(context.filesDir, "cache").mkdirs()
-            val file = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
-            val data = CachedPanelData(tasks, envs, subs, deps, scriptTree, configFiles, selectedConfigFile, configContent)
-            file.writeText(gson.toJson(data))
-        } catch (_: Exception) {}
+            val cacheFolder = java.io.File(context.filesDir, "cache")
+            if (!cacheFolder.exists()) cacheFolder.mkdirs()
+            val file = java.io.File(cacheFolder, "panel_cache_${panelId}.json")
+            val tempFile = java.io.File(cacheFolder, "panel_cache_${panelId}.tmp")
+            val data = CachedPanelData(
+                tasks = tasks,
+                envs = envs,
+                subscriptions = subs,
+                deps = deps,
+                scriptTree = scriptTree,
+                configFiles = configFiles,
+                selectedConfigFile = selectedConfigFile,
+                configContent = configContent,
+                activeTaskInstances = activeTaskInstances
+            )
+            tempFile.writeText(gson.toJson(data))
+            if (tempFile.exists()) {
+                if (file.exists()) file.delete()
+                tempFile.renameTo(file)
+            }
+        } catch (e: Exception) {
+            com.panel.app.data.logger.AppLogger.log(
+                com.panel.app.data.logger.LogLevel.WARN,
+                "Cache",
+                "写入面板 [$panelId] 本地缓存失败: ${e.message}"
+            )
+        }
     }
 
-    private val _uiState = MutableStateFlow(
-        MainUiState(
-            isDarkTheme = prefs.getBoolean("is_dark_theme", false),
-            isDevMode = prefs.getBoolean("is_dev_mode", false)
+    /** 保存当前所有内存状态到当前面板的磁盘快照 */
+    fun persistCurrentStateToDiskCache() {
+        val active = getActivePanel()
+        val s = _uiState.value
+        saveDiskCache(
+            panelId = active.id,
+            tasks = s.tasks,
+            envs = s.envs,
+            subs = s.subscriptions,
+            deps = s.deps,
+            scriptTree = s.scriptTree,
+            configFiles = s.configFiles,
+            selectedConfigFile = s.selectedConfigFile,
+            configContent = s.configContent,
+            activeTaskInstances = s.activeTaskInstances
         )
-    )
+    }
+
+    private fun buildInitialUiState(): MainUiState {
+        val isDark = prefs.getBoolean("is_dark_theme", false)
+        val isDev = prefs.getBoolean("is_dev_mode", false)
+        val savedActiveId = prefs.getString("active_panel_id", null)
+
+        // 1. 从 SharedPreferences 快速读取缓存的面板列表
+        val cachedPanelsJson = prefs.getString("cached_panels_list", null)
+        val cachedPanels: List<PanelInstance> = if (!cachedPanelsJson.isNullOrBlank()) {
+            runCatching {
+                val listType = object : TypeToken<List<PanelInstance>>() {}.type
+                gson.fromJson<List<PanelInstance>>(cachedPanelsJson, listType)
+            }.getOrNull().orEmpty()
+        } else emptyList()
+
+        val activeIndex = if (cachedPanels.isNotEmpty() && savedActiveId != null) {
+            cachedPanels.indexOfFirst { it.id == savedActiveId }.takeIf { it >= 0 } ?: 0
+        } else 0
+        val activePanelId = if (cachedPanels.isNotEmpty()) cachedPanels[activeIndex].id else savedActiveId
+
+        // 2. 从本地磁盘同步加载当前面板的离线快照，冷启动第一帧即刻呈现已有数据
+        val diskData = if (!activePanelId.isNullOrBlank()) {
+            readDiskCacheDirect(activePanelId)
+        } else null
+
+        return MainUiState(
+            isDarkTheme = isDark,
+            isDevMode = isDev,
+            isDatabaseReady = cachedPanels.isNotEmpty(),
+            panels = cachedPanels,
+            selectedPanelIndex = activeIndex,
+            tasks = diskData?.tasks.orEmpty(),
+            envs = diskData?.envs.orEmpty(),
+            subscriptions = diskData?.subscriptions.orEmpty(),
+            deps = diskData?.deps.orEmpty(),
+            scriptTree = diskData?.scriptTree.orEmpty(),
+            configFiles = diskData?.configFiles.orEmpty(),
+            selectedConfigFile = diskData?.selectedConfigFile ?: "config.sh",
+            configContent = diskData?.configContent.orEmpty(),
+            activeTaskInstances = diskData?.activeTaskInstances.orEmpty(),
+            expandedHistoryScripts = prefs.getStringSet("history_expanded", emptySet())?.toSet().orEmpty(),
+            isLoading = false
+        )
+    }
+
+    private val _uiState = MutableStateFlow(buildInitialUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
         com.panel.app.data.logger.AppLogger.isDevModeEnabled = _uiState.value.isDevMode
-        _uiState.value = _uiState.value.copy(
-            expandedHistoryScripts = prefs.getStringSet("history_expanded", emptySet())?.toSet().orEmpty()
-        )
         initData()
     }
 
@@ -325,29 +412,38 @@ class MainViewModel @Inject constructor(
                     val previousActiveId = _uiState.value.panels.getOrNull(_uiState.value.selectedPanelIndex)?.id
                     val isPanelChanged = previousActiveId != null && previousActiveId != activePanel.id
 
+                    // 写入 SharedPreferences 面板列表快照
+                    prefs.edit { putString("cached_panels_list", gson.toJson(validPanels)) }
+
+                    val currentTasks = _uiState.value.tasks
+                    val needLoadDiskCache = isPanelChanged || currentTasks.isEmpty()
+
                     _uiState.value = _uiState.value.copy(
                         isDatabaseReady = true,
                         panels = validPanels,
                         selectedPanelIndex = targetIdx,
-                        tasks = if (isPanelChanged) emptyList() else _uiState.value.tasks,
+                        tasks = if (isPanelChanged) emptyList() else currentTasks,
                         subscriptions = if (isPanelChanged) emptyList() else _uiState.value.subscriptions,
                         envs = if (isPanelChanged) emptyList() else _uiState.value.envs,
                         deps = if (isPanelChanged) emptyList() else _uiState.value.deps,
                         scriptTree = if (isPanelChanged) emptyList() else _uiState.value.scriptTree,
-                        // 面板切换必须同步清空配置文件清单：否则旧面板的 config.sh 等会被
-                        // 带到新面板上当作读取目标，产生跨面板污染
                         configFiles = if (isPanelChanged) emptyList() else _uiState.value.configFiles,
-                        selectedConfigFile = if (isPanelChanged) "" else _uiState.value.selectedConfigFile
+                        selectedConfigFile = if (isPanelChanged) "" else _uiState.value.selectedConfigFile,
+                        activeTaskInstances = if (isPanelChanged) emptyList() else _uiState.value.activeTaskInstances
                     )
-                    // 1. 先恢复磁盘缓存（IO线程），让 UI 立刻显示上次的数据
-                    viewModelScope.launch(Dispatchers.IO) {
-                        loadDiskCache(activePanel.id)
-                        // 2. 缓存恢复完成后，在后台异步发起网络同步（不阻塞 UI）
-                        if (!hasNetworkDataLoaded) {
-                            refreshPanelRemoteData(activePanel)
+
+                    // 1. 如果面板发生改变或尚未加载到数据，恢复磁盘缓存
+                    if (needLoadDiskCache) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            loadDiskCache(activePanel.id)
                         }
                     }
+                    // 2. 在后台异步发起网络同步（不阻塞 UI）
+                    if (!hasNetworkDataLoaded) {
+                        refreshPanelRemoteData(activePanel)
+                    }
                 } else {
+                    prefs.edit { remove("cached_panels_list") }
                     _uiState.value = _uiState.value.copy(
                         isDatabaseReady = true,
                         panels = emptyList(),
@@ -356,7 +452,8 @@ class MainViewModel @Inject constructor(
                         subscriptions = emptyList(),
                         envs = emptyList(),
                         deps = emptyList(),
-                        scriptTree = emptyList()
+                        scriptTree = emptyList(),
+                        activeTaskInstances = emptyList()
                     )
                 }
             }
@@ -378,20 +475,24 @@ class MainViewModel @Inject constructor(
         if (index in panels.indices) {
             val targetPanel = panels[index]
             setActivePanelId(targetPanel.id)
+            val cached = readDiskCacheDirect(targetPanel.id)
             _uiState.value = _uiState.value.copy(
                 selectedPanelIndex = index,
-                tasks = emptyList(),
-                subscriptions = emptyList(),
-                envs = emptyList(),
-                deps = emptyList(),
-                scriptTree = emptyList(),
-                configFiles = emptyList(),
-                selectedConfigFile = "config.sh",
-                configContent = ""
+                tasks = cached?.tasks.orEmpty(),
+                subscriptions = cached?.subscriptions.orEmpty(),
+                envs = cached?.envs.orEmpty(),
+                deps = cached?.deps.orEmpty(),
+                scriptTree = cached?.scriptTree.orEmpty(),
+                configFiles = cached?.configFiles.orEmpty(),
+                selectedConfigFile = cached?.selectedConfigFile ?: "config.sh",
+                configContent = cached?.configContent.orEmpty(),
+                activeTaskInstances = cached?.activeTaskInstances.orEmpty()
             )
             hasNetworkDataLoaded = false
             viewModelScope.launch(Dispatchers.IO) {
-                loadDiskCache(targetPanel.id)
+                if (cached == null) {
+                    loadDiskCache(targetPanel.id)
+                }
                 if (!hasNetworkDataLoaded) {
                     refreshPanelRemoteData(targetPanel)
                 }
@@ -731,6 +832,7 @@ class MainViewModel @Inject constructor(
                 val updatedPanels = _uiState.value.panels.map {
                     if (it.id == activePanel.id) it.copy(cpuUsage = cpu, ramUsage = ram) else it
                 }
+                prefs.edit { putString("cached_panels_list", gson.toJson(updatedPanels)) }
 
                 val hasSuccess = listOfNotNull<Result<Any?>>(
                     tasksRes, envsRes, scriptTreeRes, subsRes, depsRes, configFilesRes
@@ -1075,6 +1177,7 @@ class MainViewModel @Inject constructor(
                 setActivePanelId(savedInstance.id)
                 repository.savePanel(savedInstance)
                 val currentPanels = repository.panelsFlow.first()
+                prefs.edit { putString("cached_panels_list", gson.toJson(currentPanels)) }
                 val targetIndex = currentPanels.indexOfFirst { it.id == savedInstance.id }.let { if (it >= 0) it else 0 }
                 _uiState.value = _uiState.value.copy(
                     panels = currentPanels,
@@ -1131,6 +1234,7 @@ class MainViewModel @Inject constructor(
                 setActivePanelId(saved.id)
                 repository.savePanel(saved)
                 val currentPanels = repository.panelsFlow.first()
+                prefs.edit { putString("cached_panels_list", gson.toJson(currentPanels)) }
                 val targetIndex = currentPanels.indexOfFirst { it.id == saved.id }.let { if (it >= 0) it else 0 }
                 _uiState.value = _uiState.value.copy(
                     panels = currentPanels,
@@ -1201,6 +1305,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val list = _uiState.value.tasks.map { if (it.id == taskId) it.copy(isDisabled = !enable) else it }
             _uiState.value = _uiState.value.copy(tasks = list)
+            persistCurrentStateToDiskCache()
             repository.getAdapter(getActivePanel()).toggleTask(taskId, enable)
         }
     }
@@ -1227,6 +1332,7 @@ class MainViewModel @Inject constructor(
             repository.getAdapter(getActivePanel()).updateTask(updated)
             val list = _uiState.value.tasks.map { if (it.id == updated.id) updated else it }
             _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务 [${updated.name}] 修改成功！")
+            persistCurrentStateToDiskCache()
         }
     }
 
@@ -1234,6 +1340,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val list = _uiState.value.tasks.map { if (it.id == taskId) it.copy(isPinned = pin) else it }
             _uiState.value = _uiState.value.copy(tasks = list, toastMessage = if (pin) "任务已置顶 📌" else "已取消置顶")
+            persistCurrentStateToDiskCache()
             repository.getAdapter(getActivePanel()).pinTask(listOf(taskId), pin)
         }
     }
@@ -1295,6 +1402,7 @@ class MainViewModel @Inject constructor(
             if (res.isSuccess) {
                 val list = _uiState.value.tasks.filterNot { taskIds.contains(it.id) }
                 _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "已删除 ${taskIds.size} 个任务")
+                persistCurrentStateToDiskCache()
             } else {
                 val errMsg = res.exceptionOrNull()?.message ?: "未知错误"
                 _uiState.value = _uiState.value.copy(toastMessage = "批量删除失败: $errMsg")
@@ -1309,6 +1417,7 @@ class MainViewModel @Inject constructor(
             if (res.isSuccess) {
                 val list = _uiState.value.tasks.filterNot { it.id == taskId }
                 _uiState.value = _uiState.value.copy(tasks = list, toastMessage = "任务已删除")
+                persistCurrentStateToDiskCache()
             } else {
                 val errMsg = res.exceptionOrNull()?.message ?: "未知错误"
                 _uiState.value = _uiState.value.copy(toastMessage = "删除任务失败: $errMsg")
@@ -1522,6 +1631,7 @@ class MainViewModel @Inject constructor(
             } else {
                 _uiState.value = _uiState.value.copy(configContent = content, toastMessage = "配置已同步保存")
             }
+            persistCurrentStateToDiskCache()
         }
     }
 
@@ -1594,6 +1704,9 @@ class MainViewModel @Inject constructor(
     // ==================== 4. 环境变量 ====================
     fun toggleEnv(envId: String, enable: Boolean) {
         viewModelScope.launch {
+            val list = _uiState.value.envs.map { if (it.id == envId) it.copy(enabled = enable) else it }
+            _uiState.value = _uiState.value.copy(envs = list)
+            persistCurrentStateToDiskCache()
             repository.getAdapter(getActivePanel()).toggleEnv(envId, enable)
         }
     }
@@ -1663,6 +1776,7 @@ class MainViewModel @Inject constructor(
             repository.getAdapter(getActivePanel()).deleteEnv(listOf(envId))
             val list = _uiState.value.envs.filterNot { it.id == envId }
             _uiState.value = _uiState.value.copy(envs = list, toastMessage = "环境变量已删除")
+            persistCurrentStateToDiskCache()
         }
     }
 
@@ -1830,9 +1944,9 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val adapter = repository.getAdapter(getActivePanel())
             var log = adapter.getLogDetail(path, file).getOrNull()
-            if ((log.isNullOrBlank() || log == "暂无日志内容") && !fallbackTaskId.isNullOrBlank()) {
+            if ((log.isNullOrBlank() || log == "暂无日志内容" || log == "暂无运行日志输出") && !fallbackTaskId.isNullOrBlank()) {
                 val fallbackLog = adapter.getTaskLog(fallbackTaskId).getOrNull()
-                if (!fallbackLog.isNullOrBlank()) {
+                if (!fallbackLog.isNullOrBlank() && fallbackLog != "暂无运行日志输出") {
                     log = fallbackLog
                 }
             }
@@ -2142,10 +2256,9 @@ class MainViewModel @Inject constructor(
     fun loadDashboard(force: Boolean = false, onResult: (Result<PanelDashboard>) -> Unit) {
         val panel = getActivePanel()
         val cached = repository.getCachedDashboard(panel.id)
-        val withinTtl = cached != null &&
-            System.currentTimeMillis() - (dashboardFetchedAt[panel.id] ?: 0L) < dashboardTtlMs
-        if (!force && withinTtl) {
-            onResult(Result.success(cached!!))
+        val withinTtl = System.currentTimeMillis() - (dashboardFetchedAt[panel.id] ?: 0L) < dashboardTtlMs
+        if (!force && cached != null && withinTtl) {
+            onResult(Result.success(cached))
             return
         }
         if (cached != null) {
@@ -2400,6 +2513,7 @@ class MainViewModel @Inject constructor(
             val res = repository.getAdapter(getActivePanel()).createDirectory(path)
             if (res.isSuccess) {
                 _uiState.value = _uiState.value.copy(toastMessage = "文件夹 [$path] 创建成功！")
+                persistCurrentStateToDiskCache()
             } else {
                 _uiState.value = _uiState.value.copy(toastMessage = "创建文件夹失败: ${res.exceptionOrNull()?.message}")
             }
@@ -2411,25 +2525,56 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val res = repository.getAdapter(getActivePanel()).deleteScript(path)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(toastMessage = "脚本/文件夹 [$path] 已删除！")
+                // 1. 立即乐观更新本地状态树，剔除该文件/文件夹（含所有子节点），UI 秒级响应无需等待刷新
+                val updatedTree = removeNodeFromTree(_uiState.value.scriptTree, path)
+                _uiState.update {
+                    it.copy(
+                        scriptTree = updatedTree,
+                        toastMessage = "脚本/文件夹 [$path] 已删除！"
+                    )
+                }
+                persistCurrentStateToDiskCache()
+                // 2. 稍作延迟（让后台 rm -rf 完成文件系统落盘），再向服务端拉取全量校准
+                kotlinx.coroutines.delay(300)
+                refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
             } else {
-                _uiState.value = _uiState.value.copy(toastMessage = "删除失败: ${res.exceptionOrNull()?.message}")
+                _uiState.update {
+                    it.copy(toastMessage = "删除失败: ${res.exceptionOrNull()?.message}")
+                }
             }
-            refreshPanelRemoteData(getActivePanel(), scopes = setOf(RefreshScope.SCRIPTS))
+        }
+    }
+
+    private fun removeNodeFromTree(tree: List<ScriptNode>, targetPath: String): List<ScriptNode> {
+        val cleanTarget = targetPath.trim('/')
+        return tree.filterNot {
+            val p = it.path.trim('/')
+            p == cleanTarget || p.startsWith("$cleanTarget/")
+        }.map { node ->
+            if (node.children != null) {
+                node.copy(children = removeNodeFromTree(node.children, targetPath))
+            } else node
         }
     }
 
     fun deletePanelInstance(panelId: String, onAllDeleted: () -> Unit = {}) {
         viewModelScope.launch {
             repository.deletePanel(panelId)
+            try {
+                val cacheFile = java.io.File(context.filesDir, "cache/panel_cache_${panelId}.json")
+                if (cacheFile.exists()) cacheFile.delete()
+            } catch (_: Exception) {}
             val remaining = _uiState.value.panels.filter { it.id != panelId }
             _uiState.value = _uiState.value.copy(
+                panels = remaining,
                 selectedPanelIndex = 0,
                 toastMessage = "面板已删除"
             )
             if (remaining.isEmpty()) {
+                prefs.edit { remove("cached_panels_list") }
                 onAllDeleted()
             } else {
+                prefs.edit { putString("cached_panels_list", gson.toJson(remaining)) }
                 refreshPanelRemoteData(remaining[0])
             }
         }

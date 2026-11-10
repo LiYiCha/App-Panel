@@ -449,8 +449,32 @@ class QinglongV10Adapter(
         ensureAuth()
         val fileName = path.substringAfterLast("/")
         val dirPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
-        return api.deleteScript(getAuthHeader(), QlDeleteScriptReq(fileName, dirPath))
-            .unwrap("删除脚本失败").map { true }
+        val res = api.deleteScript(getAuthHeader(), QlDeleteScriptReq(fileName, dirPath))
+            .unwrap("删除脚本失败")
+        if (res.isSuccess) return Result.success(true)
+
+        val err = res.exceptionOrNull()?.message.orEmpty()
+        if (err.contains("EISDIR", ignoreCase = true) || err.contains("illegal operation on a directory", ignoreCase = true)) {
+            val cleanPath = path.trim('/').replace("\"", "")
+            val tmpFile = ".cleanup_${System.currentTimeMillis()}.sh"
+            val fallbackRun = runCatching {
+                val r = api.runScript(
+                    getAuthHeader(),
+                    QlRunScriptReq(
+                        filename = tmpFile,
+                        content = "rm -rf \"/ql/data/scripts/$cleanPath\"\nrm -rf \"/ql/scripts/$cleanPath\"\nrm -f \"/ql/data/scripts/$tmpFile\"\nrm -f \"/ql/scripts/$tmpFile\"",
+                        path = ""
+                    )
+                ).unwrap("删除目录失败")
+                kotlinx.coroutines.delay(400)
+                runCatching { api.deleteScript(getAuthHeader(), QlDeleteScriptReq(tmpFile, "")) }
+                r
+            }.getOrElse { Result.failure(it) }
+            if (fallbackRun.isSuccess) {
+                return Result.success(true)
+            }
+        }
+        return Result.failure(res.exceptionOrNull() ?: Exception("删除脚本失败"))
     }
 
     // ---------------------------------------------------------------- 6. 依赖
@@ -651,13 +675,42 @@ class QinglongV10Adapter(
         val finalFile = if (path.isEmpty() && normalized.contains('/')) normalized.substringAfterLast('/') else file
         val finalPath = if (path.isEmpty() && normalized.contains('/')) normalized.substringBeforeLast('/') else path
 
-        val result = api.getLogDetail(
+        var result = api.getLogDetail(
             auth = getAuthHeader(),
             file = finalFile,
             path = finalPath.ifEmpty { null },
             tail = true
         ).unwrapTo("读取日志失败") { chunk ->
-            chunk.data ?: ""
+            chunk.data.orEmpty()
+        }
+
+        // 降级不带 tail
+        if (result.isFailure || result.getOrNull().isNullOrBlank()) {
+            val noTail = runCatching {
+                api.getLogDetail(
+                    auth = getAuthHeader(),
+                    file = finalFile,
+                    path = finalPath.ifEmpty { null },
+                    tail = null
+                ).unwrapTo("读取日志失败") { chunk -> chunk.data.orEmpty() }
+            }.getOrNull()
+            if (noTail?.isSuccess == true && !noTail.getOrNull().isNullOrBlank()) {
+                result = noTail
+            }
+        }
+
+        // 兼容 2.15.x 及更早版本端点：GET /api/logs/:file?path=...
+        if (result.isFailure || result.getOrNull().isNullOrBlank()) {
+            val legacy = runCatching {
+                api.getLogDetailLegacy(
+                    auth = getAuthHeader(),
+                    file = finalFile,
+                    path = finalPath.ifEmpty { null }
+                ).unwrapTo("读取日志失败") { chunk -> chunk.data.orEmpty() }
+            }.getOrNull()
+            if (legacy?.isSuccess == true && !legacy.getOrNull().isNullOrBlank()) {
+                result = legacy
+            }
         }
 
         if (result.isSuccess && !result.getOrNull().isNullOrBlank()) {

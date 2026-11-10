@@ -92,8 +92,9 @@ fun LogViewerScreen(
     // 服务端对已结束任务会立即下发全量并断开（白虎 finish 帧 / 青龙首轮轮询即止），开销可控。
     // 仅"静态日志文件路径"（无 taskId 且非运行中）不建立流。
     val streamTargetId = when {
-        taskId.isNotBlank() -> taskId
+        taskRunning && taskId.isNotBlank() -> taskId
         taskRunning && logPath.isNotBlank() -> logPath
+        logPath.isBlank() && taskId.isNotBlank() -> taskId
         else -> ""
     }
     var isFollowing by remember { mutableStateOf(streamTargetId.isNotBlank()) }

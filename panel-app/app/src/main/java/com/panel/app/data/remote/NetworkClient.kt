@@ -22,6 +22,37 @@ object NetworkClient {
     // 内存 CookieJar，用于自动维系白虎面板 BHToken 凭据与青龙会话
     private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
 
+    // 记录遇到 404 的 GET 接口（如老版本青龙不支持的 /api/dashboard/runtime）加入黑名单，
+    // 后续直接短路返回 404，不再发起实际网络请求和反复刷错误日志。
+    private val notFoundEndpoints = ConcurrentHashMap.newKeySet<String>()
+
+    fun clearNotFoundEndpoints() {
+        notFoundEndpoints.clear()
+    }
+
+    private fun isBlacklistable404Endpoint(path: String): Boolean {
+        val clean = path.lowercase()
+        // 动态资源文件（日志、脚本、配置文件等）可能随后被生成或写入，绝不可加入 404 永久黑名单
+        if (clean.contains("/logs") ||
+            clean.contains("/scripts") ||
+            clean.contains("/configs") ||
+            clean.contains("/dependencies") ||
+            clean.contains("/deps") ||
+            clean.endsWith(".log") ||
+            clean.endsWith(".sh") ||
+            clean.endsWith(".js") ||
+            clean.endsWith(".py") ||
+            clean.endsWith(".json")
+        ) {
+            return false
+        }
+        // 仅针对服务端固定功能接口（如 dashboard、runtime 监控接口等因面板版本不支持而 404 的端点）加入黑名单
+        return clean.contains("/dashboard") ||
+            clean.contains("/system") ||
+            clean.contains("/metrics") ||
+            clean.contains("/monitor")
+    }
+
     /**
      * 解决局域网自签名 SSL、明文 HTTP 以及自动维系 Session Cookie (DESIGN.md Section 2.3)
      */
@@ -57,6 +88,18 @@ object NetworkClient {
                 .addInterceptor(logging)
                 .addInterceptor { chain ->
                     val req = chain.request()
+                    val endpointKey = "${req.method}:${req.url.host}:${req.url.port}${req.url.encodedPath}"
+                    if (req.method == "GET" && notFoundEndpoints.contains(endpointKey)) {
+                        // 命中 404 黑名单，短路返回，避免重复发起请求和刷屏
+                        return@addInterceptor okhttp3.Response.Builder()
+                            .request(req)
+                            .protocol(okhttp3.Protocol.HTTP_1_1)
+                            .code(404)
+                            .message("Not Found (Cached 404)")
+                            .body("{\"code\":404,\"message\":\"Not Found (Blacklisted)\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+                            .build()
+                    }
+
                     val isDev = com.panel.app.data.logger.AppLogger.isDevModeEnabled
                     val start = System.currentTimeMillis()
                     var reqBodyStr: String? = null
@@ -74,6 +117,9 @@ object NetworkClient {
                     try {
                         val resp = chain.proceed(req)
                         val duration = System.currentTimeMillis() - start
+                        if (resp.code == 404 && req.method == "GET" && isBlacklistable404Endpoint(req.url.encodedPath)) {
+                            notFoundEndpoints.add(endpointKey)
+                        }
                         if (isDev || !resp.isSuccessful) {
                             val respSnippet = try {
                                 resp.peekBody(2048).string()

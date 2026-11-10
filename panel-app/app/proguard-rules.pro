@@ -40,6 +40,8 @@
 
 # 统一业务模型：UnifiedTask、UnifiedEnv、UnifiedSubscription、TaskInstanceRecord 等
 -keep class com.panel.app.data.model.** { *; }
+-keep class com.panel.app.data.model.CachedPanelData { *; }
+-keepclassmembers class com.panel.app.data.model.CachedPanelData { *; }
 
 # 支持将来接入 @SerializedName：保留被该注解标记的字段
 -keepclassmembers class * {

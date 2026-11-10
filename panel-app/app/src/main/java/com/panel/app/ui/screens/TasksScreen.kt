@@ -72,7 +72,7 @@ enum class TaskSortType(val label: String) {
     STATUS("运行状态")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TasksScreen(
     viewModel: MainViewModel,
@@ -117,24 +117,29 @@ fun TasksScreen(
         }
         when (sortType) {
             TaskSortType.DEFAULT -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
                     .thenBy { it.isDisabled }
                     .thenBy { it.name }
             )
             TaskSortType.NAME_ASC -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
                     .thenBy { it.name.lowercase() }
             )
             TaskSortType.NAME_DESC -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
                     .thenByDescending { it.name.lowercase() }
             )
             TaskSortType.NEXT_RUN -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
                     .thenBy { it.nextRunTime.orEmpty().ifEmpty { "9999" } }
             )
             TaskSortType.LAST_RUN -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isRunning }
+                    .thenByDescending { it.isPinned }
                     .thenByDescending { it.lastExecutionTime ?: 0L }
             )
             TaskSortType.STATUS -> byFilter.sortedWith(
@@ -372,6 +377,7 @@ fun TasksScreen(
                                 findScriptSizeForCommand(task.command, scriptSizeMap)
                             }
                             TaskCard(
+                                modifier = Modifier.animateItemPlacement(),
                                 task = task,
                                 scriptSize = scriptSize,
                                 isBatchMode = uiState.isTaskBatchMode,
@@ -450,6 +456,7 @@ fun TasksScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TaskCard(
+    modifier: Modifier = Modifier,
     task: UnifiedTask,
     scriptSize: String? = null,
     isBatchMode: Boolean = false,
@@ -491,7 +498,7 @@ fun TaskCard(
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(modifier = modifier.fillMaxWidth()) {
         // 右滑呼出的动作层：启动/停止 + 启用/禁用 + 删除（行内不再放常驻按钮与开关）
         if (!isBatchMode) {
             Row(

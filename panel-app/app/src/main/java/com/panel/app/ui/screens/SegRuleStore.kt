@@ -18,22 +18,81 @@ const val FIELD_CUSTOM = "custom"
 data class SegRule(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
+    val note: String = "",
     val acct: String,
     val acctCustom: String,
     val field: String,
     val fieldCustom: String
 )
 
-// 内置分段规则模板（只读，新建时点选即填分隔，名称仍需用户输入）
-val SEG_TEMPLATES = listOf(
-    "单值/自动识别" to SegRule(id = "", name = "单值/自动识别", acct = ACCT_NONE, acctCustom = "", field = FIELD_AUTO, fieldCustom = ""),
-    "Cookie 字段（;）" to SegRule(id = "", name = "Cookie 字段（;）", acct = ACCT_NONE, acctCustom = "", field = ";", fieldCustom = ""),
-    "URL 参数（&）" to SegRule(id = "", name = "URL 参数（&）", acct = ACCT_NONE, acctCustom = "", field = "&", fieldCustom = ""),
-    "键值对（=）" to SegRule(id = "", name = "键值对（=）", acct = ACCT_NONE, acctCustom = "", field = "=", fieldCustom = ""),
-    "多账号换行" to SegRule(id = "", name = "多账号换行", acct = "\n", acctCustom = "", field = FIELD_AUTO, fieldCustom = ""),
-    "多账号 @" to SegRule(id = "", name = "多账号 @", acct = "@", acctCustom = "", field = FIELD_AUTO, fieldCustom = ""),
-    "互助码 &/@" to SegRule(id = "", name = "互助码 &/@", acct = "&", acctCustom = "", field = "@", fieldCustom = "")
+// 内置常用分段规则列表（首次运行注入为普通规则，平铺在主列表，每条带说明备注，支持编辑/增删）
+val DEFAULT_SEEDED_RULES = listOf(
+    SegRule(
+        id = "preset_cookie_semi",
+        name = "Cookie 字段（;）",
+        note = "单账号 Cookie，字段按分号拆分，如 pt_key=xxx;pt_pin=yyy;",
+        acct = ACCT_NONE,
+        acctCustom = "",
+        field = ";",
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_url_amp",
+        name = "URL 参数（&）",
+        note = "单账号 URL 查询参数，按 & 拆分，如 key1=val1&key2=val2",
+        acct = ACCT_NONE,
+        acctCustom = "",
+        field = "&",
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_kv_eq",
+        name = "键值对（=）",
+        note = "简单键值对，首个等号拆分为键与值",
+        acct = ACCT_NONE,
+        acctCustom = "",
+        field = "=",
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_multi_newline",
+        name = "多账号换行",
+        note = "换行区分不同账号，段内自动探测键值",
+        acct = "\n",
+        acctCustom = "",
+        field = FIELD_AUTO,
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_multi_at",
+        name = "多账号 @",
+        note = "使用 @ 区分多个账号，常见于多 Cookie 拼接",
+        acct = "@",
+        acctCustom = "",
+        field = FIELD_AUTO,
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_mutual_amp_at",
+        name = "互助码 &/@",
+        note = "外层 & 分割账号/任务，内层 @ 组合多组互助码",
+        acct = "&",
+        acctCustom = "",
+        field = "@",
+        fieldCustom = ""
+    ),
+    SegRule(
+        id = "preset_single_auto",
+        name = "单值/自动识别",
+        note = "通用单账号，字段自动识别并拆分",
+        acct = ACCT_NONE,
+        acctCustom = "",
+        field = FIELD_AUTO,
+        fieldCustom = ""
+    )
 )
+
+val SEG_TEMPLATES = DEFAULT_SEEDED_RULES.map { it.name to it }
 
 // 内置预设分隔符符号（只是常量供 UI 展示，不入库；换行用特殊值 "\n" 表示）
 val PRESET_SYM_ACCT = listOf("\n", "@", "&", ",", "|")
@@ -67,16 +126,19 @@ object SegRuleStore {
     const val KEY_SYM_ACCT = "sym_acct"
     const val KEY_SYM_FIELD = "sym_field"
     const val KEY_TPL_CUSTOM = "tpl_custom"
+    const val KEY_SEEDED = "rules_seeded_v2"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    // 读取 + 迁移的统一入口：返回 (规则表, 变量绑定)
+    // 读取 + 迁移 + 预设种子注入的统一入口：返回 (规则表, 变量绑定)
     private fun load(context: Context): Pair<List<SegRule>, Map<String, String>> {
         val sp = prefs(context)
         val rules = parseRules(sp.getString(KEY_RULES, null)).toMutableList()
         val bindings = parseBindings(sp.getString(KEY_BINDINGS, null)).toMutableMap()
         val legacyKeys = sp.all.keys.filter { it.startsWith(LEGACY_PREFIX) }
+        var needSaveRules = false
+
         if (legacyKeys.isNotEmpty()) {
             val editor = sp.edit()
             legacyKeys.forEach { key ->
@@ -87,6 +149,7 @@ object SegRuleStore {
                         val o = JSONObject(sp.getString(key, "") ?: "")
                         SegRule(
                             name = varName,
+                            note = "迁移自历史变量配置",
                             acct = o.getString("a"),
                             acctCustom = o.optString("ac"),
                             field = o.getString("f"),
@@ -100,10 +163,36 @@ object SegRuleStore {
                 editor.remove(key)
             }
             editor.apply()
-            saveRules(context, rules)
             saveBindings(context, bindings)
+            needSaveRules = true
+        }
+
+        // 种子注入：首次加载若未播种过，直接将预设模板作为普通规则注入主列表，并记录 seeded 防复活
+        val seeded = sp.getBoolean(KEY_SEEDED, false)
+        if (!seeded) {
+            val existingKeys = rules.map { it.name.trim().lowercase() }.toSet() + rules.map { it.id }.toSet()
+            val toAdd = DEFAULT_SEEDED_RULES.filter { it.id !in existingKeys && it.name.trim().lowercase() !in existingKeys }
+            if (toAdd.isNotEmpty()) {
+                rules.addAll(toAdd)
+                needSaveRules = true
+            }
+            sp.edit().putBoolean(KEY_SEEDED, true).apply()
+        }
+
+        if (needSaveRules) {
+            saveRules(context, rules)
         }
         return rules to bindings
+    }
+
+    /** 恢复预设常用分段规则（当用户误删或想重新装载时调用） */
+    fun restoreDefaultRules(context: Context) {
+        val (currentRules, _) = load(context)
+        val existingKeys = currentRules.map { it.name.trim().lowercase() }.toSet() + currentRules.map { it.id }.toSet()
+        val toAdd = DEFAULT_SEEDED_RULES.filter { it.id !in existingKeys && it.name.trim().lowercase() !in existingKeys }
+        if (toAdd.isNotEmpty()) {
+            saveRules(context, currentRules + toAdd)
+        }
     }
 
     /** 读取规则表（首次接触即完成旧格式迁移） */
@@ -164,6 +253,7 @@ object SegRuleStore {
                 JSONObject()
                     .put("id", r.id)
                     .put("name", r.name)
+                    .put("note", r.note)
                     .put("acct", r.acct)
                     .put("acctCustom", r.acctCustom)
                     .put("field", r.field)
@@ -248,6 +338,7 @@ object SegRuleStore {
                 SegRule(
                     id = o.optString("id").ifEmpty { UUID.randomUUID().toString() },
                     name = o.optString("name"),
+                    note = o.optString("note", ""),
                     acct = o.optString("acct", ACCT_NONE),
                     acctCustom = o.optString("acctCustom"),
                     field = o.optString("field", FIELD_AUTO),

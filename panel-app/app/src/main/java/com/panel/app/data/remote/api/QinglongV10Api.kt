@@ -164,6 +164,12 @@ interface QinglongV10Api {
         @Body req: QlDeleteScriptReq
     ): Response<QlCommonResp>
 
+    @PUT("api/scripts/run")
+    suspend fun runScript(
+        @Header("Authorization") auth: String,
+        @Body req: QlRunScriptReq
+    ): Response<QlCommonResp>
+
     // 5. 依赖包管理
     @GET("api/dependencies")
     suspend fun getDependencies(
@@ -222,6 +228,16 @@ interface QinglongV10Api {
         @Query("offset") offset: Long? = null,
         @Query("limit") limit: Int? = null,
         @Query("tail") tail: Boolean? = null
+    ): Response<QlLogChunkResp>
+
+    /**
+     * 兼容青龙 2.15.x 及更早版本：老版青龙日志读取端点为 GET /api/logs/:file?path=...
+     */
+    @GET("api/logs/{file}")
+    suspend fun getLogDetailLegacy(
+        @Header("Authorization") auth: String,
+        @Path(value = "file", encoded = true) file: String,
+        @Query("path") path: String? = null
     ): Response<QlLogChunkResp>
 
     // 10. 系统信息（用于版本探测：V10 无此端点，2.15+ 返回版本号）

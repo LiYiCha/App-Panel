@@ -18,7 +18,8 @@ data class LogEntry(
     val durationMs: Long? = null,
     val requestBody: String? = null,
     val responseBody: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val repeatCount: Int = 1
 )
 
 enum class LogLevel {
@@ -185,6 +186,31 @@ object AppLogger {
     }
 
     private fun appendOnMain(entry: LogEntry, persist: Boolean = true) {
+        val isErr = entry.level == LogLevel.ERROR || entry.level == LogLevel.HTTP_ERR
+
+        // 错误日志去重聚合：若已存在相同错误，只保留一条并递增重复次数
+        if (isErr && logs.isNotEmpty()) {
+            val existingIndex = logs.indexOfLast { existing ->
+                if (existing.level != entry.level) return@indexOfLast false
+                if (entry.level == LogLevel.HTTP_ERR) {
+                    existing.method == entry.method && existing.url == entry.url && existing.code == entry.code
+                } else {
+                    existing.tag == entry.tag && existing.message == entry.message && existing.error == entry.error
+                }
+            }
+            if (existingIndex != -1) {
+                val existing = logs[existingIndex]
+                val updated = existing.copy(
+                    timestamp = entry.timestamp,
+                    durationMs = entry.durationMs ?: existing.durationMs,
+                    responseBody = entry.responseBody ?: existing.responseBody,
+                    repeatCount = existing.repeatCount + 1
+                )
+                logs[existingIndex] = updated
+                return
+            }
+        }
+
         // 1. 完整内容写文件（不截断，保证可追溯）
         if (persist) LogStorage.appendAsync(entry)
         // 2. 截断后加入内存列表（防止 OOM，UI 只看摘要）

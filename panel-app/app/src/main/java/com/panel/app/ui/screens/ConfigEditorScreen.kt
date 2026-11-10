@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,7 +35,9 @@ import com.panel.app.ui.viewmodel.MainViewModel
 fun ConfigEditorScreen(
     viewModel: MainViewModel,
     showDirectoryDrawer: Boolean = false,
-    onDismissDirectoryDrawer: () -> Unit = {}
+    onDismissDirectoryDrawer: () -> Unit = {},
+    showCreateConfigDialog: Boolean = false,
+    onDismissCreateConfigDialog: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -344,5 +347,141 @@ fun ConfigEditorScreen(
                 }
             }
         }
+        if (showCreateConfigDialog) {
+            CreateConfigFileDialog(
+                onDismiss = onDismissCreateConfigDialog,
+                onConfirm = { fileName, fileContent ->
+                    viewModel.saveConfigFile(fileName, fileContent)
+                    activeEditingFile = fileName
+                    editorContent = fileContent
+                    isEditable = true
+                    Toast.makeText(context, "配置文件 [$fileName] 已创建并进入编辑", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateConfigFileDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (fileName: String, content: String) -> Unit
+) {
+    var rawName by remember { mutableStateOf("") }
+    var selectedExt by remember { mutableStateOf(".sh") }
+    var selectedTemplateIndex by remember { mutableIntStateOf(0) }
+
+    val extensions = listOf(".sh", ".json", ".conf", ".txt")
+    val suggestions = listOf("extra.sh", "task_before.sh", "task_after.sh", "custom.json")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新建配置文件", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("为面板创建自定义运行配置或系统扩展脚本：", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                OutlinedTextField(
+                    value = rawName,
+                    onValueChange = { input ->
+                        rawName = input
+                        val lower = input.lowercase()
+                        val matched = extensions.firstOrNull { lower.endsWith(it) }
+                        if (matched != null) selectedExt = matched
+                    },
+                    label = { Text("配置文件名称 (如 extra.sh)", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // 推荐常用名称快速点击
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    suggestions.forEach { name ->
+                        AssistChip(
+                            onClick = {
+                                rawName = name
+                                val ext = "." + name.substringAfterLast('.')
+                                if (ext in extensions) selectedExt = ext
+                            },
+                            label = { Text(name, fontSize = 10.sp) },
+                            modifier = Modifier.height(26.dp)
+                        )
+                    }
+                }
+
+                // 后缀选择
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("后缀：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    extensions.forEach { ext ->
+                        FilterChip(
+                            selected = selectedExt == ext,
+                            onClick = {
+                                selectedExt = ext
+                                if (rawName.contains('.')) {
+                                    val base = rawName.substringBeforeLast('.')
+                                    if (base.isNotBlank()) rawName = "$base$ext"
+                                }
+                            },
+                            label = { Text(ext, fontSize = 10.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
+                }
+
+                // 初始模版
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("初始模版：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = selectedTemplateIndex == 0,
+                            onClick = { selectedTemplateIndex = 0 },
+                            label = { Text("空白", fontSize = 10.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        FilterChip(
+                            selected = selectedTemplateIndex == 1,
+                            onClick = { selectedTemplateIndex = 1 },
+                            label = { Text("Shell 扩展", fontSize = 10.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        FilterChip(
+                            selected = selectedTemplateIndex == 2,
+                            onClick = { selectedTemplateIndex = 2 },
+                            label = { Text("JSON 配置", fontSize = 10.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                var clean = rawName.trim()
+                if (clean.isEmpty()) clean = "custom"
+                val finalName = if (clean.contains('.') && !clean.endsWith('.')) clean else "${clean.trimEnd('.')}$selectedExt"
+
+                val content = when (selectedTemplateIndex) {
+                    1 -> "#!/usr/bin/env bash\n## extra.sh / 扩展启动脚本\n## 容器重启时会自动执行此文件\n\n"
+                    2 -> "{\n  \"version\": \"1.0.0\",\n  \"custom\": true\n}\n"
+                    else -> ""
+                }
+
+                onConfirm(finalName, content)
+            }) {
+                Text("创建并编辑")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }

@@ -463,10 +463,10 @@ class QinglongV15Adapter(
         val crons = parseCronArray(cronsResp?.data)
         val records = mutableListOf<TaskInstanceRecord>()
 
-        // 1. 尝试从运行中任务补充实时记录
-        val runningRes = runCatching {
+        // 1. 仅当支持 runtime 接口时才请求运行中实例补充，否则直接跳过
+        val runningRes = if (isRuntimeApiSupported) runCatching {
             api.getDashboardRuntime(getAuthHeader()).unwrap("获取运行态失败").getOrNull()?.data
-        }.getOrNull()
+        }.getOrNull() else null
         val runningArr = runningRes?.takeIf { it.isJsonObject }?.asJsonObject
             ?.get("running")?.takeIf { it.isJsonArray }?.asJsonArray
         runningArr?.forEach { elem ->
@@ -677,10 +677,20 @@ class QinglongV15Adapter(
     override suspend fun getTaskLog(taskNameOrId: String): Result<String> {
         ensureAuth()
         val cronId = QinglongApiHelpers.toId(taskNameOrId)?.toString() ?: taskNameOrId.substringBefore('.')
-        // tail 语义：读末尾内容（后端不传 offset/limit 时默认也是这个行为），
-        // 并显式取到 truncate 标记，避免用户误以为看到的是完整日志
-        return api.getCronLog(getAuthHeader(), cronId, tail = true)
-            .unwrapTo("获取任务日志失败") { formatLogChunk(it) }
+        // 优先尝试带 tail = true 读取末尾
+        var res = runCatching {
+            api.getCronLog(getAuthHeader(), cronId, tail = true)
+                .unwrapTo("获取任务日志失败") { formatLogChunk(it).ifBlank { "暂无运行日志输出" } }
+        }.getOrElse { Result.failure(it) }
+
+        // 兼容 2.15.x 等版本（不支持 tail 参数或 query 校验报错 400）
+        if (res.isFailure) {
+            res = runCatching {
+                api.getCronLog(getAuthHeader(), cronId, tail = null)
+                    .unwrapTo("获取任务日志失败") { formatLogChunk(it).ifBlank { "暂无运行日志输出" } }
+            }.getOrElse { res }
+        }
+        return res
     }
 
     // 青龙 2.15 无单条删除运行实例的 API，通过存储清理整体清除
@@ -726,7 +736,7 @@ class QinglongV15Adapter(
      * 后端单次最多返回 1MB，truncated=true 时必须告知用户，否则会静默丢内容。
      */
     private fun formatLogChunk(chunk: QlLogChunkResp): String {
-        val body = chunk.data.orEmpty().ifBlank { "暂无运行日志输出" }
+        val body = chunk.data.orEmpty()
         if (chunk.truncated != true) return body
         val total = chunk.total?.let { "（共 ${QinglongApiHelpers.formatBytes(it)}）" } ?: ""
         return "⚠ 日志过大，仅显示末尾部分$total。\n\n$body"
@@ -1217,8 +1227,33 @@ class QinglongV15Adapter(
         ensureAuth()
         val fileName = path.substringAfterLast("/")
         val dirPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
-        return api.deleteScript(getAuthHeader(), QlDeleteScriptReq(fileName, dirPath))
-            .unwrap("删除脚本失败").map { true }
+        val res = api.deleteScript(getAuthHeader(), QlDeleteScriptReq(fileName, dirPath))
+            .unwrap("删除脚本失败")
+        if (res.isSuccess) return Result.success(true)
+
+        val err = res.exceptionOrNull()?.message.orEmpty()
+        // 针对青龙 EISDIR: illegal operation on a directory, unlink 缺陷做智能降级
+        if (err.contains("EISDIR", ignoreCase = true) || err.contains("illegal operation on a directory", ignoreCase = true)) {
+            val cleanPath = path.trim('/').replace("\"", "")
+            val tmpFile = ".cleanup_${System.currentTimeMillis()}.sh"
+            val fallbackRun = runCatching {
+                val r = api.runScript(
+                    getAuthHeader(),
+                    QlRunScriptReq(
+                        filename = tmpFile,
+                        content = "rm -rf \"/ql/data/scripts/$cleanPath\"\nrm -rf \"/ql/scripts/$cleanPath\"\nrm -f \"/ql/data/scripts/$tmpFile\"\nrm -f \"/ql/scripts/$tmpFile\"",
+                        path = ""
+                    )
+                ).unwrap("删除目录失败")
+                kotlinx.coroutines.delay(400)
+                runCatching { api.deleteScript(getAuthHeader(), QlDeleteScriptReq(tmpFile, "")) }
+                r
+            }.getOrElse { Result.failure(it) }
+            if (fallbackRun.isSuccess) {
+                return Result.success(true)
+            }
+        }
+        return Result.failure(res.exceptionOrNull() ?: Exception("删除脚本失败"))
     }
 
     /**
@@ -1414,12 +1449,20 @@ class QinglongV15Adapter(
                     break
                 }
                 val isFirst = offset == null
-                val res = api.getCronLog(
+                var res = api.getCronLog(
                     getAuthHeader(), cronId,
                     offset = offset,
                     limit = 256 * 1024,
                     tail = isFirst
                 ).unwrap("读取日志失败")
+                if (res.isFailure && isFirst) {
+                    res = api.getCronLog(
+                        getAuthHeader(), cronId,
+                        offset = null,
+                        limit = null,
+                        tail = null
+                    ).unwrap("读取日志失败")
+                }
                 if (res.isFailure) {
                     trySend("[ERROR] ${res.exceptionOrNull()?.message ?: "请求失败"}")
                     break
@@ -1639,12 +1682,17 @@ class QinglongV15Adapter(
         )
     }
 
+    // 青龙官方无论 2.15 还是 2.20 均未提供 /api/dashboard/* 模块（只有特定三方分支支持）
+    // 默认关闭，避免每次刷新/加载历史产生大量 404
+    private var isRuntimeApiSupported: Boolean = false
+
     /**
      * 仪表盘运行态：包含运行中的实例（instanceId + logPath）、排队任务、闲置任务。
      * 这是"停止指定实例"和"查看实时日志"的数据来源。
      */
     suspend fun getRuntimeOverview(): Result<com.google.gson.JsonElement?> {
         ensureAuth()
+        if (!isRuntimeApiSupported) return Result.success(null)
         return api.getDashboardRuntime(getAuthHeader())
             .unwrapTo("获取运行态失败") { it.data }
     }
@@ -1652,30 +1700,61 @@ class QinglongV15Adapter(
     /** GET /api/dashboard/runtime 的 running[] 直接带 instanceId 与 logPath */
     override suspend fun getRunningTasks(): Result<List<RunningTaskInfo>> {
         ensureAuth()
+        if (!isRuntimeApiSupported) {
+            return getRunningTasksFromCrons()
+        }
         return try {
-            api.getDashboardRuntime(getAuthHeader())
-                .unwrapTo("获取运行中任务失败") { env ->
-                    val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
-                    val running = obj?.get("running")?.takeIf { it.isJsonArray }?.asJsonArray
-                    running?.mapNotNull { elem ->
-                        if (!elem.isJsonObject) return@mapNotNull null
-                        val item = elem.asJsonObject
-                        val taskId = item.strOrNull("id")
-                            ?: item.longOrNull("id")?.toString()
-                            ?: return@mapNotNull null
-                        RunningTaskInfo(
-                            taskId = taskId,
-                            name = item.strOrNull("name") ?: "任务 #$taskId",
-                            instanceId = item.strOrNull("instanceId")
-                                ?: item.longOrNull("instanceId")?.toString(),
-                            pid = item.intOrNull("pid"),
-                            elapsedSeconds = item.longOrNull("elapsed"),
-                            logPath = item.strOrNull("logPath")
-                        )
-                    } ?: emptyList()
-                }
+            val resp = api.getDashboardRuntime(getAuthHeader())
+            if (resp.code() == 404) {
+                isRuntimeApiSupported = false
+                return getRunningTasksFromCrons()
+            }
+            resp.unwrapTo("获取运行中任务失败") { env ->
+                val obj = env.data?.takeIf { it.isJsonObject }?.asJsonObject
+                val running = obj?.get("running")?.takeIf { it.isJsonArray }?.asJsonArray
+                running?.mapNotNull { elem ->
+                    if (!elem.isJsonObject) return@mapNotNull null
+                    val item = elem.asJsonObject
+                    val taskId = item.strOrNull("id")
+                        ?: item.longOrNull("id")?.toString()
+                        ?: return@mapNotNull null
+                    RunningTaskInfo(
+                        taskId = taskId,
+                        name = item.strOrNull("name") ?: "任务 #$taskId",
+                        instanceId = item.strOrNull("instanceId")
+                            ?: item.longOrNull("instanceId")?.toString(),
+                        pid = item.intOrNull("pid"),
+                        elapsedSeconds = item.longOrNull("elapsed"),
+                        logPath = item.strOrNull("logPath")
+                    )
+                } ?: emptyList()
+            }
         } catch (e: Exception) {
-            Result.failure(e)
+            isRuntimeApiSupported = false
+            getRunningTasksFromCrons()
+        }
+    }
+
+    private suspend fun getRunningTasksFromCrons(): Result<List<RunningTaskInfo>> {
+        return runCatching {
+            val cronsResp = api.getCrons(getAuthHeader(), null).unwrap("获取任务列表失败").getOrNull()
+            val crons = parseCronArray(cronsResp?.data)
+            crons.filter { it.status == 0 || it.status == 3 }.map { cron ->
+                val cid = QinglongApiHelpers.cleanId(cron.id)
+                val pidInt = when (val p = cron.pid) {
+                    is Number -> p.toInt()
+                    is String -> p.toIntOrNull()
+                    else -> null
+                }
+                RunningTaskInfo(
+                    taskId = cid,
+                    name = cron.name ?: "任务 #$cid",
+                    instanceId = cid,
+                    pid = pidInt,
+                    elapsedSeconds = QinglongApiHelpers.parseSeconds(cron.last_running_time),
+                    logPath = cron.log_path
+                )
+            }
         }
     }
 
@@ -1725,27 +1804,81 @@ class QinglongV15Adapter(
     override suspend fun getLogDetail(path: String, file: String): Result<String> {
         ensureAuth()
         val normalized = file.replace('\\', '/')
-        val finalFile = if (path.isEmpty() && normalized.contains('/')) normalized.substringAfterLast('/') else file
-        val finalPath = if (path.isEmpty() && normalized.contains('/')) normalized.substringBeforeLast('/') else path
+        val full = if (path.isNotBlank()) "${path.trimEnd('/')}/${normalized.trimStart('/')}" else normalized
+        val cleaned = full
+            .removePrefix("/ql/data/log/")
+            .removePrefix("ql/data/log/")
+            .removePrefix("/ql/log/")
+            .removePrefix("ql/log/")
+            .trim('/')
+        val finalFile = cleaned.substringAfterLast('/')
+        val cleanedPath = if (cleaned.contains('/')) cleaned.substringBeforeLast('/') else ""
 
-        // 尝试通过 /api/logs/detail 获取具体文件日志
-        val result = api.getLogDetail(
-            auth = getAuthHeader(),
-            file = finalFile,
-            path = finalPath.ifEmpty { null },
-            tail = true
-        ).unwrapTo("读取日志失败") { formatLogChunk(it) }
+        // 1. 尝试标准 /api/logs/detail 接口（先带 tail = true）
+        var result = runCatching {
+            api.getLogDetail(
+                auth = getAuthHeader(),
+                file = finalFile,
+                path = cleanedPath.ifEmpty { null },
+                tail = true
+            ).unwrapTo("读取日志失败") { formatLogChunk(it) }
+        }.getOrElse { Result.failure(it) }
+
+        // 2. 若失败或返回为空，降级不带 tail 参数请求 /api/logs/detail
+        if (result.isFailure || result.getOrNull().isNullOrBlank()) {
+            val noTailRes = runCatching {
+                api.getLogDetail(
+                    auth = getAuthHeader(),
+                    file = finalFile,
+                    path = cleanedPath.ifEmpty { null },
+                    tail = null
+                ).unwrapTo("读取日志失败") { formatLogChunk(it) }
+            }.getOrNull()
+            if (noTailRes?.isSuccess == true && !noTailRes.getOrNull().isNullOrBlank()) {
+                result = noTailRes
+            }
+        }
+
+        // 3. 兼容青龙 2.15.x 及更早版本：老版青龙日志端点为 GET /api/logs/:file?path=...
+        if (result.isFailure || result.getOrNull().isNullOrBlank()) {
+            val legacyRes = runCatching {
+                api.getLogDetailLegacy(
+                    auth = getAuthHeader(),
+                    file = finalFile,
+                    path = cleanedPath.ifEmpty { null }
+                ).unwrapTo("读取历史日志失败") { formatLogChunk(it) }
+            }.getOrNull()
+            if (legacyRes?.isSuccess == true && !legacyRes.getOrNull().isNullOrBlank()) {
+                result = legacyRes
+            }
+        }
+
+        // 4. 若 cleanedPath 不为空但仍失败，尝试将完整相对路径传给 file (部分青龙版本以 file=sub/xxx.log 查询)
+        if ((result.isFailure || result.getOrNull().isNullOrBlank()) && cleanedPath.isNotEmpty()) {
+            val comboRes = runCatching {
+                api.getLogDetailLegacy(
+                    auth = getAuthHeader(),
+                    file = "$cleanedPath/$finalFile",
+                    path = null
+                ).unwrapTo("读取历史日志失败") { formatLogChunk(it) }
+            }.getOrNull()
+            if (comboRes?.isSuccess == true && !comboRes.getOrNull().isNullOrBlank()) {
+                result = comboRes
+            }
+        }
 
         if (result.isSuccess && !result.getOrNull().isNullOrBlank()) {
             return result
         }
 
-        // 兜底：如果传入的是纯数字 ID（如任务 ID 或历史实例 ID），尝试通过 /api/crons/{id}/log 获取
+        // 5. 兜底：如果传入的是纯数字 ID（如任务 ID 或历史实例 ID），尝试通过 /api/crons/{id}/log 获取
         val numericId = QinglongApiHelpers.toId(finalFile) ?: QinglongApiHelpers.toId(file)
         if (numericId != null) {
-            val cronLogResult = api.getCronLog(getAuthHeader(), numericId.toString(), tail = true)
-                .unwrapTo("读取任务日志失败") { formatLogChunk(it) }
-            if (cronLogResult.isSuccess && !cronLogResult.getOrNull().isNullOrBlank()) {
+            val cronLogResult = runCatching {
+                api.getCronLog(getAuthHeader(), numericId.toString(), tail = null)
+                    .unwrapTo("读取任务日志失败") { formatLogChunk(it) }
+            }.getOrNull()
+            if (cronLogResult?.isSuccess == true && !cronLogResult.getOrNull().isNullOrBlank()) {
                 return cronLogResult
             }
         }

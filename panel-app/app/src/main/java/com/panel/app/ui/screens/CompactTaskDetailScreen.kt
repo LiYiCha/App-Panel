@@ -38,7 +38,7 @@ fun CompactTaskDetailScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
     onOpenScriptEditor: (String) -> Unit,
-    onOpenLog: (title: String, taskId: String) -> Unit = { _, _ -> },
+    onOpenLog: (title: String, taskId: String, isRunning: Boolean) -> Unit = { _, _, _ -> },
     onOpenHistory: (taskId: String) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -312,7 +312,7 @@ fun CompactTaskDetailScreen(
                     subtitle = if (task.isRunning) "任务正在运行，点击跟随实时日志流" else "点击查看最新日志输出",
                     badge = if (task.isRunning) "运行中" else "查看日志",
                     badgeColor = if (task.isRunning) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                    onClick = { onOpenLog(task.name, task.id) }
+                    onClick = { onOpenLog(task.name, task.id, task.isRunning) }
                 )
             }
 

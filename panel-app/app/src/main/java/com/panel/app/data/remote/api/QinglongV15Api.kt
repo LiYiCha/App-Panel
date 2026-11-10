@@ -905,6 +905,16 @@ interface QinglongV15Api {
         @Query("tail") tail: Boolean? = null
     ): Response<QlLogChunkResp>
 
+    /**
+     * 兼容青龙 2.15.x 及更早版本：老版青龙日志读取端点为 GET /api/logs/:file?path=...
+     */
+    @GET("api/logs/{file}")
+    suspend fun getLogDetailLegacy(
+        @Header("Authorization") auth: String,
+        @Path(value = "file", encoded = true) file: String,
+        @Query("path") path: String? = null
+    ): Response<QlLogChunkResp>
+
     // ================= 8. 系统信息 =================
 
     @GET("api/system")

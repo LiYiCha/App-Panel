@@ -1,5 +1,13 @@
 package com.panel.app.ui.screens
 
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChanged
+
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -53,7 +61,7 @@ fun StandaloneScriptEditorScreen(
     }
 
     var searchQuery by remember { mutableStateOf("") }
-    var fontSizeSp by remember { mutableStateOf(12) }
+    var fontSizeSp by remember { mutableFloatStateOf(12f) }
     var showSearchBar by remember { mutableStateOf(false) }
     var isEditable by remember { mutableStateOf(false) }
     var showAddToTaskDialog by remember { mutableStateOf(false) }
@@ -163,11 +171,11 @@ fun StandaloneScriptEditorScreen(
                     )
                     ActionButtonSmall(
                         icon = Icons.Default.ContentCopy,
-                        label = "复制",
+                        label = "全部复制",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         onClick = {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(codeText))
-                            Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已复制全部内容", Toast.LENGTH_SHORT).show()
                         }
                     )
                     ActionButtonSmall(
@@ -177,10 +185,10 @@ fun StandaloneScriptEditorScreen(
                         onClick = { showSearchBar = !showSearchBar }
                     )
                     // 缩放字号
-                    IconButton(onClick = { if (fontSizeSp > 10) fontSizeSp -= 1 }, modifier = Modifier.size(28.dp)) {
+                    IconButton(onClick = { if (fontSizeSp > 9f) fontSizeSp -= 1f }, modifier = Modifier.size(28.dp)) {
                         Text("A-", fontSize = 10.sp)
                     }
-                    IconButton(onClick = { if (fontSizeSp < 22) fontSizeSp += 1 }, modifier = Modifier.size(28.dp)) {
+                    IconButton(onClick = { if (fontSizeSp < 30f) fontSizeSp += 1f }, modifier = Modifier.size(28.dp)) {
                         Text("A+", fontSize = 10.sp)
                     }
                     if (!isEditable) {
@@ -359,6 +367,27 @@ fun StandaloneScriptEditorScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.surface)
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.changes.size >= 2) {
+                                        val zoom = event.calculateZoom()
+                                        if (zoom != 1f) {
+                                            val newSize = (fontSizeSp * zoom).coerceIn(9f, 32f)
+                                            if (kotlin.math.abs(newSize - fontSizeSp) > 0.05f) {
+                                                fontSizeSp = newSize
+                                            }
+                                            event.changes.forEach {
+                                                if (it.positionChanged()) {
+                                                    it.consume()
+                                                }
+                                            }
+                                        }
+                                    }
+                                } while (event.changes.any { it.pressed })
+                            }
+                        }
                 ) {
                     if (codeText.isEmpty()) {
                         Box(
@@ -392,40 +421,44 @@ fun StandaloneScriptEditorScreen(
                             }
                         }
                     } else {
-                        LazyColumn(
-                            state = lazyListState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .horizontalScroll(horizontalScrollState)
-                        ) {
-                            items(totalLines) { lineIdx ->
-                                val start = if (lineIdx == 0) 0 else lineOffsets[lineIdx - 1] + 1
-                                val end = if (lineIdx < lineOffsets.size) lineOffsets[lineIdx] else codeText.length
-                                val lineStr = if (start <= end && start < codeText.length) {
-                                    codeText.substring(start, minOf(end, codeText.length)).trimEnd('\r')
-                                } else ""
+                        SelectionContainer {
+                            LazyColumn(
+                                state = lazyListState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .horizontalScroll(horizontalScrollState)
+                            ) {
+                                items(totalLines) { lineIdx ->
+                                    val start = if (lineIdx == 0) 0 else lineOffsets[lineIdx - 1] + 1
+                                    val end = if (lineIdx < lineOffsets.size) lineOffsets[lineIdx] else codeText.length
+                                    val lineStr = if (start <= end && start < codeText.length) {
+                                        codeText.substring(start, minOf(end, codeText.length)).trimEnd('\r')
+                                    } else ""
 
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 1.dp)
-                                ) {
-                                    Text(
-                                        text = "${lineIdx + 1}",
+                                    Row(
                                         modifier = Modifier
-                                            .width(lineNumWidth)
-                                            .padding(end = 8.dp),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = fontSizeSp.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        textAlign = TextAlign.End
-                                    )
-                                    Text(
-                                        text = lineStr.ifEmpty { " " },
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = fontSizeSp.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
+                                            .fillMaxWidth()
+                                            .padding(vertical = 1.dp)
+                                    ) {
+                                        DisableSelection {
+                                            Text(
+                                                text = "${lineIdx + 1}",
+                                                modifier = Modifier
+                                                    .width(lineNumWidth)
+                                                    .padding(end = 8.dp),
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = fontSizeSp.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                                textAlign = TextAlign.End
+                                            )
+                                        }
+                                        Text(
+                                            text = lineStr.ifEmpty { " " },
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = fontSizeSp.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
                                 }
                             }
                         }

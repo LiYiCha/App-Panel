@@ -1,6 +1,8 @@
 package com.panel.app.data.model
 
+import androidx.annotation.Keep
 import androidx.room.Entity
+import com.google.gson.annotations.SerializedName
 import androidx.room.PrimaryKey
 
 enum class PanelType {
@@ -137,6 +139,19 @@ data class ScriptNode(
     val content: String? = null,
     val isOpen: Boolean = false,
     val children: List<ScriptNode>? = null
+)
+
+@Keep
+data class CachedPanelData(
+    @SerializedName("tasks") val tasks: List<UnifiedTask> = emptyList(),
+    @SerializedName("envs") val envs: List<UnifiedEnv> = emptyList(),
+    @SerializedName("subscriptions") val subscriptions: List<UnifiedSubscription> = emptyList(),
+    @SerializedName("deps") val deps: List<UnifiedDep> = emptyList(),
+    @SerializedName("scriptTree") val scriptTree: List<ScriptNode> = emptyList(),
+    @SerializedName("configFiles") val configFiles: List<String> = emptyList(),
+    @SerializedName("selectedConfigFile") val selectedConfigFile: String = "config.sh",
+    @SerializedName("configContent") val configContent: String = "",
+    @SerializedName("activeTaskInstances") val activeTaskInstances: List<TaskInstanceRecord> = emptyList()
 )
 
 data class UnifiedConfigFile(

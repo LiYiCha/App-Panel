@@ -267,6 +267,20 @@ fun DeveloperConsoleScreen(
                                         modifier = Modifier.size(12.dp)
                                     )
                                 }
+                                if (entry.repeatCount > 1) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.errorContainer
+                                    ) {
+                                        Text(
+                                            text = "×${entry.repeatCount}",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
                                 Spacer(Modifier.weight(1f))
                             }
                             Text(
@@ -308,6 +322,9 @@ fun DeveloperConsoleScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (entry.code != null) Text("状态码: ${entry.code}", fontSize = 11.sp)
                     if (entry.durationMs != null) Text("耗时: ${entry.durationMs}ms", fontSize = 11.sp)
+                    if (entry.repeatCount > 1) {
+                        Text("重复: ${entry.repeatCount}次", fontSize = 11.sp, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    }
                 }
                 if (entry.message.isNotBlank() && entry.message != entry.url) {
                     DetailSection("消息", entry.message) { copyText(entry.message, "消息已复制") }
@@ -378,6 +395,7 @@ private fun LogEntry.toClipboardText(): String = buildString {
     if (code != null) append(" (code=$code")
     if (durationMs != null) append(", ${durationMs}ms")
     if (code != null) append(")")
+    if (repeatCount > 1) append(" [重复 ${repeatCount} 次]")
     append('\n')
     if (message.isNotBlank() && message != url) append("Msg: $message\n")
     if (!requestBody.isNullOrBlank()) append("Req: $requestBody\n")

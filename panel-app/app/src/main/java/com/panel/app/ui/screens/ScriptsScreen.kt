@@ -1,6 +1,7 @@
 package com.panel.app.ui.screens
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +47,44 @@ fun ScriptsScreen(
     var deletingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var renamingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var showFolderDialog by remember { mutableStateOf(false) }
+    var showNewScriptDialog by remember { mutableStateOf(false) }
+    var importedFileName by remember { mutableStateOf("") }
+    var importedFileContent by remember { mutableStateOf("") }
+    var showImportConfirmDialog by remember { mutableStateOf(false) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val pickedName = runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx != -1 && cursor.moveToFirst()) cursor.getString(idx) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "imported_script.js"
+
+            val ext = pickedName.substringAfterLast('.', "").lowercase()
+            val binaryExts = setOf("apk", "zip", "rar", "7z", "tar", "gz", "dex", "so", "bin", "exe", "png", "jpg", "jpeg", "webp", "gif", "mp4", "mp3", "pdf")
+
+            if (binaryExts.contains(ext)) {
+                Toast.makeText(context, "不支持导入二进制文件 ($ext)，请选择代码文本文件", Toast.LENGTH_LONG).show()
+                return@rememberLauncherForActivityResult
+            }
+
+            val readContent = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+
+            if (readContent == null) {
+                Toast.makeText(context, "读取本地文件失败", Toast.LENGTH_SHORT).show()
+                return@rememberLauncherForActivityResult
+            }
+
+            importedFileName = pickedName
+            importedFileContent = readContent
+            showImportConfirmDialog = true
+        }
+    }
 
     var taskAddingNode by remember { mutableStateOf<ScriptNode?>(null) }
     var taskAddingName by remember { mutableStateOf("") }
@@ -144,63 +183,170 @@ fun ScriptsScreen(
         }
     }
 
-    // 3. 整合式新建/上传模态框 (现代极简卡片视觉，整合新建脚本、新建文件夹与从本地上传脚本)
+    // 3. 现代底部新建与导入操作抽屉 (彻底消除多层弹窗套弹窗与繁琐跳转)
     if (showCreateDialog) {
-        AlertDialog(
+        ModalBottomSheet(
             onDismissRequest = onDismissCreateDialog,
-            title = { Text("脚本操作", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onDismissCreateDialog()
-                                onNavigateToCreateScript()
-                            },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                            Column {
-                                Text("新建脚本文件", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text("在线编写 Python、Node.js 或 Shell 代码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onDismissCreateDialog()
-                                showFolderDialog = true
-                            },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(24.dp))
-                            Column {
-                                Text("新建文件夹", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text("创建子目录用于对各类脚本文件归类", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "新建与导入",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    IconButton(onClick = onDismissCreateDialog, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭", modifier = Modifier.size(18.dp))
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = onDismissCreateDialog) { Text("取消") }
+
+                // 卡片 1: 新建脚本文件 (快速后缀选择 + 创建后直接进入全屏编辑器)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismissCreateDialog()
+                            showNewScriptDialog = true
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("新建脚本文件", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("快速命名，点选后缀与模板，创建后直接进入全屏编辑器编写", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                // 卡片 2: 导入本地代码
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismissCreateDialog()
+                            filePickerLauncher.launch("*/*")
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.FileUpload, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(22.dp))
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("导入本地代码", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("一键调起文件管理器，导入 .js / .py / .sh / .ts 并直接打开", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                // 卡片 3: 新建文件夹
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismissCreateDialog()
+                            showFolderDialog = true
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(22.dp))
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("新建文件夹", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("在指定目录下快速创建子目录整理脚本", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+        }
+    }
+
+    if (showNewScriptDialog) {
+        CreateScriptFastDialog(
+            existingDirs = extractDirectories(uiState.scriptTree),
+            onDismiss = { showNewScriptDialog = false },
+            onConfirm = { fullPath, content ->
+                showNewScriptDialog = false
+                viewModel.createScript(fullPath, content) { success, msg ->
+                    if (success) {
+                        Toast.makeText(context, "脚本 [$fullPath] 已创建并打开", Toast.LENGTH_SHORT).show()
+                        onOpenScriptEditor(fullPath)
+                    } else {
+                        Toast.makeText(context, "创建失败: $msg", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+
+    if (showImportConfirmDialog) {
+        ImportScriptConfirmDialog(
+            initialFileName = importedFileName,
+            existingDirs = extractDirectories(uiState.scriptTree),
+            onDismiss = { showImportConfirmDialog = false },
+            onConfirm = { fullPath ->
+                showImportConfirmDialog = false
+                viewModel.createScript(fullPath, importedFileContent) { success, msg ->
+                    if (success) {
+                        Toast.makeText(context, "脚本 [$fullPath] 导入成功并打开", Toast.LENGTH_SHORT).show()
+                        onOpenScriptEditor(fullPath)
+                    } else {
+                        Toast.makeText(context, "导入失败: $msg", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         )
     }
@@ -688,6 +834,229 @@ fun CreateFolderDialog(
                 }
             }) {
                 Text("创建")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateScriptFastDialog(
+    existingDirs: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (fullPath: String, content: String) -> Unit
+) {
+    var rawName by remember { mutableStateOf("") }
+    var selectedExt by remember { mutableStateOf(".js") }
+    var selectedParentDir by remember { mutableStateOf("") }
+    var isDirExpanded by remember { mutableStateOf(false) }
+    var selectedTemplateIndex by remember { mutableIntStateOf(0) }
+
+    val dirOptions = remember(existingDirs) {
+        listOf("根目录 (/)" to "") + existingDirs.map { "$it/" to it }
+    }
+
+    val extensions = listOf(".js", ".py", ".sh", ".ts")
+    val templateOptions = listOf("空白文件", "标准任务模版", "网络请求模版")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("新建脚本文件", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = rawName,
+                    onValueChange = { input ->
+                        rawName = input
+                        val lower = input.lowercase()
+                        val matchedExt = extensions.firstOrNull { lower.endsWith(it) }
+                        if (matchedExt != null) {
+                            selectedExt = matchedExt
+                        }
+                    },
+                    label = { Text("脚本名称 (如 my_task)", fontSize = 12.sp) },
+                    placeholder = { Text("无需强行输入后缀", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // 快速选择后缀 Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("后缀：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    extensions.forEach { ext ->
+                        val isSelected = selectedExt == ext
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedExt = ext
+                                if (rawName.contains('.')) {
+                                    val base = rawName.substringBeforeLast('.')
+                                    if (base.isNotBlank()) rawName = "$base$ext"
+                                }
+                            },
+                            label = { Text(ext, fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
+                }
+
+                // 目标目录下拉选择
+                ExposedDropdownMenuBox(
+                    expanded = isDirExpanded,
+                    onExpandedChange = { isDirExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = dirOptions.firstOrNull { it.second == selectedParentDir }?.first ?: "根目录 (/)",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("保存位置", fontSize = 12.sp) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDirExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = isDirExpanded,
+                        onDismissRequest = { isDirExpanded = false }
+                    ) {
+                        dirOptions.forEach { (label, value) ->
+                            DropdownMenuItem(
+                                text = { Text(label, fontSize = 12.sp) },
+                                onClick = {
+                                    selectedParentDir = value
+                                    isDirExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 模版选择
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("初始模版：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        templateOptions.forEachIndexed { idx, title ->
+                            FilterChip(
+                                selected = selectedTemplateIndex == idx,
+                                onClick = { selectedTemplateIndex = idx },
+                                label = { Text(title, fontSize = 10.sp) },
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    var trimmed = rawName.trim()
+                    if (trimmed.isEmpty()) trimmed = "script"
+                    val finalFileName = if (trimmed.contains('.') && !trimmed.endsWith('.')) trimmed else "${trimmed.trimEnd('.')}$selectedExt"
+                    val fullPath = if (selectedParentDir.isEmpty()) finalFileName else "$selectedParentDir/$finalFileName"
+
+                    val content = when (selectedTemplateIndex) {
+                        1 -> when (selectedExt) {
+                            ".py" -> "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n\"\"\"\nnew Env('定时任务');\ncron: 0 8 * * *\n\"\"\"\n\ndef main():\n    print(\"Hello from Python!\")\n\nif __name__ == '__main__':\n    main()\n"
+                            ".sh" -> "#!/usr/bin/env bash\n# new Env('定时任务')\n# cron: 0 8 * * *\n\necho \"Hello from Shell!\"\n"
+                            else -> "/**\n * 任务名称: 定时任务\n * cron: 0 8 * * *\n */\n\nconsole.log(\"Hello from Node.js!\");\n"
+                        }
+                        2 -> when (selectedExt) {
+                            ".py" -> "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nimport urllib.request\nimport json\n\ndef fetch():\n    req = urllib.request.Request(\"https://api.github.com\")\n    with urllib.request.urlopen(req) as resp:\n        print(resp.read().decode('utf-8'))\n\nif __name__ == '__main__':\n    fetch()\n"
+                            ".sh" -> "#!/usr/bin/env bash\n\ncurl -s -X GET \"https://api.github.com\"\n"
+                            else -> "const https = require('https');\n\nhttps.get('https://api.github.com', (res) => {\n  let data = '';\n  res.on('data', chunk => data += chunk);\n  res.on('end', () => console.log(data));\n});\n"
+                        }
+                        else -> ""
+                    }
+
+                    onConfirm(fullPath, content)
+                }
+            ) {
+                Text("创建并编写")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportScriptConfirmDialog(
+    initialFileName: String,
+    existingDirs: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (fullPath: String) -> Unit
+) {
+    var fileName by remember(initialFileName) { mutableStateOf(initialFileName) }
+    var selectedParentDir by remember { mutableStateOf("") }
+    var isDirExpanded by remember { mutableStateOf(false) }
+
+    val dirOptions = remember(existingDirs) {
+        listOf("根目录 (/)" to "") + existingDirs.map { "$it/" to it }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入本地代码", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("已读取本地代码文件，请确认保存名称及位置：", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = fileName,
+                    onValueChange = { fileName = it },
+                    label = { Text("脚本文件名", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                ExposedDropdownMenuBox(
+                    expanded = isDirExpanded,
+                    onExpandedChange = { isDirExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = dirOptions.firstOrNull { it.second == selectedParentDir }?.first ?: "根目录 (/)",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("保存位置", fontSize = 12.sp) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDirExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = isDirExpanded,
+                        onDismissRequest = { isDirExpanded = false }
+                    ) {
+                        dirOptions.forEach { (label, value) ->
+                            DropdownMenuItem(
+                                text = { Text(label, fontSize = 12.sp) },
+                                onClick = {
+                                    selectedParentDir = value
+                                    isDirExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val clean = fileName.trim().ifEmpty { initialFileName }
+                val fullPath = if (selectedParentDir.isEmpty()) clean else "$selectedParentDir/$clean"
+                onConfirm(fullPath)
+            }) {
+                Text("导入并打开")
             }
         },
         dismissButton = {

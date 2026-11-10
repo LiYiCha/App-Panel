@@ -86,6 +86,7 @@ fun MainFlowScreen(
     var showCreateEnvDialog by remember { mutableStateOf(false) }
     var showImportEnvDialog by remember { mutableStateOf(false) }
     var showCreateScriptDialog by remember { mutableStateOf(false) }
+    var showCreateConfigDialog by remember { mutableStateOf(false) }
     var showDirectoryDrawer by remember { mutableStateOf(false) }
 
     val panelList = uiState.panels
@@ -192,6 +193,12 @@ fun MainFlowScreen(
                                 )
                             } else {
                                 ActionButtonSmall(
+                                    icon = Icons.Default.Add,
+                                    label = "新建",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    onClick = { showCreateConfigDialog = true }
+                                )
+                                ActionButtonSmall(
                                     icon = Icons.Default.FolderOpen,
                                     label = "目录",
                                     tint = MaterialTheme.colorScheme.onSurface,
@@ -297,7 +304,9 @@ fun MainFlowScreen(
                         ConfigEditorScreen(
                             viewModel = viewModel,
                             showDirectoryDrawer = showDirectoryDrawer,
-                            onDismissDirectoryDrawer = { showDirectoryDrawer = false }
+                            onDismissDirectoryDrawer = { showDirectoryDrawer = false },
+                            showCreateConfigDialog = showCreateConfigDialog,
+                            onDismissCreateConfigDialog = { showCreateConfigDialog = false }
                         )
                     }
                 }

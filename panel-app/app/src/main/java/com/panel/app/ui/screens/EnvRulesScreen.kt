@@ -57,7 +57,13 @@ fun EnvRulesScreen(
                     }
                 },
                 actions = {
-                    // 帮助入口：复用底部删除后的使用说明弹窗（空态下也可打开）
+                    IconButton(onClick = {
+                        SegRuleStore.restoreDefaultRules(context)
+                        refreshKey++
+                        Toast.makeText(context, "已恢复常用预设分段规则", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = "恢复预设")
+                    }
                     IconButton(onClick = { showHelp = true }) {
                         Icon(Icons.Default.HelpOutline, contentDescription = "使用说明")
                     }
@@ -81,19 +87,38 @@ fun EnvRulesScreen(
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         Icon(
                             Icons.Default.Tune,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(44.dp)
                         )
-                        Spacer(Modifier.height(8.dp))
                         Text(
-                            "暂无规则，点右上角新建",
+                            "暂无分段规则",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    SegRuleStore.restoreDefaultRules(context)
+                                    refreshKey++
+                                }
+                            ) {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("恢复预设规则", fontSize = 12.sp)
+                            }
+                            Button(onClick = { showCreateDialog = true }) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("新建规则", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             } else {
@@ -184,7 +209,7 @@ fun EnvRulesScreen(
     }
 }
 
-/** 规则卡：规则名 + 摘要 chips（账号 X · 字段 Y）+ 「绑定 n」角标 */
+/** 规则卡：规则名 + 说明备注 + 摘要 chips（账号 X · 字段 Y）+ 「绑定 n」角标 */
 @Composable
 private fun RuleCard(
     rule: SegRule,
@@ -198,29 +223,41 @@ private fun RuleCard(
             .border(
                 width = 0.8.dp,
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(10.dp)
             ),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
                     text = rule.name,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (rule.note.isNotBlank()) {
+                    Text(
+                        text = rule.note,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
                     SummaryChip("账号 ${acctSepLabel(rule.acct, rule.acctCustom)}")
                     SummaryChip("字段 ${fieldSepLabel(rule.field, rule.fieldCustom)}")
                 }
@@ -228,12 +265,12 @@ private fun RuleCard(
             Spacer(Modifier.width(8.dp))
             Surface(
                 shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.primaryContainer
+                color = if (bindingCount > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
             ) {
                 Text(
-                    text = "绑定 $bindingCount",
+                    text = if (bindingCount > 0) "绑定 $bindingCount" else "未绑定",
                     fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = if (bindingCount > 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
@@ -275,6 +312,7 @@ private fun RuleEditDialog(
     val initial = remember(initialRule) {
         initialRule ?: SegRule(
             name = "",
+            note = "",
             acct = ACCT_NONE,
             acctCustom = "",
             field = FIELD_AUTO,
@@ -282,6 +320,7 @@ private fun RuleEditDialog(
         )
     }
     var name by remember(initial.id) { mutableStateOf(initial.name) }
+    var note by remember(initial.id) { mutableStateOf(initial.note) }
     var acct by remember(initial.id) { mutableStateOf(initial.acct) }
     var acctCustom by remember(initial.id) { mutableStateOf(initial.acctCustom) }
     var field by remember(initial.id) { mutableStateOf(initial.field) }
@@ -291,13 +330,9 @@ private fun RuleEditDialog(
     }
 
     val context = LocalContext.current
-    // 符号库/模板库是跨规则共享的全局状态（存删不随本弹窗取消回滚），增删后 bump 刷新重读
     var libRefresh by remember { mutableIntStateOf(0) }
     val acctSymbols = remember(libRefresh) { SegRuleStore.loadCustomSymbols(context, false) }
     val fieldSymbols = remember(libRefresh) { SegRuleStore.loadCustomSymbols(context, true) }
-    val myTemplates = remember(libRefresh) { SegRuleStore.loadCustomTemplates(context) }
-    // 待确认删除的「我的模板」（✕ 后弹确认，避免误删）
-    var pendingDeleteTpl by remember { mutableStateOf<SegRule?>(null) }
 
     // 「＋存入库」：trim 后非空、非内置预设/枚举保留值、非重复才入库（静默忽略非法与重复），成功清空输入框
     val storeAcctSymbol: () -> Unit = {
@@ -316,24 +351,7 @@ private fun RuleEditDialog(
             libRefresh++
         }
     }
-    // 存为模板：存当前编辑快照（含改过的名称与分隔符）；同名模板复用既有 id 走 upsert 原地覆盖，保证不出现重名双条目
-    val saveAsTemplate: () -> Unit = {
-        val tplName = name.trim()
-        val sameName = myTemplates.firstOrNull { it.name.trim().equals(tplName, ignoreCase = true) }
-        val snapshot = SegRule(
-            name = tplName,
-            acct = acct,
-            acctCustom = if (acct == ACCT_CUSTOM) acctCustom.trim() else "",
-            field = field,
-            fieldCustom = if (field == FIELD_CUSTOM) fieldCustom.trim() else ""
-        )
-        SegRuleStore.upsertCustomTemplate(
-            context,
-            if (sameName != null) snapshot.copy(id = sameName.id) else snapshot
-        )
-        libRefresh++
-        Toast.makeText(context, "已存为模板", Toast.LENGTH_SHORT).show()
-    }
+
 
     val acctValid = acct != ACCT_CUSTOM || acctCustom.isNotBlank()
     val fieldValid = field != FIELD_CUSTOM || fieldCustom.isNotBlank()
@@ -389,69 +407,19 @@ private fun RuleEditDialog(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("规则名称", fontSize = 11.sp) },
+                    placeholder = { Text("如: 标准Cookie 或 多账号格式", fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
-                if (isCreate) {
-                    Text(
-                        "快速模板（点选即填分隔，名称仍需输入）",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        SEG_TEMPLATES.forEach { (label, tpl) ->
-                            val selected = acct == tpl.acct && field == tpl.field &&
-                                    acctCustom == tpl.acctCustom && fieldCustom == tpl.fieldCustom
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    acct = tpl.acct
-                                    acctCustom = tpl.acctCustom
-                                    field = tpl.field
-                                    fieldCustom = tpl.fieldCustom
-                                },
-                                label = { Text(label, fontSize = 10.sp) },
-                                modifier = Modifier.height(28.dp)
-                            )
-                        }
-                    }
-                    // 我的模板：编辑页「存为模板」存下的快照，点选连名称一起填入，✕ 确认后删除
-                    if (myTemplates.isNotEmpty()) {
-                        Text(
-                            "我的模板（点选即填，✕ 删除）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            myTemplates.forEach { tpl ->
-                                val selected = acct == tpl.acct && field == tpl.field &&
-                                        acctCustom == tpl.acctCustom && fieldCustom == tpl.fieldCustom
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = {
-                                        name = tpl.name
-                                        acct = tpl.acct
-                                        acctCustom = tpl.acctCustom
-                                        field = tpl.field
-                                        fieldCustom = tpl.fieldCustom
-                                    },
-                                    label = { Text(tpl.name, fontSize = 10.sp) },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            contentDescription = "删除模板",
-                                            modifier = Modifier
-                                                .size(13.dp)
-                                                .clickable { pendingDeleteTpl = tpl }
-                                        )
-                                    },
-                                    modifier = Modifier.height(28.dp)
-                                )
-                            }
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("说明备注 (可选)", fontSize = 11.sp) },
+                    placeholder = { Text("简述适用场景或格式特征", fontSize = 11.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
 
                 SepChipRow(
                     label = "账号",
@@ -582,7 +550,7 @@ private fun RuleEditDialog(
                 }
             }
 
-            // 固定底部操作条：编辑态可把当前快照存为模板；取消/保存常驻
+            // 固定底部操作条：取消/保存常驻
             HorizontalDivider()
             Row(
                 modifier = Modifier
@@ -591,17 +559,6 @@ private fun RuleEditDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!isCreate) {
-                    TextButton(enabled = canSave, onClick = saveAsTemplate) {
-                        Icon(
-                            Icons.Default.Save,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("存为模板", fontSize = 12.sp)
-                    }
-                }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = closeSheet) { Text("取消", fontSize = 12.sp) }
                 Button(
@@ -611,6 +568,7 @@ private fun RuleEditDialog(
                             SegRule(
                                 id = initial.id,
                                 name = name.trim(),
+                                note = note.trim(),
                                 acct = acct,
                                 acctCustom = if (acct == ACCT_CUSTOM) acctCustom.trim() else "",
                                 field = field,
@@ -623,33 +581,6 @@ private fun RuleEditDialog(
                 ) { Text("保存", fontSize = 12.sp) }
             }
         }
-    }
-
-    // 删除我的模板确认（只清模板库，不影响已保存规则与绑定）
-    pendingDeleteTpl?.let { tpl ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteTpl = null },
-            title = { Text("删除模板", fontSize = 15.sp) },
-            text = {
-                Text(
-                    "确定删除我的模板「${tpl.name}」？不影响已保存的规则与绑定。",
-                    fontSize = 12.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        SegRuleStore.deleteCustomTemplate(context, tpl.id)
-                        pendingDeleteTpl = null
-                        libRefresh++
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("删除", fontSize = 12.sp) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteTpl = null }) { Text("取消", fontSize = 12.sp) }
-            }
-        )
     }
 }
 
