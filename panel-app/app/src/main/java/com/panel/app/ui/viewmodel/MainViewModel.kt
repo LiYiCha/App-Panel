@@ -1483,20 +1483,22 @@ class MainViewModel @Inject constructor(
                     if (dur != null) inst.copy(duration = dur) else inst
                 } else inst
             }
-            if (!list.isNullOrEmpty()) {
-                _uiState.update { it.copy(activeTaskInstances = list) }
-                onLoaded(list)
-            } else if (instancesRes.isSuccess && list != null) {
-                // 成功返回但列表为空（如任务从未运行过），且原本无历史时更新为空
-                if (_uiState.value.activeTaskInstances.isEmpty()) {
-                    _uiState.update { it.copy(activeTaskInstances = emptyList()) }
-                    onLoaded(emptyList())
+            if (instancesRes.isSuccess && list != null) {
+                if (targetId.isNullOrBlank()) {
+                    _uiState.update { it.copy(activeTaskInstances = list) }
                 } else {
-                    onLoaded(_uiState.value.activeTaskInstances)
+                    val others = _uiState.value.activeTaskInstances.filter { it.taskId != targetId }
+                    _uiState.update { it.copy(activeTaskInstances = others + list) }
                 }
+                onLoaded(list)
             } else {
                 // 请求异常时保留已有历史记录，绝不冲刷成空列表导致消失
-                onLoaded(_uiState.value.activeTaskInstances)
+                val fallback = if (targetId.isNullOrBlank()) {
+                    _uiState.value.activeTaskInstances
+                } else {
+                    _uiState.value.activeTaskInstances.filter { it.taskId == targetId }
+                }
+                onLoaded(fallback)
             }
         }
     }

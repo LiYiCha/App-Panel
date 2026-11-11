@@ -46,8 +46,12 @@ fun ExecutionHistoryScreen(
     var viewMode by remember { mutableIntStateOf(0) } // 0: 按脚本归类, 1: 时间线流水
     val uiState by viewModel.uiState.collectAsState()
     val expandedScripts = uiState.expandedHistoryScripts
-    var historyList by remember { mutableStateOf<List<TaskInstanceRecord>>(uiState.activeTaskInstances) }
-    var isLoading by remember { mutableStateOf(uiState.activeTaskInstances.isEmpty()) }
+    val initialHistory = remember(taskId) {
+        if (taskId.isNullOrBlank()) uiState.activeTaskInstances
+        else uiState.activeTaskInstances.filter { it.taskId == taskId }
+    }
+    var historyList by remember(taskId) { mutableStateOf<List<TaskInstanceRecord>>(initialHistory) }
+    var isLoading by remember(taskId) { mutableStateOf(initialHistory.isEmpty()) }
     var collapsedByUser by remember { mutableStateOf(setOf<String>()) }
 
     // 运行中任务：只有拿到真实运行实例才能精确停止
@@ -72,9 +76,14 @@ fun ExecutionHistoryScreen(
         return "--"
     }
 
-    LaunchedEffect(uiState.activeTaskInstances) {
-        if (uiState.activeTaskInstances.isNotEmpty()) {
-            historyList = uiState.activeTaskInstances
+    LaunchedEffect(uiState.activeTaskInstances, taskId) {
+        val relevant = if (taskId.isNullOrBlank()) {
+            uiState.activeTaskInstances
+        } else {
+            uiState.activeTaskInstances.filter { it.taskId == taskId }
+        }
+        if (relevant.isNotEmpty()) {
+            historyList = relevant
         }
     }
 
@@ -83,10 +92,7 @@ fun ExecutionHistoryScreen(
             isLoading = true
         }
         viewModel.loadExecutionHistory(taskId) { list ->
-            // 关键保护：仅当返回有数据或当前列表为空时才更新，严防失败或空数据冲刷导致已展示日志突然消失
-            if (list.isNotEmpty() || historyList.isEmpty()) {
-                historyList = list
-            }
+            historyList = list
             isLoading = false
         }
         viewModel.loadRunningTasks { list, _ ->

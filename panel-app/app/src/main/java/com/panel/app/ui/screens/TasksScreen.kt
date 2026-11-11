@@ -1,6 +1,7 @@
-﻿package com.panel.app.ui.screens
+package com.panel.app.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -111,40 +112,41 @@ fun TasksScreen(
         }
         val byFilter = when (selectedFilter) {
             "running" -> bySearch.filter { it.isRunning }
+            "pinned" -> bySearch.filter { it.isPinned }
             "enabled" -> bySearch.filter { !it.isDisabled }
             "disabled" -> bySearch.filter { it.isDisabled }
             else -> bySearch
         }
         when (sortType) {
             TaskSortType.DEFAULT -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenBy { it.isDisabled }
                     .thenBy { it.name }
             )
             TaskSortType.NAME_ASC -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenBy { it.name.lowercase() }
             )
             TaskSortType.NAME_DESC -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenByDescending { it.name.lowercase() }
             )
             TaskSortType.NEXT_RUN -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenBy { it.nextRunTime.orEmpty().ifEmpty { "9999" } }
             )
             TaskSortType.LAST_RUN -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenByDescending { it.lastExecutionTime ?: 0L }
             )
             TaskSortType.STATUS -> byFilter.sortedWith(
-                compareByDescending<UnifiedTask> { it.isRunning }
-                    .thenByDescending { it.isPinned }
+                compareByDescending<UnifiedTask> { it.isPinned }
+                    .thenByDescending { it.isRunning }
                     .thenBy { it.isDisabled }
                     .thenBy { it.name }
             )
@@ -169,10 +171,16 @@ fun TasksScreen(
         )
 
         // 3. 任务状态筛选药丸（排序/批量/新建已收进顶栏，本行只留筛选）
-        val totalCount = baseTasks.size
-        val runningCount = baseTasks.count { it.isRunning }
-        val enabledCount = baseTasks.count { !it.isDisabled }
-        val disabledCount = baseTasks.count { it.isDisabled }
+        val targetList = if (searchQuery.isEmpty()) baseTasks else baseTasks.filter { task ->
+            task.name.contains(searchQuery, ignoreCase = true) ||
+                    task.command.contains(searchQuery, ignoreCase = true) ||
+                    task.schedule.contains(searchQuery, ignoreCase = true)
+        }
+        val totalCount = targetList.size
+        val pinnedCount = targetList.count { it.isPinned }
+        val runningCount = targetList.count { it.isRunning }
+        val enabledCount = targetList.count { !it.isDisabled }
+        val disabledCount = targetList.count { it.isDisabled }
 
         Row(
             modifier = Modifier
@@ -205,6 +213,36 @@ fun TasksScreen(
                     )
                 }
 
+                // 已置顶 (有置顶任务或当前选中置顶时展示)
+                val isPinnedSelected = selectedFilter == "pinned"
+                if (pinnedCount > 0 || isPinnedSelected) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (isPinnedSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = if (isPinnedSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+                        modifier = Modifier.clickable { selectedFilter = if (isPinnedSelected) "all" else "pinned" }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PushPin,
+                                contentDescription = null,
+                                tint = if (isPinnedSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "已置顶 $pinnedCount",
+                                fontSize = 11.sp,
+                                fontWeight = if (isPinnedSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isPinnedSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 // 运行中
                 val isRunningSelected = selectedFilter == "running"
                 val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -229,7 +267,7 @@ fun TasksScreen(
                         runningCount > 0 -> BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f))
                         else -> null
                     },
-                    modifier = Modifier.clickable { selectedFilter = "running" }
+                    modifier = Modifier.clickable { selectedFilter = if (isRunningSelected) "all" else "running" }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
@@ -261,7 +299,7 @@ fun TasksScreen(
                     shape = RoundedCornerShape(50),
                     color = if (isEnabledSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = if (isEnabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
-                    modifier = Modifier.clickable { selectedFilter = "enabled" }
+                    modifier = Modifier.clickable { selectedFilter = if (isEnabledSelected) "all" else "enabled" }
                 ) {
                     Text(
                         text = "已启用 $enabledCount",
@@ -278,7 +316,7 @@ fun TasksScreen(
                     shape = RoundedCornerShape(50),
                     color = if (isDisabledSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = if (isDisabledSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)) else null,
-                    modifier = Modifier.clickable { selectedFilter = "disabled" }
+                    modifier = Modifier.clickable { selectedFilter = if (isDisabledSelected) "all" else "disabled" }
                 ) {
                     Text(
                         text = "已禁用 $disabledCount",
@@ -332,8 +370,20 @@ fun TasksScreen(
                         IconButton(onClick = { viewModel.batchToggleTasks(ids, false) }, enabled = ids.isNotEmpty(), modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Block, contentDescription = "禁用", tint = if (ids.isNotEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
                         }
-                        IconButton(onClick = { viewModel.batchPinTasks(ids, true) }, enabled = ids.isNotEmpty(), modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.PushPin, contentDescription = "置顶", tint = if (ids.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
+                        val allPinned = selectedTasks.isNotEmpty() && selectedTasks.all { it.isPinned }
+                        IconButton(
+                            onClick = { viewModel.batchPinTasks(ids, !allPinned) },
+                            enabled = ids.isNotEmpty(),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.PushPin,
+                                contentDescription = if (allPinned) "取消置顶" else "置顶",
+                                tint = if (ids.isNotEmpty()) {
+                                    if (allPinned) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                                } else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                         IconButton(onClick = { viewModel.batchDeleteTasks(ids) }, enabled = ids.isNotEmpty(), modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Delete, contentDescription = "删除", tint = if (ids.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
@@ -367,35 +417,132 @@ fun TasksScreen(
                         }
                     }
                 } else {
+                    val pinnedTasks = remember(filteredTasks) { filteredTasks.filter { it.isPinned } }
+                    val normalTasks = remember(filteredTasks) { filteredTasks.filter { !it.isPinned } }
+                    val showSections = remember(pinnedTasks, normalTasks, selectedFilter) {
+                        selectedFilter == "all" && pinnedTasks.isNotEmpty() && normalTasks.isNotEmpty()
+                    }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(bottom = 16.dp)
                     ) {
-                        items(filteredTasks, key = { it.id }) { task ->
-                            val scriptSize = remember(task.command, scriptSizeMap) {
-                                findScriptSizeForCommand(task.command, scriptSizeMap)
+                        if (showSections) {
+                            item(key = "section_pinned_header") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.PushPin,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = "置顶任务 (${pinnedTasks.size})",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
-                            TaskCard(
-                                modifier = Modifier.animateItemPlacement(),
-                                task = task,
-                                scriptSize = scriptSize,
-                                isBatchMode = uiState.isTaskBatchMode,
-                                onSelect = { viewModel.toggleTaskSelection(task.id) },
-                                onClick = { onOpenTaskDetail(task.id) },
-                                onToggle = { enabled -> viewModel.toggleTask(task.id, enabled) },
-                                onTogglePin = { viewModel.pinTask(task.id, !task.isPinned) },
-                                onRunOrStop = {
-                                    if (task.isRunning) {
-                                        viewModel.stopTask(task.id)
-                                    } else {
-                                        viewModel.runTask(task.id)
-                                    }
-                                },
-                                onOpenLog = { onOpenLog(task.id) },
-                                onEdit = { editingTask = task },
-                                onDelete = { deletingTask = task }
-                            )
+                            items(pinnedTasks, key = { it.id }) { task ->
+                                val scriptSize = remember(task.command, scriptSizeMap) {
+                                    findScriptSizeForCommand(task.command, scriptSizeMap)
+                                }
+                                TaskCard(
+                                    modifier = Modifier.animateItemPlacement(),
+                                    task = task,
+                                    scriptSize = scriptSize,
+                                    isBatchMode = uiState.isTaskBatchMode,
+                                    onSelect = { viewModel.toggleTaskSelection(task.id) },
+                                    onClick = { onOpenTaskDetail(task.id) },
+                                    onToggle = { enabled -> viewModel.toggleTask(task.id, enabled) },
+                                    onTogglePin = { viewModel.pinTask(task.id, !task.isPinned) },
+                                    onRunOrStop = {
+                                        if (task.isRunning) {
+                                            viewModel.stopTask(task.id)
+                                        } else {
+                                            viewModel.runTask(task.id)
+                                        }
+                                    },
+                                    onOpenLog = { onOpenLog(task.id) },
+                                    onEdit = { editingTask = task },
+                                    onDelete = { deletingTask = task }
+                                )
+                            }
+                            item(key = "section_normal_header") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "常规任务 (${normalTasks.size})",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            items(normalTasks, key = { it.id }) { task ->
+                                val scriptSize = remember(task.command, scriptSizeMap) {
+                                    findScriptSizeForCommand(task.command, scriptSizeMap)
+                                }
+                                TaskCard(
+                                    modifier = Modifier.animateItemPlacement(),
+                                    task = task,
+                                    scriptSize = scriptSize,
+                                    isBatchMode = uiState.isTaskBatchMode,
+                                    onSelect = { viewModel.toggleTaskSelection(task.id) },
+                                    onClick = { onOpenTaskDetail(task.id) },
+                                    onToggle = { enabled -> viewModel.toggleTask(task.id, enabled) },
+                                    onTogglePin = { viewModel.pinTask(task.id, !task.isPinned) },
+                                    onRunOrStop = {
+                                        if (task.isRunning) {
+                                            viewModel.stopTask(task.id)
+                                        } else {
+                                            viewModel.runTask(task.id)
+                                        }
+                                    },
+                                    onOpenLog = { onOpenLog(task.id) },
+                                    onEdit = { editingTask = task },
+                                    onDelete = { deletingTask = task }
+                                )
+                            }
+                        } else {
+                            items(filteredTasks, key = { it.id }) { task ->
+                                val scriptSize = remember(task.command, scriptSizeMap) {
+                                    findScriptSizeForCommand(task.command, scriptSizeMap)
+                                }
+                                TaskCard(
+                                    modifier = Modifier.animateItemPlacement(),
+                                    task = task,
+                                    scriptSize = scriptSize,
+                                    isBatchMode = uiState.isTaskBatchMode,
+                                    onSelect = { viewModel.toggleTaskSelection(task.id) },
+                                    onClick = { onOpenTaskDetail(task.id) },
+                                    onToggle = { enabled -> viewModel.toggleTask(task.id, enabled) },
+                                    onTogglePin = { viewModel.pinTask(task.id, !task.isPinned) },
+                                    onRunOrStop = {
+                                        if (task.isRunning) {
+                                            viewModel.stopTask(task.id)
+                                        } else {
+                                            viewModel.runTask(task.id)
+                                        }
+                                    },
+                                    onOpenLog = { onOpenLog(task.id) },
+                                    onEdit = { editingTask = task },
+                                    onDelete = { deletingTask = task }
+                                )
+                            }
                         }
                     }
                 }
@@ -551,6 +698,10 @@ fun TaskCard(
                         .anchoredDraggable(swipeState, Orientation.Horizontal)
                     else Modifier
                 )
+                .then(
+                    if (task.isPinned) Modifier.border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                    else Modifier
+                )
                 .clickable {
                     when {
                         !isBatchMode && swipeState.currentValue == TaskSwipeValue.Open ->
@@ -560,7 +711,9 @@ fun TaskCard(
                     }
                 },
             shape = RoundedCornerShape(10.dp),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = if (task.isPinned) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+            )
         ) {
         // 置灰只作用于内容层，不作用于卡片容器：容器半透明会让右滑动作层从底下透出来
         Row(

@@ -451,7 +451,11 @@ private fun TaskSortMenu(
                         }
                     },
                     onClick = {
-                        onSelect(type)
+                        if (current == type && type != TaskSortType.DEFAULT) {
+                            onSelect(TaskSortType.DEFAULT)
+                        } else {
+                            onSelect(type)
+                        }
                         onExpandedChange(false)
                     }
                 )
