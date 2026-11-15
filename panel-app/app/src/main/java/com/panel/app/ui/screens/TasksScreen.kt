@@ -1,7 +1,6 @@
 package com.panel.app.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -646,27 +645,31 @@ fun TaskCard(
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
-        // 右滑呼出的动作层：启动/停止 + 启用/禁用 + 删除（行内不再放常驻按钮与开关）
+        // 右滑呼出的动作层：运行/停止 + 启用/禁用 + 置顶/取消 + 编辑 + 删除（紧凑精简）
         if (!isBatchMode) {
             Row(
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .matchParentSize()
+                    .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End
             ) {
+                // 1. 运行 / 停止
                 SwipeAction(
                     container = if (task.isRunning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                    content = if (task.isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                    content = if (task.isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
                     icon = if (task.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    label = if (task.isRunning) "停止" else "启动",
+                    label = if (task.isRunning) "停止" else "运行",
                     onClick = {
                         onRunOrStop()
                         scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
                     }
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(3.dp))
+                // 2. 启用 / 禁用
                 SwipeAction(
                     container = if (task.isDisabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    content = if (task.isDisabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    content = if (task.isDisabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     icon = if (task.isDisabled) Icons.Default.CheckCircle else Icons.Default.Block,
                     label = if (task.isDisabled) "启用" else "禁用",
                     onClick = {
@@ -674,8 +677,32 @@ fun TaskCard(
                         scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
                     }
                 )
-                Spacer(Modifier.width(6.dp))
-                // 删除：仍走确认弹窗，防误删
+                Spacer(Modifier.width(3.dp))
+                // 3. 置顶 / 取消置顶
+                SwipeAction(
+                    container = if (task.isPinned) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    content = if (task.isPinned) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    icon = Icons.Default.PushPin,
+                    label = if (task.isPinned) "取消" else "置顶",
+                    onClick = {
+                        onTogglePin()
+                        scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                    }
+                )
+                Spacer(Modifier.width(3.dp))
+                // 4. 编辑
+                SwipeAction(
+                    container = MaterialTheme.colorScheme.surfaceVariant,
+                    content = MaterialTheme.colorScheme.onSurfaceVariant,
+                    icon = Icons.Default.Edit,
+                    label = "编辑",
+                    onClick = {
+                        scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
+                        onEdit()
+                    }
+                )
+                Spacer(Modifier.width(3.dp))
+                // 5. 删除
                 SwipeAction(
                     container = MaterialTheme.colorScheme.errorContainer,
                     content = MaterialTheme.colorScheme.error,
@@ -698,10 +725,6 @@ fun TaskCard(
                         .anchoredDraggable(swipeState, Orientation.Horizontal)
                     else Modifier
                 )
-                .then(
-                    if (task.isPinned) Modifier.border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                    else Modifier
-                )
                 .clickable {
                     when {
                         !isBatchMode && swipeState.currentValue == TaskSwipeValue.Open ->
@@ -711,9 +734,7 @@ fun TaskCard(
                     }
                 },
             shape = RoundedCornerShape(10.dp),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = if (task.isPinned) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
-            )
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
         // 置灰只作用于内容层，不作用于卡片容器：容器半透明会让右滑动作层从底下透出来
         Row(
@@ -881,10 +902,10 @@ fun TaskCard(
     }
 }
 
-/** 右滑动作宽度：72dp 动作 × 3（启动/停止、启用/禁用、删除）+ 6dp 间距 × 2 */
-private val TaskSwipeOpenWidth = 228.dp
+/** 右滑动作宽度：38dp 动作 × 5（运行/停止、启用/禁用、置顶/取消、编辑、删除）+ 3dp 间距 × 4 */
+private val TaskSwipeOpenWidth = 202.dp
 
-/** 任务卡右滑状态：Closed(0) / Open(-150dp)，松手吸附，无 dismiss 语义 */
+/** 任务卡右滑状态：Closed(0) / Open(-TaskSwipeOpenWidth)，松手吸附，无 dismiss 语义 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun rememberTaskSwipeState(): AnchoredDraggableState<TaskSwipeValue> {
@@ -909,7 +930,7 @@ private fun rememberTaskSwipeState(): AnchoredDraggableState<TaskSwipeValue> {
     return state
 }
 
-/** 右滑露出的单枚动作块 */
+/** 右滑露出的单枚动作块（精简紧凑：宽度 38dp，占位更小） */
 @Composable
 private fun SwipeAction(
     container: Color,
@@ -919,23 +940,29 @@ private fun SwipeAction(
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
         color = container,
         modifier = Modifier
-            .width(72.dp)
-            .heightIn(min = 52.dp)
+            .width(38.dp)
+            .fillMaxHeight()
             .clickable(onClick = onClick)
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .fillMaxSize()
+                .padding(vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(icon, contentDescription = label, tint = content, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = label, tint = content, modifier = Modifier.size(15.dp))
             Spacer(Modifier.height(2.dp))
-            Text(label, fontSize = 10.sp, color = content)
+            Text(
+                text = label,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                color = content,
+                maxLines = 1
+            )
         }
     }
 }
