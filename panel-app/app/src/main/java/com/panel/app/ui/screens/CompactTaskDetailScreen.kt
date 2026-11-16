@@ -101,71 +101,81 @@ fun CompactTaskDetailScreen(
 
     Scaffold(
         topBar = {
-            // 需求 1：标题靠左展示，不居中
-            TopAppBar(
-                modifier = Modifier.clickable(enabled = false) {},
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                title = {
-                    Column {
-                        Text(
-                            text = task.name,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "ID: ${task.id}",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    ActionButtonSmall(
-                        icon = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
-                        label = if (task.isPinned) "已置顶" else "置顶",
-                        tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        onClick = { viewModel.pinTask(task.id, !task.isPinned) }
-                    )
-                    if (task.isRunning) {
+            Column {
+                // 需求 1：标题靠左展示，不居中
+                TopAppBar(
+                    modifier = Modifier.clickable(enabled = false) {},
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    title = {
+                        Column {
+                            Text(
+                                text = task.name,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "ID: ${task.id}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
                         ActionButtonSmall(
-                            icon = Icons.Default.Stop,
-                            label = "停止",
+                            icon = if (task.isPinned) Icons.Default.PushPin else Icons.Default.VerticalAlignTop,
+                            label = if (task.isPinned) "已置顶" else "置顶",
+                            tint = if (task.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            onClick = { viewModel.pinTask(task.id, !task.isPinned) }
+                        )
+                        if (task.isRunning) {
+                            ActionButtonSmall(
+                                icon = Icons.Default.Stop,
+                                label = "停止",
+                                tint = MaterialTheme.colorScheme.error,
+                                onClick = { viewModel.stopTask(task.id) }
+                            )
+                        } else {
+                            ActionButtonSmall(
+                                icon = Icons.Default.PlayArrow,
+                                label = "运行",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                onClick = { viewModel.runTask(task.id) }
+                            )
+                        }
+                        ActionButtonSmall(
+                            icon = Icons.Default.Edit,
+                            label = "编辑",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            onClick = { showEditDialog = true }
+                        )
+                        ActionButtonSmall(
+                            icon = Icons.Default.Delete,
+                            label = "删除",
                             tint = MaterialTheme.colorScheme.error,
-                            onClick = { viewModel.stopTask(task.id) }
-                        )
-                    } else {
-                        ActionButtonSmall(
-                            icon = Icons.Default.PlayArrow,
-                            label = "运行",
-                            tint = MaterialTheme.colorScheme.secondary,
-                            onClick = { viewModel.runTask(task.id) }
+                            onClick = { deletingTask = true }
                         )
                     }
-                    ActionButtonSmall(
-                        icon = Icons.Default.Edit,
-                        label = "编辑",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        onClick = { showEditDialog = true }
-                    )
-                    ActionButtonSmall(
-                        icon = Icons.Default.Delete,
-                        label = "删除",
-                        tint = MaterialTheme.colorScheme.error,
-                        onClick = { deletingTask = true }
+                )
+                if (uiState.isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp),
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
-            )
+            }
         }
     ) { padding ->
         // 需求 7：彻底移除 Tab 等多余组件，单一列表，一行一个内容

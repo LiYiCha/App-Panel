@@ -1,11 +1,21 @@
 package com.panel.app.ui.screens
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,6 +85,49 @@ fun MainFlowScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val selectedTab = uiState.currentTab
+
+    val connectivityManager = remember {
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    }
+    var isNetworkAvailable by remember {
+        val activeNet = connectivityManager?.activeNetwork
+        val caps = connectivityManager?.getNetworkCapabilities(activeNet)
+        mutableStateOf(caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: true)
+    }
+
+    DisposableEffect(connectivityManager) {
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                isNetworkAvailable = true
+            }
+            override fun onLost(network: Network) {
+                isNetworkAvailable = false
+            }
+        }
+        try {
+            connectivityManager?.registerDefaultNetworkCallback(callback)
+        } catch (_: Exception) {}
+        onDispose {
+            try {
+                connectivityManager?.unregisterNetworkCallback(callback)
+            } catch (_: Exception) {}
+        }
+    }
+
+    var lastBackPressTime by remember { mutableLongStateOf(0L) }
+    BackHandler {
+        if (selectedTab != BottomNavScreen.Tasks) {
+            viewModel.selectTab(BottomNavScreen.Tasks)
+        } else {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastBackPressTime < 2000L) {
+                (context as? android.app.Activity)?.finish()
+            } else {
+                lastBackPressTime = now
+                Toast.makeText(context, "再按一次退出应用", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // 配置与脚本子分段 Tab (0: 脚本文件, 1: 配置文件)
     var scriptsSubTab by rememberSaveable { mutableIntStateOf(0) }
@@ -256,6 +309,35 @@ fun MainFlowScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            AnimatedVisibility(
+                visible = !isNetworkAvailable,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.WifiOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "网络连接已断开，当前展示本地缓存数据",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+
             Crossfade(
                 targetState = selectedTab,
                 animationSpec = tween(durationMillis = 200),

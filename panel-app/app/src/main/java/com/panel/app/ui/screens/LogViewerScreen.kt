@@ -1,10 +1,12 @@
 package com.panel.app.ui.screens
 
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -61,7 +64,14 @@ fun LogViewerScreen(
     var isLoading by remember { mutableStateOf(initialContent.isBlank() && cachedLog.isNullOrBlank()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchOpen by remember { mutableStateOf(false) }
-    var fontSizeSp by remember { mutableFloatStateOf(11f) }
+    val prefs = remember { context.getSharedPreferences("log_viewer_prefs", Context.MODE_PRIVATE) }
+    var fontSizeSp by remember { mutableFloatStateOf(prefs.getFloat("font_size", 11f)) }
+
+    fun updateFontSize(newSize: Float) {
+        val clamped = newSize.coerceIn(8f, 22f)
+        fontSizeSp = clamped
+        prefs.edit().putFloat("font_size", clamped).apply()
+    }
 
     fun fetchLog(silent: Boolean = false) {
         if (!silent) isLoading = true
@@ -256,8 +266,29 @@ fun LogViewerScreen(
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "清除", modifier = Modifier.size(16.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                ) {
+                                    val matchCount = remember(searchQuery, lines) {
+                                        lines.count { it.contains(searchQuery, ignoreCase = true) }
+                                    }
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(4.dp),
+                                        modifier = Modifier.padding(end = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "$matchCount 处",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Clear, contentDescription = "清除", modifier = Modifier.size(16.dp))
+                                    }
                                 }
                             }
                         },
@@ -303,7 +334,15 @@ fun LogViewerScreen(
                         }
                         else -> {
                             SelectionContainer(
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(Unit) {
+                                        detectTransformGestures { _, _, zoom, _ ->
+                                            if (kotlin.math.abs(zoom - 1f) > 0.02f) {
+                                                updateFontSize(fontSizeSp * zoom)
+                                            }
+                                        }
+                                    }
                             ) {
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
