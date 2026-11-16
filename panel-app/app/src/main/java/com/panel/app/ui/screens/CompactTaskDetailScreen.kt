@@ -27,6 +27,7 @@ import com.panel.app.data.model.UnifiedTask
 import com.panel.app.ui.components.ActionButtonSmall
 import com.panel.app.ui.components.StatusBadge
 import com.panel.app.ui.components.StatusTone
+import com.panel.app.ui.components.debouncedClickable
 import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.CronExpressionDescriber
 import com.panel.app.util.CronNextRun
@@ -102,6 +103,10 @@ fun CompactTaskDetailScreen(
         topBar = {
             // 需求 1：标题靠左展示，不居中
             TopAppBar(
+                modifier = Modifier.clickable(enabled = false) {},
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
                 title = {
                     Column {
                         Text(
@@ -310,7 +315,7 @@ fun CompactTaskDetailScreen(
                     icon = Icons.Default.Terminal,
                     title = "执行日志",
                     subtitle = if (task.isRunning) "任务正在运行，点击跟随实时日志流" else "点击查看最新日志输出",
-                    badge = if (task.isRunning) "运行中" else "查看日志",
+                    badge = if (task.isRunning) "实时流" else "查看日志",
                     badgeColor = if (task.isRunning) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
                     onClick = { onOpenLog(task.name, task.id, task.isRunning) }
                 )
@@ -607,7 +612,7 @@ private fun NavigableActionCard(
         border = androidx.compose.foundation.BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .debouncedClickable(debounceMs = 500L, onClick = onClick)
     ) {
         Row(
             modifier = Modifier

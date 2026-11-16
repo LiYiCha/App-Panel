@@ -1,11 +1,13 @@
 package com.panel.app.ui.components
 
+import android.os.SystemClock
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
@@ -14,7 +16,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * 带文字标签的操作按钮，用于任务详情页和订阅列表等场景
+ * 防抖点击 Modifier：防止快速双击或页面切换时的点击穿透。
+ * 默认 450ms 内只响应首次点击。
+ */
+fun Modifier.debouncedClickable(
+    debounceMs: Long = 450L,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+): Modifier = composed {
+    var lastClickTime by remember { mutableLongStateOf(0L) }
+    this.clickable(enabled = enabled) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClickTime >= debounceMs) {
+            lastClickTime = now
+            onClick()
+        }
+    }
+}
+
+/**
+ * 带文字标签的操作按钮，用于任务详情页和订阅列表等场景（内置防抖，防止穿透连击）
  */
 @Composable
 fun ActionButtonSmall(
@@ -22,24 +43,25 @@ fun ActionButtonSmall(
     label: String,
     tint: Color,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Column(
         modifier = modifier
-            .clickable(onClick = onClick)
+            .debouncedClickable(debounceMs = 450L, enabled = enabled, onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = tint,
+            tint = if (enabled) tint else tint.copy(alpha = 0.4f),
             modifier = Modifier.size(18.dp)
         )
         Text(
             text = label,
             fontSize = 9.sp,
-            color = tint,
+            color = if (enabled) tint else tint.copy(alpha = 0.4f),
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

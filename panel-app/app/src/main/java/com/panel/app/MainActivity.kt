@@ -11,9 +11,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.navigation.NavController
+import androidx.navigation.NavOptionsBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -53,6 +58,28 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private var lastNavTimestamp = 0L
+
+fun NavController.safeNavigate(route: String, builder: (NavOptionsBuilder.() -> Unit)? = null) {
+    val now = android.os.SystemClock.uptimeMillis()
+    if (now - lastNavTimestamp < 350L) return
+    lastNavTimestamp = now
+    try {
+        if (builder != null) {
+            navigate(route) {
+                launchSingleTop = true
+                builder()
+            }
+        } else {
+            navigate(route) {
+                launchSingleTop = true
+            }
+        }
+    } catch (e: Exception) {
+        // Safe guard against navigation race conditions
+    }
+}
+
 @Composable
 private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScriptFeature: LocalScriptFeature) {
     val navController = rememberNavController()
@@ -66,7 +93,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
         if (uiState.isDatabaseReady && !hasLoggedInPanel) {
             // 首次启动先走引导页，已看过（或重看后退出）直接进登录页
             val guideRoute = if (GuidePrefs.isCompleted(appContext)) "login" else "guide"
-            navController.navigate(guideRoute) { popUpTo(0) { inclusive = true } }
+            navController.safeNavigate(guideRoute) { popUpTo(0) { inclusive = true } }
         }
     }
 
@@ -74,21 +101,55 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
     LaunchedEffect(uiState.reloginPanelId) {
         val pid = uiState.reloginPanelId ?: return@LaunchedEffect
         viewModel.clearForceRelogin()
-        navController.navigate("login?panelId=$pid") { launchSingleTop = true }
+        navController.safeNavigate("login?panelId=$pid") { launchSingleTop = true }
     }
 
     fun safePopBack() {
-        if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
-            navController.popBackStack()
-        } else {
-            navController.navigate("main_flow") {
-                popUpTo("main_flow") { inclusive = false }
-                launchSingleTop = true
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastNavTimestamp < 300L) return
+        lastNavTimestamp = now
+        try {
+            if (navController.previousBackStackEntry != null && navController.currentDestination?.route != "main_flow") {
+                navController.popBackStack()
+            } else {
+                navController.safeNavigate("main_flow") {
+                    popUpTo("main_flow") { inclusive = false }
+                    launchSingleTop = true
+                }
             }
+        } catch (e: Exception) {
+            // Safe guard
         }
     }
 
-    NavHost(navController = navController, startDestination = "main_flow") {
+    NavHost(
+        navController = navController,
+        startDestination = "main_flow",
+        enterTransition = {
+            slideIntoContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(260))
+        },
+        exitTransition = {
+            slideOutOfContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(180))
+        },
+        popEnterTransition = {
+            slideIntoContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(260))
+        },
+        popExitTransition = {
+            slideOutOfContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(180))
+        }
+    ) {
         composable(
             route = "guide?replay={replay}",
             arguments = listOf(
@@ -108,7 +169,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                         // 设置页重看：原路返回，不再改写启动跳转
                         navController.popBackStack()
                     } else {
-                        navController.navigate("login") { popUpTo(0) { inclusive = true } }
+                        navController.safeNavigate("login") { popUpTo(0) { inclusive = true } }
                     }
                 },
                 onBack = if (replay) ({ navController.popBackStack() }) else null
@@ -136,10 +197,10 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                     { safePopBack() }
                 } else null,
                 onEnterLocalMode = localScriptFeature.localModeRoute?.let { route ->
-                    { navController.navigate(route) }
+                    { navController.safeNavigate(route) }
                 },
                 onLoginSuccess = {
-                    navController.navigate("main_flow") { popUpTo("login") { inclusive = true } }
+                    navController.safeNavigate("main_flow") { popUpTo("login") { inclusive = true } }
                 }
             )
         }
@@ -147,43 +208,43 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
         composable("main_flow") {
             MainFlowScreen(
                 viewModel = viewModel,
-                onNavigateToLogin = { navController.navigate("login") },
-                onOpenPanelManager = { navController.navigate("panel_manager") },
-                onOpenTaskDetail = { taskId -> navController.navigate("task_detail/$taskId") },
+                onNavigateToLogin = { navController.safeNavigate("login") },
+                onOpenPanelManager = { navController.safeNavigate("panel_manager") },
+                onOpenTaskDetail = { taskId -> navController.safeNavigate("task_detail/$taskId") },
                 onOpenLogScreen = { taskNameOrId ->
                     val encoded = Uri.encode(taskNameOrId)
-                    navController.navigate("log_viewer?title=$encoded&taskId=$encoded")
+                    navController.safeNavigate("log_viewer?title=$encoded&taskId=$encoded")
                 },
                 onOpenScriptEditorScreen = { scriptPath ->
                     val encoded = Uri.encode(scriptPath)
-                    navController.navigate("standalone_editor/$encoded")
+                    navController.safeNavigate("standalone_editor/$encoded")
                 },
-                onOpenDepsScreen = { navController.navigate("standalone_deps") },
-                onOpenLoginLogsScreen = { navController.navigate("login_logs") },
-                onOpenServerLogsScreen = { navController.navigate("server_logs") },
-                onOpenDashboardScreen = { navController.navigate("dashboard") },
-                onOpenBackupScreen = { navController.navigate("backup_restore") },
-                onOpenDevConsoleScreen = { navController.navigate("developer_console") },
-                onOpenLogHistoryScreen = { navController.navigate("execution_history") },
-                onOpenSystemSettingsScreen = { navController.navigate("system_settings") },
-                onOpenPermissionsScreen = { navController.navigate("app_permissions") },
-                onOpenSubscriptionsScreen = { navController.navigate("subscriptions") },
-                onOpenAppsScreen = { navController.navigate("baihu_apps") },
+                onOpenDepsScreen = { navController.safeNavigate("standalone_deps") },
+                onOpenLoginLogsScreen = { navController.safeNavigate("login_logs") },
+                onOpenServerLogsScreen = { navController.safeNavigate("server_logs") },
+                onOpenDashboardScreen = { navController.safeNavigate("dashboard") },
+                onOpenBackupScreen = { navController.safeNavigate("backup_restore") },
+                onOpenDevConsoleScreen = { navController.safeNavigate("developer_console") },
+                onOpenLogHistoryScreen = { navController.safeNavigate("execution_history") },
+                onOpenSystemSettingsScreen = { navController.safeNavigate("system_settings") },
+                onOpenPermissionsScreen = { navController.safeNavigate("app_permissions") },
+                onOpenSubscriptionsScreen = { navController.safeNavigate("subscriptions") },
+                onOpenAppsScreen = { navController.safeNavigate("baihu_apps") },
                 onOpenLocalScriptsScreen = {
                     // standard 变体未启用本地脚本，入口不响应
-                    if (localScriptFeature.enabled) navController.navigate("local_center")
+                    if (localScriptFeature.enabled) navController.safeNavigate("local_center")
                 },
-                onOpenOtherSettingsScreen = { navController.navigate("other_settings") },
-                onOpenEnvRules = { navController.navigate("env_rules") },
+                onOpenOtherSettingsScreen = { navController.safeNavigate("other_settings") },
+                onOpenEnvRules = { navController.safeNavigate("env_rules") },
                 localScriptEnabled = localScriptFeature.enabled,
                 localScriptFeature = localScriptFeature,
                 onOpenLocalEditor = { name ->
-                    navController.navigate("local_editor/${Uri.encode(name)}")
+                    navController.safeNavigate("local_editor/${Uri.encode(name)}")
                 },
                 onOpenLocalConsole = { runId ->
-                    navController.navigate("local_console/$runId")
+                    navController.safeNavigate("local_console/$runId")
                 },
-                onNavigateToCreateScript = { navController.navigate("create_script") }
+                onNavigateToCreateScript = { navController.safeNavigate("create_script") }
             )
         }
 
@@ -256,7 +317,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                 onOpenLogViewer = { title, path ->
                     val encTitle = Uri.encode(title)
                     val encPath = Uri.encode(path)
-                    navController.navigate("log_viewer?title=$encTitle&path=$encPath")
+                    navController.safeNavigate("log_viewer?title=$encTitle&path=$encPath")
                 }
             )
         }
@@ -269,12 +330,12 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
             PanelManagerScreen(
                 viewModel = viewModel,
                 onBack = { safePopBack() },
-                onNavigateToAddPanel = { navController.navigate("login") },
+                onNavigateToAddPanel = { navController.safeNavigate("login") },
                 onNavigateToSwitchAccount = { panel ->
-                    navController.navigate("login?panelId=${panel.id}")
+                    navController.safeNavigate("login?panelId=${panel.id}")
                 },
                 onAllPanelsDeleted = {
-                    navController.navigate("login") { popUpTo("panel_manager") { inclusive = true } }
+                    navController.safeNavigate("login") { popUpTo("panel_manager") { inclusive = true } }
                 }
             )
         }
@@ -294,7 +355,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                     val encTitle = Uri.encode(title)
                     val encPath = Uri.encode(logPath)
                     val encTaskId = Uri.encode(logTaskId)
-                    navController.navigate("log_viewer?title=$encTitle&path=$encPath&taskId=$encTaskId&running=$isRunning")
+                    navController.safeNavigate("log_viewer?title=$encTitle&path=$encPath&taskId=$encTaskId&running=$isRunning")
                 }
             )
         }
@@ -310,15 +371,15 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
                 onBack = { safePopBack() },
                 onOpenScriptEditor = { scriptPath ->
                     val encoded = Uri.encode(scriptPath)
-                    navController.navigate("standalone_editor/$encoded")
+                    navController.safeNavigate("standalone_editor/$encoded")
                 },
                 onOpenLog = { title, tId, isRunning ->
                     val encTitle = Uri.encode(title)
                     val encId = Uri.encode(tId)
-                    navController.navigate("log_viewer?title=$encTitle&taskId=$encId&running=$isRunning")
+                    navController.safeNavigate("log_viewer?title=$encTitle&taskId=$encId&running=$isRunning")
                 },
                 onOpenHistory = { tId ->
-                    navController.navigate("execution_history?taskId=$tId")
+                    navController.safeNavigate("execution_history?taskId=$tId")
                 }
             )
         }
@@ -363,7 +424,7 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
         // 本地脚本路由由变体 feature 注册（full：完整路由；standard：空实现）
         localScriptFeature.installRoutes(
             nav = this,
-            openRoute = { route -> navController.navigate(route) },
+            openRoute = { route -> navController.safeNavigate(route) },
             popBack = { safePopBack() }
         )
 
@@ -381,9 +442,9 @@ private fun AppNavHost(viewModel: MainViewModel, uiState: MainUiState, localScri
             OtherSettingsScreen(
                 viewModel = viewModel,
                 onBack = { safePopBack() },
-                onOpenPermissions = { navController.navigate("app_permissions") },
-                onOpenDevLog = { navController.navigate("developer_console") },
-                onReplayGuide = { navController.navigate("guide?replay=true") }
+                onOpenPermissions = { navController.safeNavigate("app_permissions") },
+                onOpenDevLog = { navController.safeNavigate("developer_console") },
+                onReplayGuide = { navController.safeNavigate("guide?replay=true") }
             )
         }
 

@@ -326,9 +326,15 @@ fun ExecutionHistoryScreen(
                         ) {
                             item {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(if (isLoading) "正在同步执行历史..." else "暂无执行历史", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (isLoading) {
+                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                                        Spacer(Modifier.height(12.dp))
+                                        Text("正在同步执行历史...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    } else {
+                                        Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                                        Spacer(Modifier.height(8.dp))
+                                        Text("暂无执行历史", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }

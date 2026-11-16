@@ -1,9 +1,11 @@
 package com.panel.app.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -254,91 +256,105 @@ fun MainFlowScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (selectedTab) {
-                BottomNavScreen.Tasks -> {
-                    TasksScreen(
-                        viewModel = viewModel,
-                        showCreateDialog = showCreateTaskDialog,
-                        onDismissCreateDialog = { showCreateTaskDialog = false },
-                        onOpenTaskDetail = onOpenTaskDetail,
-                        onOpenLog = onOpenLogScreen,
-                        sortType = taskSortType,
-                        onSortTypeChange = { taskSortType = it },
-                        previewTasks = previewTasks
-                    )
-                }
-
-                BottomNavScreen.Envs -> {
-                    EnvsScreen(
-                        viewModel = viewModel,
-                        showCreateDialog = showCreateEnvDialog,
-                        onDismissCreateDialog = { showCreateEnvDialog = false },
-                        showImportDialog = showImportEnvDialog,
-                        onDismissImportDialog = { showImportEnvDialog = false }
-                    )
-                }
-
-                BottomNavScreen.Scripts -> {
-                    TabRow(selectedTabIndex = scriptsSubTab, modifier = Modifier.fillMaxWidth()) {
-                        Tab(
-                            selected = scriptsSubTab == 0,
-                            onClick = { scriptsSubTab = 0 },
-                            text = { Text("脚本文件 (${uiState.scriptTree.size})", fontSize = 12.sp) }
-                        )
-                        Tab(
-                            selected = scriptsSubTab == 1,
-                            onClick = { scriptsSubTab = 1 },
-                            text = { Text("配置文件", fontSize = 12.sp) }
+            Crossfade(
+                targetState = selectedTab,
+                animationSpec = tween(durationMillis = 200),
+                label = "tab_crossfade"
+            ) { tab ->
+                when (tab) {
+                    BottomNavScreen.Tasks -> {
+                        TasksScreen(
+                            viewModel = viewModel,
+                            showCreateDialog = showCreateTaskDialog,
+                            onDismissCreateDialog = { showCreateTaskDialog = false },
+                            onOpenTaskDetail = onOpenTaskDetail,
+                            onOpenLog = onOpenLogScreen,
+                            sortType = taskSortType,
+                            onSortTypeChange = { taskSortType = it },
+                            previewTasks = previewTasks
                         )
                     }
 
-                    if (scriptsSubTab == 0) {
-                        ScriptsScreen(
+                    BottomNavScreen.Envs -> {
+                        EnvsScreen(
                             viewModel = viewModel,
-                            showCreateDialog = showCreateScriptDialog,
-                            onDismissCreateDialog = { showCreateScriptDialog = false },
-                            onNavigateToCreateScript = onNavigateToCreateScript,
-                            onOpenScriptEditor = onOpenScriptEditorScreen
-                        )
-                    } else {
-                        ConfigEditorScreen(
-                            viewModel = viewModel,
-                            showDirectoryDrawer = showDirectoryDrawer,
-                            onDismissDirectoryDrawer = { showDirectoryDrawer = false },
-                            showCreateConfigDialog = showCreateConfigDialog,
-                            onDismissCreateConfigDialog = { showCreateConfigDialog = false }
+                            showCreateDialog = showCreateEnvDialog,
+                            onDismissCreateDialog = { showCreateEnvDialog = false },
+                            showImportDialog = showImportEnvDialog,
+                            onDismissImportDialog = { showImportEnvDialog = false }
                         )
                     }
-                }
 
-                BottomNavScreen.LOCAL -> {
-                    // 内嵌渲染本地模式中心页（embedded：无自身页面壳，顶栏与 Dock 由本层提供）
-                    localScriptFeature?.CenterContent(
-                        initialTab = 0,
-                        onOpenEditor = onOpenLocalEditor,
-                        onOpenConsole = onOpenLocalConsole
-                    )
-                }
+                    BottomNavScreen.Scripts -> {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            TabRow(selectedTabIndex = scriptsSubTab, modifier = Modifier.fillMaxWidth()) {
+                                Tab(
+                                    selected = scriptsSubTab == 0,
+                                    onClick = { scriptsSubTab = 0 },
+                                    text = { Text("脚本文件 (${uiState.scriptTree.size})", fontSize = 12.sp) }
+                                )
+                                Tab(
+                                    selected = scriptsSubTab == 1,
+                                    onClick = { scriptsSubTab = 1 },
+                                    text = { Text("配置文件", fontSize = 12.sp) }
+                                )
+                            }
 
-                BottomNavScreen.Settings -> {
-                    SettingsScreen(
-                        viewModel = viewModel,
-                        onOpenPanelManager = onOpenPanelManager,
-                        onOpenDeps = onOpenDepsScreen,
-                        onNavigateToSwitchAccount = onNavigateToLogin,
-                        onOpenLoginLogs = onOpenLoginLogsScreen,
-                        onOpenServerLogs = onOpenServerLogsScreen,
-                        onOpenDashboard = onOpenDashboardScreen,
-                        onOpenBackup = onOpenBackupScreen,
-                        onOpenLogHistory = onOpenLogHistoryScreen,
-                        onOpenSystemSettings = onOpenSystemSettingsScreen,
-                        onOpenSubscriptionsScreen = onOpenSubscriptionsScreen,
-                        onOpenApps = onOpenAppsScreen,
-                        onOpenLocalScripts = onOpenLocalScriptsScreen,
-                        onOpenOtherSettings = onOpenOtherSettingsScreen,
-                        onOpenDevConsole = onOpenDevConsoleScreen,
-                        localScriptEnabled = localScriptEnabled
-                    )
+                            Crossfade(
+                                targetState = scriptsSubTab,
+                                animationSpec = tween(durationMillis = 180),
+                                label = "scripts_subtab_crossfade"
+                            ) { subTab ->
+                                if (subTab == 0) {
+                                    ScriptsScreen(
+                                        viewModel = viewModel,
+                                        showCreateDialog = showCreateScriptDialog,
+                                        onDismissCreateDialog = { showCreateScriptDialog = false },
+                                        onNavigateToCreateScript = onNavigateToCreateScript,
+                                        onOpenScriptEditor = onOpenScriptEditorScreen
+                                    )
+                                } else {
+                                    ConfigEditorScreen(
+                                        viewModel = viewModel,
+                                        showDirectoryDrawer = showDirectoryDrawer,
+                                        onDismissDirectoryDrawer = { showDirectoryDrawer = false },
+                                        showCreateConfigDialog = showCreateConfigDialog,
+                                        onDismissCreateConfigDialog = { showCreateConfigDialog = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    BottomNavScreen.LOCAL -> {
+                        // 内嵌渲染本地模式中心页（embedded：无自身页面壳，顶栏与 Dock 由本层提供）
+                        localScriptFeature?.CenterContent(
+                            initialTab = 0,
+                            onOpenEditor = onOpenLocalEditor,
+                            onOpenConsole = onOpenLocalConsole
+                        )
+                    }
+
+                    BottomNavScreen.Settings -> {
+                        SettingsScreen(
+                            viewModel = viewModel,
+                            onOpenPanelManager = onOpenPanelManager,
+                            onOpenDeps = onOpenDepsScreen,
+                            onNavigateToSwitchAccount = onNavigateToLogin,
+                            onOpenLoginLogs = onOpenLoginLogsScreen,
+                            onOpenServerLogs = onOpenServerLogsScreen,
+                            onOpenDashboard = onOpenDashboardScreen,
+                            onOpenBackup = onOpenBackupScreen,
+                            onOpenLogHistory = onOpenLogHistoryScreen,
+                            onOpenSystemSettings = onOpenSystemSettingsScreen,
+                            onOpenSubscriptionsScreen = onOpenSubscriptionsScreen,
+                            onOpenApps = onOpenAppsScreen,
+                            onOpenLocalScripts = onOpenLocalScriptsScreen,
+                            onOpenOtherSettings = onOpenOtherSettingsScreen,
+                            onOpenDevConsole = onOpenDevConsoleScreen,
+                            localScriptEnabled = localScriptEnabled
+                        )
+                    }
                 }
             }
         }

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import com.panel.app.ui.components.debouncedClickable
 import com.panel.app.data.adapter.QinglongApiHelpers
 import androidx.compose.foundation.shape.CircleShape
 import com.panel.app.data.model.ScriptNode
@@ -725,9 +726,9 @@ fun TaskCard(
                         .anchoredDraggable(swipeState, Orientation.Horizontal)
                     else Modifier
                 )
-                .clickable {
+                .debouncedClickable(debounceMs = 400L) {
                     when {
-                        !isBatchMode && swipeState.currentValue == TaskSwipeValue.Open ->
+                        !isBatchMode && (swipeState.currentValue != TaskSwipeValue.Closed || swipeState.targetValue != TaskSwipeValue.Closed) ->
                             scope.launch { swipeState.animateTo(TaskSwipeValue.Closed) }
                         isBatchMode -> onSelect()
                         else -> onClick()
@@ -945,7 +946,7 @@ private fun SwipeAction(
         modifier = Modifier
             .width(38.dp)
             .fillMaxHeight()
-            .clickable(onClick = onClick)
+            .debouncedClickable(debounceMs = 450L, onClick = onClick)
     ) {
         Column(
             modifier = Modifier
