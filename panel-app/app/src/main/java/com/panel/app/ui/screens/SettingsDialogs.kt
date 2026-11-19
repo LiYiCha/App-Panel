@@ -29,6 +29,7 @@ import com.panel.app.ui.viewmodel.MainViewModel
 import com.panel.app.util.AppUpdateInfo
 import com.panel.app.util.AppUpdateManager
 import com.panel.app.util.DownloadManager
+import com.panel.app.util.MirrorManager
 import java.io.File
 
 /**
@@ -43,6 +44,8 @@ sealed class DownloadUiState {
         val percent: Int,
         val speed: Long,
         val retries: Int,
+        val statusMessage: String? = null,
+        val mirrorName: String = "",
     ) : DownloadUiState()
 
     data class Failed(val url: String, val message: String) : DownloadUiState()
@@ -94,6 +97,10 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
     var dlStates by remember { mutableStateOf<Map<String, DownloadUiState>>(emptyMap()) }
     // 缓存目录变更计数：任一下载完成后 +1，驱动缓存 APK 列表重组
     var cacheTick by remember { mutableIntStateOf(0) }
+    // 下载加速源状态（支持更新弹窗内直接查看与切换）
+    var currentMirror by remember { mutableStateOf(MirrorManager.selected(MirrorManager.Type.UPDATE)) }
+    var showMirrorDropdown by remember { mutableStateOf(false) }
+    val allUpdateMirrors = remember { MirrorManager.sources(MirrorManager.Type.UPDATE) }
 
     // 缓存目录中属于当前 Release 的 APK（按资产名匹配，旧 Release 的文件不会误装）；
     // 优先返回匹配当前安装版本的资产，其余排后
@@ -174,6 +181,77 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
                             Spacer(Modifier.weight(1f))
                             Text("github.com/LiYiCha/App-Panel", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
                             Icon(Icons.Default.OpenInNew, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
+                        }
+                    }
+
+                    // 下载加速镜像源选择（支持更新弹窗内即时切换）
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Surface(
+                            onClick = { if (!anyDownloading) showMirrorDropdown = true },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                    Text("下载加速源", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        if (currentMirror.url.isEmpty()) "GitHub 官方直连" else currentMirror.url,
+                                        fontSize = 9.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(currentMirror.name, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                                        if (!anyDownloading) {
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showMirrorDropdown,
+                            onDismissRequest = { showMirrorDropdown = false }
+                        ) {
+                            allUpdateMirrors.forEach { mirror ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                mirror.name,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (mirror.id == currentMirror.id) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (mirror.id == currentMirror.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(if (mirror.url.isEmpty()) "官方直连" else mirror.url, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    trailingIcon = if (mirror.id == currentMirror.id) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
+                                    } else null,
+                                    onClick = {
+                                        MirrorManager.select(MirrorManager.Type.UPDATE, mirror.id)
+                                        currentMirror = mirror
+                                        showMirrorDropdown = false
+                                    }
+                                )
+                            }
                         }
                     }
                     // 已缓存的 Release APK（下载完成/历史下载的资产，可直接安装）
@@ -295,12 +373,15 @@ fun UpdateCheckDialog(info: AppUpdateInfo, onDismiss: () -> Unit) {
                                 isError = false,
                                 isDone = false,
                                 isDownloading = true,
+                                mirrorName = st.mirrorName,
+                                statusMessage = st.statusMessage,
                                 onCancel = { cancelDownload(url) }
                             )
                             is DownloadUiState.Failed -> DownloadProgressCard(
                                 downloaded = 0, total = 0, percent = 0, speed = 0, retries = 0,
                                 isError = true,
                                 isDone = false,
+                                statusMessage = st.message,
                                 onCancel = { dismissCard(url) }
                             )
                             is DownloadUiState.Done -> {}
@@ -422,6 +503,9 @@ fun runDownload(
     var lastDownloaded = 0L
     var lastTotal = 0L
     var lastPercent = 0
+    val selectedMirror = MirrorManager.selected(MirrorManager.Type.UPDATE)
+    var currentMirrorName = if (selectedMirror.url.isEmpty()) "GitHub 直连" else selectedMirror.name
+    var currentStatusMsg: String? = null
 
     // 统一在主线程更新状态与 Toast（Toast 在无 Looper 的 IO 线程调用会抛异常，
     // 导致成功被误判为失败 → 重试 → 416 循环 → 文件被清理）
@@ -433,20 +517,24 @@ fun runDownload(
     }
 
     // 初始 Downloading 状态（主线程）
-    notify(DownloadUiState.Downloading(url, 0, 0, 0, 0, 0))
+    notify(DownloadUiState.Downloading(url, 0, 0, 0, 0, 0, mirrorName = currentMirrorName))
 
     DownloadManager.download(
         url = url,
         outputFile = DownloadManager.outputFileFor(context, url),
         onProgress = { bytes, total, percent, speed ->
             lastDownloaded = bytes; lastTotal = total; lastPercent = percent
-            notify(DownloadUiState.Downloading(url, bytes, total, percent, speed, retries))
+            notify(DownloadUiState.Downloading(url, bytes, total, percent, speed, retries, currentStatusMsg, currentMirrorName))
         },
-        onRetry = {
+        onRetry = { reason ->
             retries++
+            currentStatusMsg = reason
+            if (reason.contains("直连")) {
+                currentMirrorName = "GitHub 直连"
+            }
             notify(
-                DownloadUiState.Downloading(url, lastDownloaded, lastTotal, lastPercent, 0, retries),
-                "自动重试中... ($retries/${DownloadManager.MAX_RETRIES})"
+                DownloadUiState.Downloading(url, lastDownloaded, lastTotal, lastPercent, 0, retries, reason, currentMirrorName),
+                reason
             )
         },
         onSuccess = { file ->
@@ -471,6 +559,8 @@ private fun DownloadProgressCard(
     isError: Boolean,
     isDone: Boolean,
     isDownloading: Boolean = false,
+    mirrorName: String = "",
+    statusMessage: String? = null,
     onCancel: (() -> Unit)? = null,
 ) {
         Surface(
@@ -483,13 +573,17 @@ private fun DownloadProgressCard(
             }
         ) {
             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                // 头部：状态文字 + 百分比
+                // 头部：状态文字 + 百分比 / 网速与镜像源
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         if (isError) {
                             Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                         } else if (isDone) {
@@ -512,17 +606,21 @@ private fun DownloadProgressCard(
                             }
                         )
                     }
-                    if (speed > 0L) {
-                        Text(formatSpeed(speed), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    // 下载中可手动取消
-                    if (isDownloading && onCancel != null) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "取消下载",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp).clickable { onCancel() }
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (mirrorName.isNotBlank() || speed > 0L) {
+                            val speedText = if (speed > 0L) formatSpeed(speed) else ""
+                            val label = listOf(mirrorName, speedText).filter { it.isNotBlank() }.joinToString(" · ")
+                            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        // 下载中可手动取消
+                        if (isDownloading && onCancel != null) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "取消下载",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp).clickable { onCancel() }
+                            )
+                        }
                     }
                 }
                 // 进度条
@@ -536,7 +634,7 @@ private fun DownloadProgressCard(
                         else -> MaterialTheme.colorScheme.primary
                     }
                 )
-                // 字节数 + 重试
+                // 字节数 + 重试 / 状态信息
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -547,7 +645,15 @@ private fun DownloadProgressCard(
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (retries > 0 && !isDone) {
+                    if (statusMessage != null && !isDone) {
+                        Text(
+                            statusMessage,
+                            fontSize = 9.sp,
+                            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (retries > 0 && !isDone) {
                         Text("重试 $retries 次", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

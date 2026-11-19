@@ -48,11 +48,35 @@ object DownloadManager {
     internal const val MAX_RETRIES = 3
     private const val RETRY_BASE_DELAY_MS = 1_000L
 
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val httpClient: OkHttpClient by lazy {
+        try {
+            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            })
+            val sslContext = javax.net.ssl.SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+
+            OkHttpClient.Builder()
+                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build()
+        } catch (_: Exception) {
+            OkHttpClient.Builder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build()
+        }
+    }
 
     /** 单个下载任务：URL → 协程 + 输出文件 */
     private class Task(val url: String, val file: File, val job: Job)
@@ -86,7 +110,7 @@ object DownloadManager {
      * @param onProgress  进度回调（已下载/总量/百分比/网速字节每秒）
      * @param onSuccess   完成回调（传出 File）
      * @param onFailure   失败回调（原因消息）
-     * @param onRetry     每次重试前回调（可用来刷新 UI）
+     * @param onRetry     每次重试前回调（传入重试原因提示，可用来刷新 UI）
      */
     fun download(
         url: String,
@@ -94,7 +118,7 @@ object DownloadManager {
         onProgress: (bytes: Long, total: Long, percent: Int, speed: Long) -> Unit,
         onSuccess: (File) -> Unit,
         onFailure: (String) -> Unit,
-        onRetry: () -> Unit = {},
+        onRetry: (reason: String) -> Unit = {},
     ) {
         if (tasks[url]?.job?.isActive == true) return
         val job = scope.launch {
@@ -131,7 +155,7 @@ object DownloadManager {
         onProgress: (Long, Long, Int, Long) -> Unit,
         onSuccess: (File) -> Unit,
         onFailure: (String) -> Unit,
-        onRetry: () -> Unit,
+        onRetry: (String) -> Unit,
     ) {
         val startUrl = MirrorManager.applyUpdate(url)
         val fallbackUrl = if (startUrl != url) url else null
@@ -142,8 +166,6 @@ object DownloadManager {
         while (true) {
             // 断点续传：从已有文件长度继续；完整文件会得到 416，按「已完整」处理
             var downloaded = if (file.exists() && file.length() > 0) file.length() else 0L
-            var lastTs = System.currentTimeMillis()
-            var lastBytes = downloaded
             var response: okhttp3.Response? = null
             try {
                 val requestBuilder = Request.Builder().url(effectiveUrl).header("User-Agent", GITHUB_UA)
@@ -153,7 +175,6 @@ object DownloadManager {
                     200 -> {
                         // 全新下载：清空旧文件
                         downloaded = 0L
-                        lastBytes = 0L
                         file.parentFile?.mkdirs()
                         if (file.exists()) file.delete()
                         if (!withContext(Dispatchers.IO) {
@@ -161,31 +182,62 @@ object DownloadManager {
                             }) throw IllegalStateException("无法创建下载文件")
                         val responseBody = response.body ?: throw IllegalStateException("下载响应无内容")
                         val total = responseBody.contentLength()
+
+                        var sampleStartTime = System.currentTimeMillis()
+                        var sampleStartBytes = 0L
+                        var smoothedSpeed = 0L
+                        var lastEmitTime = 0L
+
                         streamChunks(responseBody, file, 0L) { _, bytesRead ->
                             downloaded += bytesRead
                             val now = System.currentTimeMillis()
-                            val dt = max((now - lastTs) / 1000.0, 0.001)
-                            val speed = ((downloaded - lastBytes) / dt).toLong()
-                            lastTs = now
-                            lastBytes = downloaded
-                            val pct = if (total > 0) ((downloaded * 100) / total).toInt() else 0
-                            onProgress(downloaded, total, max(0, min(pct, 100)), speed)
+                            val sampleElapsed = now - sampleStartTime
+                            // 至少累计 400ms 统计一次真实网络吞吐，消除 OkHttp 单 chunk 内存读取导致的假峰值
+                            if (sampleElapsed >= 400L) {
+                                val sampleDelta = downloaded - sampleStartBytes
+                                val instantSpeed = ((sampleDelta * 1000L) / sampleElapsed).coerceAtLeast(0L)
+                                smoothedSpeed = if (smoothedSpeed == 0L) instantSpeed else (smoothedSpeed * 0.7 + instantSpeed * 0.3).toLong()
+                                sampleStartTime = now
+                                sampleStartBytes = downloaded
+                            }
+                            if (now - lastEmitTime >= 200L || (total > 0 && downloaded >= total)) {
+                                lastEmitTime = now
+                                val pct = if (total > 0) ((downloaded * 100) / total).toInt() else 0
+                                onProgress(downloaded, total, max(0, min(pct, 100)), smoothedSpeed)
+                            }
                         }
+                        val finalPct = if (total > 0) 100 else 0
+                        onProgress(downloaded, total, finalPct, smoothedSpeed)
                     }
                     206 -> {
                         // 续传：追加到已有文件
                         val responseBody = response.body ?: throw IllegalStateException("下载响应无内容")
                         val total = (downloaded + responseBody.contentLength()).coerceAtLeast(-1L)
+
+                        var sampleStartTime = System.currentTimeMillis()
+                        var sampleStartBytes = downloaded
+                        var smoothedSpeed = 0L
+                        var lastEmitTime = 0L
+
                         streamChunks(responseBody, file, downloaded) { _, bytesRead ->
                             downloaded += bytesRead
                             val now = System.currentTimeMillis()
-                            val dt = max((now - lastTs) / 1000.0, 0.001)
-                            val speed = ((downloaded - lastBytes) / dt).toLong()
-                            lastTs = now
-                            lastBytes = downloaded
-                            val pct = if (total > 0) ((downloaded * 100) / total).toInt() else 0
-                            onProgress(downloaded, total, max(0, min(pct, 100)), speed)
+                            val sampleElapsed = now - sampleStartTime
+                            if (sampleElapsed >= 400L) {
+                                val sampleDelta = downloaded - sampleStartBytes
+                                val instantSpeed = ((sampleDelta * 1000L) / sampleElapsed).coerceAtLeast(0L)
+                                smoothedSpeed = if (smoothedSpeed == 0L) instantSpeed else (smoothedSpeed * 0.7 + instantSpeed * 0.3).toLong()
+                                sampleStartTime = now
+                                sampleStartBytes = downloaded
+                            }
+                            if (now - lastEmitTime >= 200L || (total > 0 && downloaded >= total)) {
+                                lastEmitTime = now
+                                val pct = if (total > 0) ((downloaded * 100) / total).toInt() else 0
+                                onProgress(downloaded, total, max(0, min(pct, 100)), smoothedSpeed)
+                            }
                         }
+                        val finalPct = if (total > 0) 100 else 0
+                        onProgress(downloaded, total, finalPct, smoothedSpeed)
                     }
                     416 -> {
                         // Range 超界 = 本地文件已完整（续传场景），直接判为成功
@@ -213,8 +265,9 @@ object DownloadManager {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 retries++
                 if (retries <= MAX_RETRIES) {
-                    delay(RETRY_BASE_DELAY_MS * (1L shl (retries - 1))) // 1s / 2s / 4s
-                    onRetry()
+                    val delayMs = RETRY_BASE_DELAY_MS * (1L shl (retries - 1)) // 1s / 2s / 4s
+                    onRetry("连接异常，正在进行第 $retries 次重试...")
+                    delay(delayMs)
                     continue
                 }
                 // 重试耗尽：镜像源失败回退 GitHub 直链重来（清空进度从头下）
@@ -223,8 +276,8 @@ object DownloadManager {
                     effectiveUrl = fallbackUrl
                     retries = 0
                     runCatching { file.delete() }
+                    onRetry("加速镜像源不可用，已自动切换为 GitHub 直连重试...")
                     delay(RETRY_BASE_DELAY_MS)
-                    onRetry()
                     continue
                 }
                 runCatching { file.delete() }

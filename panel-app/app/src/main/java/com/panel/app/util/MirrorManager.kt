@@ -38,10 +38,10 @@ object MirrorManager {
 
     // ── 预设源 ─────────────────────────────────────────────────────────────
 
-    val PRESET_UPDATE_DIRECT = MirrorSource("preset_update_direct", "GitHub 直连", Type.UPDATE, "", true)
-    val PRESET_UPDATE_GHFAST = MirrorSource("preset_update_ghfast", "ghfast 加速", Type.UPDATE, "https://ghfast.top/", true)
-    val PRESET_UPDATE_GHPROXY_NET = MirrorSource("preset_update_ghproxy_net", "ghproxy 加速", Type.UPDATE, "https://ghproxy.net/", true)
     val PRESET_UPDATE_GH_PROXY = MirrorSource("preset_update_gh_proxy", "gh-proxy 加速", Type.UPDATE, "https://gh-proxy.com/", true)
+    val PRESET_UPDATE_GHFAST = MirrorSource("preset_update_ghfast", "ghfast 加速", Type.UPDATE, "https://ghfast.top/", true)
+    val PRESET_UPDATE_DIRECT = MirrorSource("preset_update_direct", "GitHub 直连", Type.UPDATE, "", true)
+    val PRESET_UPDATE_GHPROXY_NET = MirrorSource("preset_update_ghproxy_net", "ghproxy 加速", Type.UPDATE, "https://ghproxy.net/", true)
 
     val PRESET_PYPI_OFFICIAL = MirrorSource(
         "preset_pypi_official", "PyPI 官方", Type.PYPI, "https://files.pythonhosted.org", true
@@ -58,7 +58,7 @@ object MirrorManager {
     )
 
     private val PRESETS: Map<Type, List<MirrorSource>> = mapOf(
-        Type.UPDATE to listOf(PRESET_UPDATE_GHFAST, PRESET_UPDATE_GHPROXY_NET, PRESET_UPDATE_GH_PROXY, PRESET_UPDATE_DIRECT),
+        Type.UPDATE to listOf(PRESET_UPDATE_GH_PROXY, PRESET_UPDATE_GHFAST, PRESET_UPDATE_DIRECT, PRESET_UPDATE_GHPROXY_NET),
         Type.PYPI to listOf(PRESET_PYPI_TUNA, PRESET_PYPI_OFFICIAL),
         Type.NPM to listOf(PRESET_NPM_NPMMIRROR, PRESET_NPM_OFFICIAL),
     )
